@@ -27,3 +27,28 @@ public sealed record WorkflowValidationReport(
     string Name,
     bool IsValid,
     IReadOnlyList<string> Issues);
+
+public sealed record WorkflowActivitySummary(
+    Guid PluginTypeId,
+    string Name,
+    string AssemblyQualifiedName,
+    string AssemblyName,
+    string Version,
+    string? Description,
+    int WorkflowActivityGroupName);
+
+public sealed record WorkflowActivityParameter(
+    string Name,
+    string ParameterType,
+    string Direction,
+    bool IsRequired,
+    string? Description);
+
+public sealed record WorkflowActivityDetail(
+    Guid PluginTypeId,
+    string Name,
+    string AssemblyQualifiedName,
+    string AssemblyName,
+    string Version,
+    string? Description,
+    IReadOnlyList<WorkflowActivityParameter> Parameters);

@@ -146,6 +146,123 @@ public sealed class WorkflowService
         await _client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", body, ct);
     }
 
+    public async Task<IReadOnlyList<WorkflowActivitySummary>> ListActivitiesAsync(
+        string orgUrl,
+        string? nameFilter = null,
+        CancellationToken ct = default)
+    {
+        var filter = "workflowactivitygroupname ne null";
+        if (!string.IsNullOrWhiteSpace(nameFilter))
+            filter += $" and contains(name, '{nameFilter}')";
+
+        var url = "api/data/v9.2/plugintypes" +
+                  $"?$filter={Uri.EscapeDataString(filter)}" +
+                  "&$select=plugintypeid,name,assemblyname,version,description,workflowactivitygroupname,typename" +
+                  "&$expand=pluginassemblyid($select=name,version)" +
+                  "&$orderby=assemblyname,name";
+
+        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var doc = JsonDocument.Parse(raw);
+        var results = new List<WorkflowActivitySummary>();
+
+        if (!doc.RootElement.TryGetProperty("value", out var items))
+            return results;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            var typeName = item.GetStringOrNull("typename") ?? item.GetStringOrEmpty("name");
+            var asmName = item.GetStringOrEmpty("assemblyname");
+            var version = item.GetStringOrEmpty("version");
+
+            // Build AssemblyQualifiedName from pluginassemblyid expand if available
+            string assemblyQualifiedName;
+            if (item.TryGetProperty("pluginassemblyid", out var asmEl) && asmEl.ValueKind == JsonValueKind.Object)
+            {
+                var fullAsmName = asmEl.GetStringOrNull("name") ?? asmName;
+                var asmVersion = asmEl.GetStringOrNull("version") ?? version;
+                assemblyQualifiedName = $"{typeName}, {fullAsmName}, Version={asmVersion}, Culture=neutral, PublicKeyToken=null";
+            }
+            else
+            {
+                assemblyQualifiedName = $"{typeName}, {asmName}";
+            }
+
+            results.Add(new WorkflowActivitySummary(
+                PluginTypeId: item.TryGetGuid("plugintypeid"),
+                Name: item.GetStringOrEmpty("name"),
+                AssemblyQualifiedName: assemblyQualifiedName,
+                AssemblyName: asmName,
+                Version: version,
+                Description: item.GetStringOrNull("description"),
+                WorkflowActivityGroupName: item.GetInt32OrZero("workflowactivitygroupname")));
+        }
+
+        return results;
+    }
+
+    public async Task<WorkflowActivityDetail?> GetActivityParametersAsync(
+        string orgUrl,
+        Guid pluginTypeId,
+        CancellationToken ct = default)
+    {
+        var url = $"api/data/v9.2/plugintypes({pluginTypeId})" +
+                  "?$select=plugintypeid,name,assemblyname,version,description,typename" +
+                  "&$expand=pluginassemblyid($select=name,version)," +
+                  "plugintype_plugintypestatistic($select=plugintypestatisticid)";
+
+        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var item = JsonDocument.Parse(raw).RootElement;
+
+        var typeName = item.GetStringOrNull("typename") ?? item.GetStringOrEmpty("name");
+        var asmName = item.GetStringOrEmpty("assemblyname");
+        var version = item.GetStringOrEmpty("version");
+
+        string assemblyQualifiedName;
+        if (item.TryGetProperty("pluginassemblyid", out var asmEl) && asmEl.ValueKind == JsonValueKind.Object)
+        {
+            var fullAsmName = asmEl.GetStringOrNull("name") ?? asmName;
+            var asmVersion = asmEl.GetStringOrNull("version") ?? version;
+            assemblyQualifiedName = $"{typeName}, {fullAsmName}, Version={asmVersion}, Culture=neutral, PublicKeyToken=null";
+        }
+        else
+        {
+            assemblyQualifiedName = $"{typeName}, {asmName}";
+        }
+
+        // Fetch parameters separately via plugintypeattributes
+        var paramUrl = $"api/data/v9.2/plugintypeattributes" +
+                       $"?$filter=_plugintypeid_value eq {pluginTypeId}" +
+                       "&$select=name,parametertype,direction,isrequired,description" +
+                       "&$orderby=direction,name";
+
+        var paramRaw = await _client.GetRawAsync(orgUrl, paramUrl, ct);
+        var paramDoc = JsonDocument.Parse(paramRaw);
+        var parameters = new List<WorkflowActivityParameter>();
+
+        if (paramDoc.RootElement.TryGetProperty("value", out var paramItems))
+        {
+            foreach (var p in paramItems.EnumerateArray())
+            {
+                var direction = p.GetInt32OrZero("direction") == 1 ? "Output" : "Input";
+                parameters.Add(new WorkflowActivityParameter(
+                    Name: p.GetStringOrEmpty("name"),
+                    ParameterType: p.GetStringOrNull("parametertype") ?? "String",
+                    Direction: direction,
+                    IsRequired: p.TryGetProperty("isrequired", out var req) && req.ValueKind == JsonValueKind.True,
+                    Description: p.GetStringOrNull("description")));
+            }
+        }
+
+        return new WorkflowActivityDetail(
+            PluginTypeId: item.TryGetGuid("plugintypeid"),
+            Name: item.GetStringOrEmpty("name"),
+            AssemblyQualifiedName: assemblyQualifiedName,
+            AssemblyName: asmName,
+            Version: version,
+            Description: item.GetStringOrNull("description"),
+            Parameters: parameters);
+    }
+
     public async Task<WorkflowValidationReport> ValidateAsync(
         string orgUrl,
         Guid workflowId,

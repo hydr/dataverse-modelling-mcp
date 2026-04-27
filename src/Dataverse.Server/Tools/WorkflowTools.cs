@@ -157,6 +157,51 @@ public sealed class WorkflowTools
         }
     }
 
+    [McpServerTool(Name = "workflow_list_activities")]
+    [Description("List all Custom Workflow Activities (code activities) registered in Dataverse, including their AssemblyQualifiedName for use in XAML.")]
+    public static async Task<string> WorkflowListActivities(
+        WorkflowService svc,
+        ConfigProvider config,
+        [Description("Optional name filter (substring match)")] string? nameFilter = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.ListActivitiesAsync(env.OrgUrl, nameFilter, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "workflow_get_activity_parameters")]
+    [Description("Get the Input and Output parameters of a Custom Workflow Activity, needed to wire up arguments in XAML.")]
+    public static async Task<string> WorkflowGetActivityParameters(
+        WorkflowService svc,
+        ConfigProvider config,
+        [Description("The PluginType GUID (from workflow_list_activities)")] string pluginTypeId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!Guid.TryParse(pluginTypeId, out var id))
+                return JsonSerializer.Serialize(new { error = "Invalid pluginTypeId GUID format." });
+
+            var env = config.GetActiveEnvironment();
+            var result = await svc.GetActivityParametersAsync(env.OrgUrl, id, ct);
+            return result is null
+                ? JsonSerializer.Serialize(new { error = "Plugin type not found." })
+                : JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "workflow_validate")]
     [Description("Validate a Classic Workflow and return a report of common issues.")]
     public static async Task<string> WorkflowValidate(

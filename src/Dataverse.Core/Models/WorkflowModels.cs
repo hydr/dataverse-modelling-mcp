@@ -26,7 +26,7 @@ public sealed record WorkflowDetail(
     bool IsOnCreate,
     bool IsOnUpdate,
     bool IsOnDelete,
-    string? TriggerAttribute,
+    string? TriggerOnUpdateAttributes,
     string? CreateStage,
     string? UpdateStage,
     string? DeleteStage,
@@ -37,7 +37,7 @@ public sealed record WorkflowDetail(
     bool IsTransacted,
     int Rank,
     // Logging
-    string LogContent,
+    bool SyncLogOnFailure,
     bool AsyncAutoDelete);
 
 public sealed record WorkflowValidationReport(

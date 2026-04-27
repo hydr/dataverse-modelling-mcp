@@ -65,9 +65,9 @@ public sealed class WorkflowService
         var url = $"api/data/v9.2/workflows({workflowId})" +
                   "?$select=workflowid,name,primaryentity,statecode,statuscode," +
                   "_ownerid_value,description,xaml,createdon,modifiedon," +
-                  "ondemand,triggerattribute," +
+                  "ondemand,triggeroncreate,triggerondelete,triggeronupdateattributelist," +
                   "createstage,updatestage,deletestage," +
-                  "scope,mode,runas,istransacted,rank,logcontent,asyncautodelete";
+                  "scope,mode,runas,istransacted,rank,syncworkflowlogonfailure,asyncautodelete";
 
         var raw = await _client.GetRawAsync(orgUrl, url, includeFormattedValues: true, ct);
         var item = JsonDocument.Parse(raw).RootElement;
@@ -89,10 +89,10 @@ public sealed class WorkflowService
             CreatedOn: item.GetDateTimeOrNull("createdon"),
             ModifiedOn: item.GetDateTimeOrNull("modifiedon"),
             OnDemand: item.TryGetProperty("ondemand", out var od) && od.ValueKind == JsonValueKind.True,
-            IsOnCreate: item.GetInt32OrZero("createstage") != 0,
+            IsOnCreate: item.TryGetProperty("triggeroncreate", out var oc) && oc.ValueKind == JsonValueKind.True,
             IsOnUpdate: item.GetInt32OrZero("updatestage") != 0,
-            IsOnDelete: item.GetInt32OrZero("deletestage") != 0,
-            TriggerAttribute: item.GetStringOrNull("triggerattribute"),
+            IsOnDelete: item.TryGetProperty("triggerondelete", out var odl) && odl.ValueKind == JsonValueKind.True,
+            TriggerOnUpdateAttributes: item.GetStringOrNull("triggeronupdateattributelist"),
             CreateStage: MapStage(item.GetInt32OrZero("createstage")),
             UpdateStage: MapStage(item.GetInt32OrZero("updatestage")),
             DeleteStage: MapStage(item.GetInt32OrZero("deletestage")),
@@ -101,7 +101,7 @@ public sealed class WorkflowService
             RunAs: item.GetInt32OrZero("runas") == 1 ? "CallingUser" : "Owner",
             IsTransacted: item.TryGetProperty("istransacted", out var tr) && tr.ValueKind == JsonValueKind.True,
             Rank: item.GetInt32OrZero("rank"),
-            LogContent: MapLogContent(item.GetInt32OrZero("logcontent")),
+            SyncLogOnFailure: item.TryGetProperty("syncworkflowlogonfailure", out var slf) && slf.ValueKind == JsonValueKind.True,
             AsyncAutoDelete: item.TryGetProperty("asyncautodelete", out var aad) && aad.ValueKind == JsonValueKind.True);
     }
 
@@ -121,13 +121,6 @@ public sealed class WorkflowService
         _ => value.ToString()
     };
 
-    private static string MapLogContent(int value) => value switch
-    {
-        0 => "None",
-        1 => "Details",
-        2 => "All",
-        _ => value.ToString()
-    };
 
     public async Task<Guid> CreateAsync(
         string orgUrl,

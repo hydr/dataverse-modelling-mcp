@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <!-- Set to "true" to run integration tests (requires az login) -->
+      <!-- <DATAVERSE_INTEGRATION_TESTS>true</DATAVERSE_INTEGRATION_TESTS> -->
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

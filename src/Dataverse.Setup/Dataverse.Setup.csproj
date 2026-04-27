@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dataverse-mcp</ToolCommandName>
+    <PackageId>Dataverse.Mcp.Setup</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>crossvertise</Authors>
+    <Description>Setup wizard for the Dataverse MCP server</Description>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.65.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.65.0" />
+    <PackageReference Include="Spectre.Console" Version="0.49.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dataverse.Core\Dataverse.Core.csproj" />
+  </ItemGroup>
+
+</Project>

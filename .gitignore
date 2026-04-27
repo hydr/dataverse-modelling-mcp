@@ -1,0 +1,49 @@
+## .NET gitignore
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/repositories.config
+
+# User settings
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# Publish
+publish/
+**/publish/
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Secrets / local overrides
+appsettings.local.json
+appsettings.Development.json
+
+# Token cache — never commit credentials
+**/token.cache
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Artifacts
+artifacts/
+
+# MCP tool temp output
+.playwright-mcp/

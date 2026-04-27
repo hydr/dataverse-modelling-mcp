@@ -65,7 +65,7 @@ public sealed class WorkflowService
         var url = $"api/data/v9.2/workflows({workflowId})" +
                   "?$select=workflowid,name,primaryentity,statecode,statuscode," +
                   "_ownerid_value,description,xaml,createdon,modifiedon," +
-                  "ondemand,isoncreate,isonupdate,isondelete,triggerattribute," +
+                  "ondemand,triggerattribute," +
                   "createstage,updatestage,deletestage," +
                   "scope,mode,runas,istransacted,rank,logcontent,asyncautodelete";
 
@@ -89,9 +89,9 @@ public sealed class WorkflowService
             CreatedOn: item.GetDateTimeOrNull("createdon"),
             ModifiedOn: item.GetDateTimeOrNull("modifiedon"),
             OnDemand: item.TryGetProperty("ondemand", out var od) && od.ValueKind == JsonValueKind.True,
-            IsOnCreate: item.TryGetProperty("isoncreate", out var oc) && oc.ValueKind == JsonValueKind.True,
-            IsOnUpdate: item.TryGetProperty("isonupdate", out var ou) && ou.ValueKind == JsonValueKind.True,
-            IsOnDelete: item.TryGetProperty("isondelete", out var odl) && odl.ValueKind == JsonValueKind.True,
+            IsOnCreate: item.GetInt32OrZero("createstage") != 0,
+            IsOnUpdate: item.GetInt32OrZero("updatestage") != 0,
+            IsOnDelete: item.GetInt32OrZero("deletestage") != 0,
             TriggerAttribute: item.GetStringOrNull("triggerattribute"),
             CreateStage: MapStage(item.GetInt32OrZero("createstage")),
             UpdateStage: MapStage(item.GetInt32OrZero("updatestage")),

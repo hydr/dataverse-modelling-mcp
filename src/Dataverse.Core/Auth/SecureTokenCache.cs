@@ -17,18 +17,33 @@ public static class SecureTokenCache
         var cacheDir = GetCacheDirectory();
         Directory.CreateDirectory(cacheDir);
 
-        var storageProperties = new StorageCreationPropertiesBuilder(CacheFileName, cacheDir)
-            .WithMacKeyChain(ServiceName, KeyChainAccount)
-            .WithLinuxKeyring(
+        var builder = new StorageCreationPropertiesBuilder(CacheFileName, cacheDir)
+            .WithMacKeyChain(ServiceName, KeyChainAccount);
+
+        if (OperatingSystem.IsLinux())
+        {
+            builder = builder.WithLinuxKeyring(
                 schemaName: ServiceName,
                 collection: LinuxCollection,
                 secretLabel: "Dataverse MCP OAuth token cache",
                 attribute1: new KeyValuePair<string, string>("version", "1"),
-                attribute2: new KeyValuePair<string, string>("product", ServiceName))
-            .WithLinuxUnprotectedFile()
-            .Build();
+                attribute2: new KeyValuePair<string, string>("product", ServiceName));
+        }
 
-        return await MsalCacheHelper.CreateAsync(storageProperties);
+        var storageProperties = builder.Build();
+
+        try
+        {
+            return await MsalCacheHelper.CreateAsync(storageProperties);
+        }
+        catch when (OperatingSystem.IsLinux())
+        {
+            // Keyring unavailable — fall back to unprotected file
+            var fallback = new StorageCreationPropertiesBuilder(CacheFileName, cacheDir)
+                .WithLinuxUnprotectedFile()
+                .Build();
+            return await MsalCacheHelper.CreateAsync(fallback);
+        }
     }
 
     private static string GetCacheDirectory()

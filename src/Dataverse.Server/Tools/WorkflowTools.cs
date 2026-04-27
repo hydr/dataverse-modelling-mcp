@@ -80,12 +80,18 @@ public sealed class WorkflowTools
     }
 
     [McpServerTool(Name = "workflow_update")]
-    [Description("Update properties of a Classic Workflow via OData PATCH.")]
+    [Description("Update properties of a Classic Workflow via OData PATCH. " +
+                 "Updatable fields include: name, description, xaml, " +
+                 "primaryentity, scope (1=User,2=BU,3=ParentChildBU,4=Org), " +
+                 "mode (0=Background,1=Realtime), runas (0=Owner,1=CallingUser), " +
+                 "ondemand, isoncreate, isonupdate, isondelete, triggerattribute, " +
+                 "createstage/updatestage/deletestage (20=Pre,40=Post), " +
+                 "logcontent (0=None,1=Details,2=All), asyncautodelete, rank, istransacted.")]
     public static async Task<string> WorkflowUpdate(
         WorkflowService svc,
         ConfigProvider config,
         [Description("The workflow GUID")] string workflowId,
-        [Description("JSON object with properties to update (e.g. {\"name\": \"NewName\"})")] string propertiesJson,
+        [Description("JSON object with properties to update (e.g. {\"logcontent\": 2, \"ondemand\": true})")] string propertiesJson,
         CancellationToken ct = default)
     {
         try

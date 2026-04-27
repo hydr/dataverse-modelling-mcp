@@ -25,7 +25,7 @@ public sealed class EnvironmentVariableService
                   "?$select=environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue" +
                   "&$expand=environmentvariabledefinition_environmentvariablevalue($select=value)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var results = new List<EnvironmentVariableSummary>();
 
@@ -61,7 +61,7 @@ public sealed class EnvironmentVariableService
                   "&$select=environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,description" +
                   "&$expand=environmentvariabledefinition_environmentvariablevalue($select=environmentvariablevalueid,value)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
 
         if (!doc.RootElement.TryGetProperty("value", out var items) || items.GetArrayLength() == 0)

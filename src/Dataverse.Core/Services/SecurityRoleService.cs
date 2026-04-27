@@ -26,7 +26,7 @@ public sealed class SecurityRoleService
         if (!string.IsNullOrWhiteSpace(filter))
             url += $"&$filter={Uri.EscapeDataString(filter)}";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var results = new List<RoleSummary>();
 
@@ -61,7 +61,7 @@ public sealed class SecurityRoleService
                   "?$select=roleid,name,description,_businessunitid_value" +
                   "&$expand=businessunitid($select=name),roleprivileges_association($select=privilegeid,name,accessright)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var item = JsonDocument.Parse(raw).RootElement;
 
         var privileges = new List<RolePrivilege>();

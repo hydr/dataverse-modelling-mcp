@@ -27,7 +27,7 @@ public sealed class TableService
         // Client-side filtering is applied below when a filter string is provided.
         var url = "api/data/v9.2/EntityDefinitions?$select=LogicalName,DisplayName,EntitySetName,TableType,IsCustomEntity";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var results = new List<TableSummary>();
 
@@ -67,7 +67,7 @@ public sealed class TableService
         var url = $"api/data/v9.2/EntityDefinitions(LogicalName='{logicalName}')" +
                   "?$expand=Attributes($select=LogicalName,DisplayName,AttributeType,RequiredLevel,IsCustomAttribute)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var item = JsonDocument.Parse(raw).RootElement;
 
         string? displayName = null;

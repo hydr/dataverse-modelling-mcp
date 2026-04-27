@@ -25,7 +25,7 @@ public sealed class SolutionService
                   "&$select=solutionid,uniquename,friendlyname,version,ismanaged,_publisherid_value" +
                   "&$expand=publisherid($select=friendlyname,uniquename)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var results = new List<SolutionSummary>();
 
@@ -59,7 +59,7 @@ public sealed class SolutionService
                   "&$select=solutionid,uniquename,friendlyname,version,ismanaged,description,installedon" +
                   "&$expand=publisherid($select=friendlyname,uniquename),solution_solutioncomponent($select=objectid,componenttype,rootcomponentbehavior)";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
 
         if (!doc.RootElement.TryGetProperty("value", out var items) || items.GetArrayLength() == 0)
@@ -108,7 +108,7 @@ public sealed class SolutionService
     {
         // Resolve publisher ID first
         var pubUrl = $"api/data/v9.2/publishers?$filter=uniquename eq '{publisherUniqueName}'&$select=publisherid";
-        var pubRaw = await _client.GetRawAsync(orgUrl, pubUrl, ct);
+        var pubRaw = await _client.GetRawAsync(orgUrl, pubUrl, ct: ct);
         var pubDoc = JsonDocument.Parse(pubRaw);
         Guid publisherId = Guid.Empty;
         if (pubDoc.RootElement.TryGetProperty("value", out var pubs) && pubs.GetArrayLength() > 0)
@@ -206,7 +206,7 @@ public sealed class SolutionService
                   $"?$filter=msdyn_solutionid ne null" +
                   $"&$select=msdyn_name,msdyn_solutionversion";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var layers = new List<string>();
 

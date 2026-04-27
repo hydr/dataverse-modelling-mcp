@@ -32,7 +32,7 @@ public sealed class ViewService
                   $"?$filter={Uri.EscapeDataString(filter)}" +
                   "&$select=savedqueryid,name,querytype,isdefault,iscustomizable";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
         var results = new List<ViewSummary>();
 
@@ -61,7 +61,7 @@ public sealed class ViewService
         var url = $"api/data/v9.2/savedqueries({viewId})" +
                   "?$select=savedqueryid,name,querytype,isdefault,iscustomizable,fetchxml,layoutxml,description";
 
-        var raw = await _client.GetRawAsync(orgUrl, url, ct);
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var item = JsonDocument.Parse(raw).RootElement;
 
         return new ViewDetail(

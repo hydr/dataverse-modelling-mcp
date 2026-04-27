@@ -20,7 +20,25 @@ public sealed record WorkflowDetail(
     string? Description,
     string? Xaml,
     DateTime? CreatedOn,
-    DateTime? ModifiedOn);
+    DateTime? ModifiedOn,
+    // Trigger
+    bool OnDemand,
+    bool IsOnCreate,
+    bool IsOnUpdate,
+    bool IsOnDelete,
+    string? TriggerAttribute,
+    string? CreateStage,
+    string? UpdateStage,
+    string? DeleteStage,
+    // Execution
+    string Scope,
+    string Mode,
+    string RunAs,
+    bool IsTransacted,
+    int Rank,
+    // Logging
+    string LogContent,
+    bool AsyncAutoDelete);
 
 public sealed record WorkflowValidationReport(
     Guid WorkflowId,

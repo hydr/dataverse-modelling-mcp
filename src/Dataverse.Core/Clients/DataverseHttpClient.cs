@@ -42,9 +42,15 @@ public sealed class DataverseHttpClient
         return JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
 
-    public async Task<string> GetRawAsync(string orgUrl, string relativeUrl, CancellationToken ct = default)
+    public async Task<string> GetRawAsync(
+        string orgUrl,
+        string relativeUrl,
+        bool includeFormattedValues = false,
+        CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
+        if (includeFormattedValues)
+            request.Headers.Add("Prefer", "odata.include-annotations=\"OData.Community.Display.V1.FormattedValue\"");
         using var response = await _http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         return await response.Content.ReadAsStringAsync(ct);

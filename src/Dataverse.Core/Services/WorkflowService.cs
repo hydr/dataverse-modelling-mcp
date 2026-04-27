@@ -25,7 +25,7 @@ public sealed class WorkflowService
         int top = 50,
         CancellationToken ct = default)
     {
-        var baseFilter = "category eq 0"; // Classic workflows only
+        var baseFilter = "category eq 0 and type eq 1"; // Classic workflows, definitions only (type 2 = internal activation copies)
         var combinedFilter = string.IsNullOrWhiteSpace(filter)
             ? baseFilter
             : $"{baseFilter} and ({filter})";

@@ -32,3 +32,35 @@ public sealed record FlowDescription(
     string TriggerSummary,
     IReadOnlyList<string> ActionSummaries,
     string FullDescription);
+
+public sealed record FlowVersionSummary(
+    Guid VersionId,
+    string VersionName,
+    int Operation,
+    string OperationName,
+    DateTime? CreatedOn,
+    string? CreatedByName,
+    Guid? RestoredFromVersionId,
+    string? ChangeSummary,
+    string? SystemChangeSummary);
+
+public sealed record FlowVersionDetail(
+    Guid VersionId,
+    string VersionName,
+    int Operation,
+    string OperationName,
+    DateTime? CreatedOn,
+    string? CreatedByName,
+    DateTime? ModifiedOn,
+    string? ModifiedByName,
+    Guid? RestoredFromVersionId,
+    Guid WorkflowId,
+    string? WorkflowName,
+    string? ChangeSummary,
+    string? SystemChangeSummary);
+
+public sealed record FlowRestoreResult(
+    Guid NewVersionId,
+    Guid RestoredFromVersionId,
+    Guid WorkflowId,
+    string Message);

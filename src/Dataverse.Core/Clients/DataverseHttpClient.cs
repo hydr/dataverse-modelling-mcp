@@ -42,6 +42,16 @@ public sealed class DataverseHttpClient
         return JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
 
+    public async Task<byte[]> GetBytesAsync(string orgUrl, string relativeUrl, CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadAsByteArrayAsync(ct);
+    }
+
     public async Task<string> GetRawAsync(
         string orgUrl,
         string relativeUrl,
@@ -77,6 +87,20 @@ public sealed class DataverseHttpClient
     public async Task PatchAsync(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+    }
+
+    public async Task PatchAsync(
+        string orgUrl,
+        string relativeUrl,
+        object body,
+        IReadOnlyDictionary<string, string> extraHeaders,
+        CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);
+        foreach (var (k, v) in extraHeaders)
+            request.Headers.TryAddWithoutValidation(k, v);
         using var response = await _http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }

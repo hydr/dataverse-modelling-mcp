@@ -122,6 +122,17 @@ public sealed class WorkflowService
     };
 
 
+    public async Task<string?> GetXamlAsync(
+        string orgUrl,
+        Guid workflowId,
+        CancellationToken ct = default)
+    {
+        var url = $"api/data/v9.2/workflows({workflowId})?$select=xaml";
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
+        var item = JsonDocument.Parse(raw).RootElement;
+        return item.GetStringOrNull("xaml");
+    }
+
     public async Task<Guid> CreateAsync(
         string orgUrl,
         string name,

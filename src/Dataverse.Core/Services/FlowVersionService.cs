@@ -1,6 +1,7 @@
 namespace Dataverse.Core.Services;
 
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Dataverse.Core.Clients;
 using Dataverse.Core.Json;
 using Dataverse.Core.Models;
@@ -180,6 +181,124 @@ public sealed class FlowVersionService
         };
 
         await _client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({flowId})", body, headers, ct);
+    }
+
+    /// <summary>
+    /// Returns the raw <c>clientdata</c> string of a workflow record — the stringified Logic Apps
+    /// JSON wrapper (<c>{ properties: { connectionReferences, definition }, schemaVersion }</c>).
+    /// This is what <c>flow_save_draft</c> expects on the way back. <c>flow_get</c> only returns the
+    /// inner <c>definition</c>, losing the <c>connectionReferences</c>.
+    /// </summary>
+    public async Task<string> GetClientDataAsync(string orgUrl, Guid flowId, CancellationToken ct = default)
+    {
+        var raw = await _client.GetRawAsync(
+            orgUrl,
+            $"api/data/v9.2/workflows({flowId})?$select=clientdata",
+            includeFormattedValues: false,
+            ct);
+        var doc = JsonDocument.Parse(raw);
+        return doc.RootElement.GetProperty("clientdata").GetString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Surgical update of a single parameter on one action's <c>inputs.parameters</c> object.
+    /// Reads <c>clientdata</c>, mutates only the targeted key, then saves it as draft. Avoids
+    /// round-tripping the full 30 KB+ clientdata through callers for routine FetchXML / param edits.
+    /// </summary>
+    /// <param name="parameterName">
+    /// The key directly under <c>inputs.parameters</c>. May contain slashes (e.g.
+    /// <c>item/subject</c>, <c>item/activitypointer_activity_parties</c>) — they are treated as part of the
+    /// key, not as a path separator.
+    /// </param>
+    /// <param name="valueJson">
+    /// New value as JSON. May be a string ("foo"), number (42), bool (true), object ({...}), array ([...]).
+    /// </param>
+    /// <param name="publish">If true, also publish the draft immediately.</param>
+    public async Task PatchActionInputAsync(
+        string orgUrl,
+        Guid flowId,
+        string actionName,
+        string parameterName,
+        string valueJson,
+        bool publish = false,
+        bool activateFlow = false,
+        CancellationToken ct = default)
+    {
+        var clientData = await GetClientDataAsync(orgUrl, flowId, ct);
+        var rootNode = JsonNode.Parse(clientData)
+            ?? throw new InvalidOperationException("clientdata is empty or not parseable.");
+
+        var actions = rootNode["properties"]?["definition"]?["actions"]
+            ?? throw new InvalidOperationException("clientdata.properties.definition.actions not found.");
+
+        var action = actions[actionName]
+            ?? throw new InvalidOperationException($"Action '{actionName}' not found in flow.");
+
+        var parameters = action["inputs"]?["parameters"]
+            ?? throw new InvalidOperationException($"Action '{actionName}' has no inputs.parameters.");
+
+        parameters[parameterName] = JsonNode.Parse(valueJson);
+
+        var newClientData = rootNode.ToJsonString();
+        await SaveDraftAsync(orgUrl, flowId, newClientData, null, ct);
+
+        if (publish)
+            await PublishAsync(orgUrl, flowId, activateFlow, ct);
+    }
+
+    /// <summary>
+    /// Atomic wrapper: <c>SaveDraft</c> + <c>Publish</c> in one call. Mirrors the Maker UI's
+    /// "Save and Publish" button.
+    /// </summary>
+    public async Task SaveDraftAndPublishAsync(
+        string orgUrl,
+        Guid flowId,
+        string clientData,
+        string? name = null,
+        bool activateFlow = false,
+        CancellationToken ct = default)
+    {
+        await SaveDraftAsync(orgUrl, flowId, clientData, name, ct);
+        await PublishAsync(orgUrl, flowId, activateFlow, ct);
+    }
+
+    /// <summary>
+    /// Read-only sanity for a FetchXML: runs it against the given entity set and reports validity,
+    /// result count, and an optional sample. Useful pre-flight check before patching a flow.
+    /// </summary>
+    public async Task<FetchXmlValidationResult> ValidateFetchXmlAsync(
+        string orgUrl,
+        string entitySet,
+        string fetchXml,
+        int sampleSize = 0,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"api/data/v9.2/{entitySet}?fetchXml={Uri.EscapeDataString(fetchXml)}";
+            var raw = await _client.GetRawAsync(orgUrl, url, includeFormattedValues: false, ct);
+            var doc = JsonDocument.Parse(raw);
+            var count = 0;
+            var samples = new List<string>();
+            if (doc.RootElement.TryGetProperty("value", out var items))
+            {
+                count = items.GetArrayLength();
+                if (sampleSize > 0)
+                {
+                    foreach (var item in items.EnumerateArray().Take(sampleSize))
+                        samples.Add(item.GetRawText());
+                }
+            }
+            return new FetchXmlValidationResult(true, count, samples, null);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new FetchXmlValidationResult(false, 0, [], ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return new FetchXmlValidationResult(false, 0, [], ex.Message);
+        }
     }
 
     private static string MapOperation(int value) => value switch

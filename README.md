@@ -50,16 +50,16 @@ The wizard will:
 
 | OS | Path |
 |----|------|
-| Windows | `%LOCALAPPDATA%\dataverse-mcp\config.json` |
-| macOS | `~/.dataverse-mcp/config.json` |
-| Linux | `~/.config/dataverse-mcp/config.json` |
+| Windows | `%LOCALAPPDATA%\dataverse-modelling-mcp\config.json` |
+| macOS | `~/.dataverse-modelling-mcp/config.json` |
+| Linux | `~/.config/dataverse-modelling-mcp/config.json` |
 
 ### Register with Claude Code
 
 After setup, run the printed command, for example:
 
 ```
-claude mcp add dataverse-mcp -- dotnet run --project /path/to/src/Dataverse.Server
+claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server
 ```
 
 ---
@@ -70,8 +70,8 @@ Tokens are acquired via **MSAL `PublicClientApplication`** (silent first, browse
 
 | OS | Storage |
 |----|---------|
-| Windows | DPAPI-encrypted file (`%LOCALAPPDATA%\dataverse-mcp\token.cache`) |
-| macOS | Keychain (service `dataverse-mcp`) |
+| Windows | DPAPI-encrypted file (`%LOCALAPPDATA%\dataverse-modelling-mcp\token.cache`) |
+| macOS | Keychain (service `dataverse-modelling-mcp`) |
 | Linux | libsecret with plaintext fallback |
 
 No client secrets are ever stored. See [docs/authentication.md](docs/authentication.md) for full details.

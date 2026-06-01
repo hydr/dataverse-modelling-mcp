@@ -57,6 +57,35 @@ public sealed class WorkflowTools
         }
     }
 
+    [McpServerTool(Name = "workflow_export_xaml")]
+    [Description("Export the raw XAML definition of a Classic Workflow. " +
+                 "Returns the XAML string as-is for inspection, backup, or documentation purposes. " +
+                 "Call this BEFORE any workflow_update call to have a restore point. " +
+                 "Do not attempt to write modified XAML back via workflow_update — " +
+                 "structural changes corrupt the Dataverse designer (error 0x80045037).")]
+    public static async Task<string> WorkflowExportXaml(
+        WorkflowService svc,
+        ConfigProvider config,
+        [Description("The workflow GUID")] string workflowId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!Guid.TryParse(workflowId, out var id))
+                return JsonSerializer.Serialize(new { error = "Invalid workflowId GUID format." });
+
+            var env = config.GetActiveEnvironment();
+            var xaml = await svc.GetXamlAsync(env.OrgUrl, id, ct);
+            return xaml is null
+                ? JsonSerializer.Serialize(new { error = "Workflow not found or has no XAML." })
+                : xaml;
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "workflow_create")]
     [Description("Create a new Classic Workflow for a given primary entity.")]
     public static async Task<string> WorkflowCreate(
@@ -80,13 +109,17 @@ public sealed class WorkflowTools
     }
 
     [McpServerTool(Name = "workflow_update")]
-    [Description("Update properties of a Classic Workflow via OData PATCH. " +
-                 "Updatable fields include: name, description, xaml, " +
+    [Description("Update metadata properties of a Classic Workflow via OData PATCH. " +
+                 "Updatable fields: name, description, " +
                  "primaryentity, scope (1=User,2=BU,3=ParentChildBU,4=Org), " +
                  "mode (0=Background,1=Realtime), runas (0=Owner,1=CallingUser), " +
                  "ondemand, isoncreate, isonupdate, isondelete, triggerattribute, " +
                  "createstage/updatestage/deletestage (20=Pre,40=Post), " +
-                 "logcontent (0=None,1=Details,2=All), asyncautodelete, rank, istransacted.")]
+                 "logcontent (0=None,1=Details,2=All), asyncautodelete, rank, istransacted. " +
+                 "WARNING: Do NOT include 'xaml' in the properties. Dataverse Classic Workflow XAML " +
+                 "uses a WF4-based format with internal UiData linked to every visual step. " +
+                 "Structural changes via XAML PATCH will corrupt the designer (error 0x80045037). " +
+                 "To inspect XAML use workflow_export_xaml. To change workflow logic, use the Dataverse designer.")]
     public static async Task<string> WorkflowUpdate(
         WorkflowService svc,
         ConfigProvider config,

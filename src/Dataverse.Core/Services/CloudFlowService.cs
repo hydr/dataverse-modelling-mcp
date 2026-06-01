@@ -101,18 +101,6 @@ public sealed class CloudFlowService
         return string.Empty;
     }
 
-    public async Task UpdateAsync(
-        string region,
-        string environmentId,
-        string flowId,
-        JsonElement definition,
-        CancellationToken ct = default)
-    {
-        var url = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}?api-version=2016-11-01";
-        var body = new { properties = new { definition } };
-        await _client.PatchAsync<JsonElement?>(url, body, ct);
-    }
-
     public async Task SetStateAsync(
         string region,
         string environmentId,
@@ -217,6 +205,158 @@ public sealed class CloudFlowService
             TriggerSummary: triggerSummary,
             ActionSummaries: actionSummaries,
             FullDescription: sb.ToString());
+    }
+
+    /// <summary>
+    /// Triggers a flow run via the manual-trigger endpoint and returns the newly created RunId
+    /// (or empty if it cannot be resolved). For Recurrence-triggered flows, pass triggerName="Recurrence".
+    /// </summary>
+    public async Task<string> TriggerRunAsync(
+        string region,
+        string environmentId,
+        string flowId,
+        string triggerName = "Recurrence",
+        object? triggerBody = null,
+        CancellationToken ct = default)
+    {
+        var url = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}/triggers/{triggerName}/run?api-version=2016-11-01";
+        await _client.PostAsync(url, triggerBody ?? new { }, ct);
+
+        var runsUrl = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}/runs?api-version=2016-11-01&$top=1";
+        var runsRaw = await _client.GetRawAsync(runsUrl, ct);
+        var runs = JsonDocument.Parse(runsRaw).RootElement;
+        if (!runs.TryGetProperty("value", out var arr) || arr.GetArrayLength() == 0)
+            return string.Empty;
+        return arr[0].GetStringOrNull("name") ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Get a single run by id without using $expand=properties/actions (which intermittently
+    /// returns HTML runtime errors from the PA backend on long-running or large flows).
+    /// </summary>
+    public async Task<FlowRun?> GetRunAsync(
+        string region,
+        string environmentId,
+        string flowId,
+        string runId,
+        CancellationToken ct = default)
+    {
+        var url = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}/runs/{runId}?api-version=2016-11-01";
+        var raw = await _client.GetRawAsync(url, ct);
+        var item = JsonDocument.Parse(raw).RootElement;
+        var props = item.TryGetProperty("properties", out var p) ? p : item;
+        string? errorCode = null, errorMsg = null;
+        if (props.TryGetProperty("error", out var errEl))
+        {
+            errorCode = errEl.GetStringOrNull("code");
+            errorMsg = errEl.GetStringOrNull("message");
+        }
+        return new FlowRun(
+            RunId: item.GetStringOrNull("name") ?? runId,
+            Status: props.GetStringOrNull("status") ?? "Unknown",
+            StartTime: props.GetDateTimeOrNull("startTime"),
+            EndTime: props.GetDateTimeOrNull("endTime"),
+            TriggerName: props.GetStringOrNull("triggerName"),
+            ErrorCode: errorCode,
+            ErrorMessage: errorMsg);
+    }
+
+    /// <summary>
+    /// List all actions of a single run with status, code, error, and outputs-link. Uses the
+    /// per-run actions endpoint that works even when $expand on the run resource fails.
+    /// </summary>
+    public async Task<IReadOnlyList<RunActionSummary>> GetRunActionsAsync(
+        string region,
+        string environmentId,
+        string flowId,
+        string runId,
+        CancellationToken ct = default)
+    {
+        var url = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}/runs/{runId}/actions?api-version=2016-11-01";
+        var raw = await _client.GetRawAsync(url, ct);
+        var doc = JsonDocument.Parse(raw);
+        var results = new List<RunActionSummary>();
+        if (!doc.RootElement.TryGetProperty("value", out var items))
+            return results;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            var props = item.TryGetProperty("properties", out var p) ? p : item;
+            string? errorCode = null, errorMsg = null;
+            if (props.TryGetProperty("error", out var errEl))
+            {
+                errorCode = errEl.GetStringOrNull("code");
+                errorMsg = errEl.GetStringOrNull("message");
+            }
+            string? outputsLink = null;
+            if (props.TryGetProperty("outputsLink", out var ol))
+                outputsLink = ol.GetStringOrNull("uri");
+
+            results.Add(new RunActionSummary(
+                Name: item.GetStringOrNull("name") ?? string.Empty,
+                Status: props.GetStringOrNull("status") ?? "Unknown",
+                Code: props.GetStringOrNull("code"),
+                StartTime: props.GetDateTimeOrNull("startTime"),
+                EndTime: props.GetDateTimeOrNull("endTime"),
+                ErrorCode: errorCode,
+                ErrorMessage: errorMsg,
+                OutputsLink: outputsLink));
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Fetch the JSON outputs of a single action in a run (resolves the SAS-signed outputsLink).
+    /// The link is downloaded WITHOUT the Bearer token (it's pre-signed; adding a Bearer header
+    /// triggers DirectApiRequestHasMoreThanOneAuthorization).
+    /// </summary>
+    public async Task<string> GetActionOutputsAsync(
+        string region,
+        string environmentId,
+        string flowId,
+        string runId,
+        string actionName,
+        CancellationToken ct = default)
+    {
+        var url = $"{PowerAutomateHttpClient.FlowsUrl(region, environmentId)}/{flowId}/runs/{runId}/actions/{actionName}?api-version=2016-11-01";
+        var raw = await _client.GetRawAsync(url, ct);
+        var props = JsonDocument.Parse(raw).RootElement.GetProperty("properties");
+        if (!props.TryGetProperty("outputsLink", out var ol))
+            return string.Empty;
+        var uri = ol.GetStringOrNull("uri");
+        if (string.IsNullOrEmpty(uri))
+            return string.Empty;
+
+        using var fresh = new HttpClient();
+        return await fresh.GetStringAsync(uri, ct);
+    }
+
+    /// <summary>
+    /// Poll the run until it reaches a terminal state (anything other than "Running") or until the
+    /// timeout elapses. Defaults to 5-minute deadline, 10-second poll interval. Throws on timeout.
+    /// </summary>
+    public async Task<FlowRun> WaitForRunAsync(
+        string region,
+        string environmentId,
+        string flowId,
+        string runId,
+        int timeoutSeconds = 300,
+        int pollIntervalSeconds = 10,
+        CancellationToken ct = default)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        FlowRun? last = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            last = await GetRunAsync(region, environmentId, flowId, runId, ct);
+            if (last is null)
+                throw new InvalidOperationException($"Run '{runId}' not found.");
+            if (!string.Equals(last.Status, "Running", StringComparison.OrdinalIgnoreCase))
+                return last;
+            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSeconds), ct);
+        }
+        throw new TimeoutException(
+            $"Run '{runId}' did not reach a terminal state within {timeoutSeconds}s. Last status: {last?.Status ?? "unknown"}.");
     }
 
     private static string? ExtractTriggerType(JsonElement props)

@@ -76,28 +76,6 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_update")]
-    [Description("Update the definition of a Cloud Flow.")]
-    public static async Task<string> FlowUpdate(
-        CloudFlowService svc,
-        ConfigProvider config,
-        [Description("The flow GUID")] string flowId,
-        [Description("Updated flow definition as JSON object")] string definitionJson,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            var definition = JsonSerializer.Deserialize<JsonElement>(definitionJson);
-            var env = config.GetActiveEnvironment();
-            await svc.UpdateAsync(env.Region, env.EnvironmentId!, flowId, definition, ct);
-            return JsonSerializer.Serialize(new { success = true, flowId });
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
-        }
-    }
-
     [McpServerTool(Name = "flow_set_state")]
     [Description("Enable or disable a Cloud Flow.")]
     public static async Task<string> FlowSetState(
@@ -243,6 +221,183 @@ public sealed class CloudFlowTools
             var env = config.GetActiveEnvironment();
             var result = await svc.RestoreAsync(env.OrgUrl, flowId, versionId, changeSummary, ct);
             return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_get_clientdata")]
+    [Description("Get the raw stringified clientdata of a solution-aware Cloud Flow (the full Logic Apps wrapper including connectionReferences, definition, schemaVersion). Use this when you need to mutate the flow's JSON locally — flow_get only returns the inner definition and loses connectionReferences.")]
+    public static async Task<string> FlowGetClientData(
+        FlowVersionService svc,
+        ConfigProvider config,
+        [Description("The flow / workflow GUID")] Guid flowId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var data = await svc.GetClientDataAsync(env.OrgUrl, flowId, ct);
+            return JsonSerializer.Serialize(new { flowId, length = data.Length, clientdata = data });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_patch_action_input")]
+    [Description("Surgically update one parameter on a single action's inputs.parameters object inside a solution-aware Cloud Flow. Avoids round-tripping the full clientdata. Common use cases: replace a List action's fetchXml, change a Compose action's input, add a recipient. Optionally publishes the draft immediately.")]
+    public static async Task<string> FlowPatchActionInput(
+        FlowVersionService svc,
+        ConfigProvider config,
+        [Description("The flow / workflow GUID")] Guid flowId,
+        [Description("Action name as it appears in clientdata.properties.definition.actions, e.g. List_Lost_Customers")] string actionName,
+        [Description("Parameter key directly under inputs.parameters, e.g. 'fetchXml' or 'item/subject' (slashes are part of the key, not a path separator)")] string parameterName,
+        [Description("New value as JSON (string, number, bool, object, or array). Strings must be JSON-quoted.")] string valueJson,
+        [Description("If true, also publish the draft right after saving (default false — just save draft).")] bool publish = false,
+        [Description("If publish=true, also activate the flow at runtime (default false).")] bool activateFlow = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            await svc.PatchActionInputAsync(env.OrgUrl, flowId, actionName, parameterName, valueJson, publish, activateFlow, ct);
+            return JsonSerializer.Serialize(new { success = true, flowId, actionName, parameterName, published = publish });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_save_draft_and_publish")]
+    [Description("Atomic save-draft + publish on a solution-aware Cloud Flow. Mirrors the Maker UI 'Save and Publish' button. Use when you have the full new clientdata in hand.")]
+    public static async Task<string> FlowSaveDraftAndPublish(
+        FlowVersionService svc,
+        ConfigProvider config,
+        [Description("The flow / workflow GUID")] Guid flowId,
+        [Description("The new clientdata JSON string")] string clientData,
+        [Description("Optional new display name")] string? name = null,
+        [Description("If true, also activate the flow at runtime (default false — publish only)")] bool activateFlow = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            await svc.SaveDraftAndPublishAsync(env.OrgUrl, flowId, clientData, name, activateFlow, ct);
+            return JsonSerializer.Serialize(new { success = true, flowId, activated = activateFlow });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "fetchxml_validate")]
+    [Description("Read-only sanity check for a FetchXML: runs it against Dataverse, reports whether it parses and how many rows it returns. Optionally returns the first N raw row samples. Use as a pre-flight check before patching the FetchXML into a flow action.")]
+    public static async Task<string> FetchXmlValidate(
+        FlowVersionService svc,
+        ConfigProvider config,
+        [Description("Entity set name (plural), e.g. 'accounts', 'contacts', 'leads'")] string entitySet,
+        [Description("The FetchXML to validate")] string fetchXml,
+        [Description("If > 0, include this many rows as raw JSON in the result")] int sampleSize = 0,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.ValidateFetchXmlAsync(env.OrgUrl, entitySet, fetchXml, sampleSize, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_trigger_run")]
+    [Description("Manually trigger a Cloud Flow run via the PA Flow API (equivalent of the Maker UI 'Run flow' button). Returns the newly created RunId. For Recurrence-triggered flows the default triggerName 'Recurrence' is correct.")]
+    public static async Task<string> FlowTriggerRun(
+        CloudFlowService svc,
+        ConfigProvider config,
+        [Description("The flow GUID")] string flowId,
+        [Description("Trigger name as defined in the flow definition (default 'Recurrence')")] string triggerName = "Recurrence",
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var runId = await svc.TriggerRunAsync(env.Region, env.EnvironmentId!, flowId, triggerName, null, ct);
+            return JsonSerializer.Serialize(new { flowId, runId, triggered = true });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_wait_for_run")]
+    [Description("Block (server-side polling) until a flow run reaches a terminal state (anything other than 'Running'), or the timeout elapses. Returns the final run status incl. error code if any. Default timeout 300s, poll every 10s.")]
+    public static async Task<string> FlowWaitForRun(
+        CloudFlowService svc,
+        ConfigProvider config,
+        [Description("The flow GUID")] string flowId,
+        [Description("The run id returned by flow_trigger_run / flow_get_runs")] string runId,
+        [Description("Maximum seconds to wait (default 300)")] int timeoutSeconds = 300,
+        [Description("Polling interval in seconds (default 10)")] int pollIntervalSeconds = 10,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.WaitForRunAsync(env.Region, env.EnvironmentId!, flowId, runId, timeoutSeconds, pollIntervalSeconds, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_get_run_actions")]
+    [Description("List all actions of a single run with status, error code/message, and outputs link. Uses the per-run actions endpoint that is stable even when the run-detail $expand=properties/actions intermittently fails with HTML runtime errors.")]
+    public static async Task<string> FlowGetRunActions(
+        CloudFlowService svc,
+        ConfigProvider config,
+        [Description("The flow GUID")] string flowId,
+        [Description("The run id")] string runId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.GetRunActionsAsync(env.Region, env.EnvironmentId!, flowId, runId, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "flow_get_action_outputs")]
+    [Description("Fetch the JSON outputs of a single action in a run (resolves the SAS-signed outputsLink). Returns the raw body as a string — useful for inspecting Compose outputs, ListRecords result counts, or failed-action error bodies.")]
+    public static async Task<string> FlowGetActionOutputs(
+        CloudFlowService svc,
+        ConfigProvider config,
+        [Description("The flow GUID")] string flowId,
+        [Description("The run id")] string runId,
+        [Description("The action name (as in clientdata.actions, e.g. 'Compose_Email_Body')")] string actionName,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.GetActionOutputsAsync(env.Region, env.EnvironmentId!, flowId, runId, actionName, ct);
+            return JsonSerializer.Serialize(new { flowId, runId, actionName, length = result.Length, outputs = result });
         }
         catch (Exception ex)
         {

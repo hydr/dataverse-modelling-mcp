@@ -76,18 +76,19 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_export")]
-    [Description("Export a solution as a zip file. Returns the base64-encoded zip content.")]
+    [Description("Export a solution as a zip. If filePath is given, writes the zip to disk and returns the path + size (recommended for large solutions). Otherwise returns the base64-encoded zip content inline.")]
     public static async Task<string> SolutionExport(
         SolutionService svc,
         ConfigProvider config,
         [Description("Unique name of the solution")] string uniqueName,
         [Description("true to export as managed, false for unmanaged")] bool managed = false,
+        [Description("Optional local path to write the zip to (e.g. 'C:\\\\temp\\\\MySolution.zip'). When set, base64 is NOT returned — only the path and byte size.")] string? filePath = null,
         CancellationToken ct = default)
     {
         try
         {
             var env = config.GetActiveEnvironment();
-            var result = await svc.ExportAsync(env.OrgUrl, uniqueName, managed, ct);
+            var result = await svc.ExportAsync(env.OrgUrl, uniqueName, managed, filePath, ct);
             return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (Exception ex)
@@ -97,19 +98,24 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_import")]
-    [Description("Import a solution from a base64-encoded zip string.")]
+    [Description("Import a solution asynchronously (ImportSolutionAsync + ImportJob polling). Provide EITHER filePath (read zip from disk, recommended) OR zipBase64. Blocks until the import finishes, then returns success plus any per-component errors parsed from the import job.")]
     public static async Task<string> SolutionImport(
         SolutionService svc,
         ConfigProvider config,
-        [Description("Base64-encoded solution zip content")] string zipBase64,
+        [Description("Local path to a solution zip on disk. Takes precedence over zipBase64.")] string? filePath = null,
+        [Description("Base64-encoded solution zip content (alternative to filePath).")] string? zipBase64 = null,
         [Description("true to overwrite unmanaged customizations")] bool overwriteUnmanaged = false,
+        [Description("Max seconds to wait for the import to finish (default 600 = 10 min). Raise for large solutions.")] int timeoutSeconds = 600,
         CancellationToken ct = default)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(filePath) && string.IsNullOrWhiteSpace(zipBase64))
+                return JsonSerializer.Serialize(new { error = "Provide either filePath or zipBase64." });
+
             var env = config.GetActiveEnvironment();
-            await svc.ImportAsync(env.OrgUrl, zipBase64, overwriteUnmanaged, ct);
-            return JsonSerializer.Serialize(new { success = true });
+            var result = await svc.ImportAsync(env.OrgUrl, zipBase64, overwriteUnmanaged, filePath, timeoutSeconds, pollIntervalSeconds: 5, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (Exception ex)
         {

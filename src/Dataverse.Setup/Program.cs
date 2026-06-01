@@ -4,7 +4,7 @@ using Dataverse.Core.Config;
 using Microsoft.Identity.Client;
 using Spectre.Console;
 
-AnsiConsole.Write(new FigletText("Dataverse MCP").Color(Color.Blue));
+AnsiConsole.Write(new FigletText("Dataverse Modelling MCP").Color(Color.Blue));
 AnsiConsole.MarkupLine("[bold cyan]Setup Wizard[/]");
 AnsiConsole.WriteLine();
 
@@ -167,7 +167,7 @@ AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("[bold green]Setup complete![/]");
 AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("To add this MCP server to Claude Code, run:");
-AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-mcp -- dotnet run --project /path/to/src/Dataverse.Server[/]");
+AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server[/]");
 AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("Or, if installed as a dotnet tool:");
-AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-mcp -- dataverse-mcp server[/]");
+AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-modelling-mcp -- dataverse-modelling-mcp server[/]");

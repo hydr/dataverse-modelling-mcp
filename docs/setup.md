@@ -27,9 +27,9 @@ The wizard will:
 
 | OS      | Path |
 |---------|------|
-| Windows | `%LOCALAPPDATA%\dataverse-mcp\config.json` |
-| macOS   | `~/.dataverse-mcp/config.json` |
-| Linux   | `~/.config/dataverse-mcp/config.json` |
+| Windows | `%LOCALAPPDATA%\dataverse-modelling-mcp\config.json` |
+| macOS   | `~/.dataverse-modelling-mcp/config.json` |
+| Linux   | `~/.config/dataverse-modelling-mcp/config.json` |
 
 ## Config structure
 
@@ -55,7 +55,7 @@ The wizard will:
 After setup, run the printed command, for example:
 
 ```
-claude mcp add dataverse-mcp -- dotnet run --project /path/to/src/Dataverse.Server
+claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server
 ```
 
 ## Updating

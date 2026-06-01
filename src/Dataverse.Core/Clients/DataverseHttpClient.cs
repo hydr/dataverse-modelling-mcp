@@ -23,6 +23,16 @@ public sealed class DataverseHttpClient
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    /// <summary>
+    /// Serializer for Web API action/function payloads. Dataverse action parameters are
+    /// case-sensitive and PascalCase (e.g. <c>SolutionName</c>, <c>CustomizationFile</c>,
+    /// <c>ComponentId</c>) — the camelCase policy used for entity bodies would break them.
+    /// </summary>
+    private static readonly JsonSerializerOptions ActionJsonOptions = new()
+    {
+        PropertyNamingPolicy = null
+    };
+
     public DataverseHttpClient(
         HttpClient http,
         ITokenProvider tokenProvider,
@@ -84,6 +94,30 @@ public sealed class DataverseHttpClient
         await EnsureSuccessAsync(response, ct);
     }
 
+    /// <summary>POST returning the raw response body as a string (or empty on 204). Sets
+    /// <c>Prefer: return=representation</c> by default so Dataverse returns the created row
+    /// in the body — otherwise many endpoints respond with 204 No Content.</summary>
+    public async Task<string> PostRawAsync(
+        string orgUrl,
+        string relativeUrl,
+        object body,
+        IReadOnlyDictionary<string, string>? extraHeaders = null,
+        bool requestRepresentation = true,
+        CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);
+        if (requestRepresentation)
+            request.Headers.TryAddWithoutValidation("Prefer", "return=representation");
+        if (extraHeaders != null)
+            foreach (var (k, v) in extraHeaders)
+                request.Headers.TryAddWithoutValidation(k, v);
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            return string.Empty;
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
     public async Task PatchAsync(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);
@@ -112,7 +146,7 @@ public sealed class DataverseHttpClient
         CancellationToken ct = default)
     {
         var relativeUrl = $"api/data/v9.2/{actionName}";
-        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct);
+        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct, ActionJsonOptions);
         using var response = await _http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
@@ -128,7 +162,7 @@ public sealed class DataverseHttpClient
         CancellationToken ct = default)
     {
         var relativeUrl = $"api/data/v9.2/{actionName}";
-        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct);
+        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct, ActionJsonOptions);
         using var response = await _http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
@@ -138,7 +172,8 @@ public sealed class DataverseHttpClient
         string orgUrl,
         string relativeUrl,
         object? body,
-        CancellationToken ct)
+        CancellationToken ct,
+        JsonSerializerOptions? bodySerializerOptions = null)
     {
         var scope = $"{orgUrl.TrimEnd('/')}/.default";
         var token = await _tokenProvider.GetTokenAsync(scope, ct);
@@ -155,7 +190,7 @@ public sealed class DataverseHttpClient
 
         if (body is not null)
         {
-            var json = JsonSerializer.Serialize(body, JsonOptions);
+            var json = JsonSerializer.Serialize(body, bodySerializerOptions ?? JsonOptions);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
         }
 

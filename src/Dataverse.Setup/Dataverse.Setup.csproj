@@ -6,11 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <OutputType>Exe</OutputType>
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>dataverse-mcp</ToolCommandName>
-    <PackageId>Dataverse.Mcp.Setup</PackageId>
+    <ToolCommandName>dataverse-modelling-mcp</ToolCommandName>
+    <PackageId>Dataverse.ModellingMcp.Setup</PackageId>
     <Version>1.0.0</Version>
     <Authors>crossvertise</Authors>
-    <Description>Setup wizard for the Dataverse MCP server</Description>
+    <Description>Setup wizard for the Dataverse Modelling MCP server</Description>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 

@@ -28,7 +28,7 @@ public sealed class ConfigProvider
     {
         var cfg = Config;
         if (cfg.Environments is null || cfg.Environments.Count == 0)
-            throw new InvalidOperationException("No environments configured. Run 'dataverse-mcp setup'.");
+            throw new InvalidOperationException("No environments configured. Run 'dataverse-modelling-mcp setup'.");
 
         var name = cfg.ActiveEnvironment ?? "default";
         if (cfg.Environments.TryGetValue(name, out var env))
@@ -44,7 +44,7 @@ public sealed class ConfigProvider
 
         if (!File.Exists(configPath))
         {
-            _logger.LogWarning("Config file not found at {Path}. Run 'dataverse-mcp setup'.", configPath);
+            _logger.LogWarning("Config file not found at {Path}. Run 'dataverse-modelling-mcp setup'.", configPath);
             return new DataverseMcpConfig();
         }
 
@@ -63,19 +63,19 @@ public sealed class ConfigProvider
         if (OperatingSystem.IsWindows())
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "dataverse-mcp", "config.json");
+                "dataverse-modelling-mcp", "config.json");
 
         if (OperatingSystem.IsMacOS())
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".dataverse-mcp", "config.json");
+                ".dataverse-modelling-mcp", "config.json");
 
         var xdgConfig = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
         return !string.IsNullOrEmpty(xdgConfig)
-            ? Path.Combine(xdgConfig, "dataverse-mcp", "config.json")
+            ? Path.Combine(xdgConfig, "dataverse-modelling-mcp", "config.json")
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".config", "dataverse-mcp", "config.json");
+                ".config", "dataverse-modelling-mcp", "config.json");
     }
 
     public static void Save(DataverseMcpConfig config)

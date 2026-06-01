@@ -21,9 +21,9 @@ Tokens are persisted using `MsalCacheHelper` from `Microsoft.Identity.Client.Ext
 
 | OS      | Storage |
 |---------|---------|
-| Windows | DPAPI-encrypted file at `%LOCALAPPDATA%\dataverse-mcp\token.cache` |
-| macOS   | macOS Keychain (service: `dataverse-mcp`) |
-| Linux   | libsecret (collection: `dataverse-mcp`) with plaintext file fallback |
+| Windows | DPAPI-encrypted file at `%LOCALAPPDATA%\dataverse-modelling-mcp\token.cache` |
+| macOS   | macOS Keychain (service: `dataverse-modelling-mcp`) |
+| Linux   | libsecret (collection: `dataverse-modelling-mcp`) with plaintext file fallback |
 
 The cache file is excluded from git via `.gitignore`.
 
@@ -47,4 +47,4 @@ The setup wizard can create this app automatically if the Azure CLI is available
 
 If the cached token expires or becomes invalid, the server will automatically open a browser for interactive login on the next tool call.
 
-To force reauthorization, delete the token cache file and re-run `dataverse-mcp setup`.
+To force reauthorization, delete the token cache file and re-run `dataverse-modelling-mcp setup`.

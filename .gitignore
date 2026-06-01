@@ -47,3 +47,7 @@ artifacts/
 
 # MCP tool temp output
 .playwright-mcp/
+
+# Local dev artifacts (workflow-spy log, reverse-engineering screenshots)
+ws-log.json
+pipeline-ui-state.png

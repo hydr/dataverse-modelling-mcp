@@ -8,9 +8,9 @@ using Microsoft.Identity.Client.Extensions.Msal;
 public static class SecureTokenCache
 {
     private const string CacheFileName = "token.cache";
-    private const string ServiceName = "dataverse-mcp";
-    private const string KeyChainAccount = "dataverse-mcp-token";
-    private const string LinuxCollection = "dataverse-mcp";
+    private const string ServiceName = "dataverse-modelling-mcp";
+    private const string KeyChainAccount = "dataverse-modelling-mcp-token";
+    private const string LinuxCollection = "dataverse-modelling-mcp";
 
     public static async Task<MsalCacheHelper> CreateAsync()
     {
@@ -25,7 +25,7 @@ public static class SecureTokenCache
             builder = builder.WithLinuxKeyring(
                 schemaName: ServiceName,
                 collection: LinuxCollection,
-                secretLabel: "Dataverse MCP OAuth token cache",
+                secretLabel: "Dataverse Modelling MCP OAuth token cache",
                 attribute1: new KeyValuePair<string, string>("version", "1"),
                 attribute2: new KeyValuePair<string, string>("product", ServiceName));
         }
@@ -52,22 +52,22 @@ public static class SecureTokenCache
         {
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "dataverse-mcp");
+                "dataverse-modelling-mcp");
         }
 
         if (OperatingSystem.IsMacOS())
         {
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".dataverse-mcp");
+                ".dataverse-modelling-mcp");
         }
 
         // Linux: XDG_DATA_HOME or ~/.local/share
         var xdgData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         return !string.IsNullOrEmpty(xdgData)
-            ? Path.Combine(xdgData, "dataverse-mcp")
+            ? Path.Combine(xdgData, "dataverse-modelling-mcp")
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".local", "share", "dataverse-mcp");
+                ".local", "share", "dataverse-modelling-mcp");
     }
 }

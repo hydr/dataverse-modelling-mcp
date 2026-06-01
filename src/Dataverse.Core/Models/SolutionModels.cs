@@ -29,7 +29,23 @@ public sealed record SolutionExportResult(
     string UniqueName,
     bool IsManaged,
     string? FilePath,
-    string? Base64Content);
+    string? Base64Content,
+    long? FileSizeBytes = null);
+
+/// <summary>
+/// Result of an asynchronous solution import (<c>ImportSolutionAsync</c> + ImportJob polling).
+/// <paramref name="Success"/> is authoritative (driven by the async-operation status code);
+/// <paramref name="ComponentErrors"/> carries the per-component failures parsed from the
+/// ImportJob's <c>data</c> XML for diagnostics.
+/// </summary>
+public sealed record SolutionImportResult(
+    bool Success,
+    Guid AsyncOperationId,
+    Guid ImportJobId,
+    string? StatusReason,
+    double? ProgressPercent,
+    string? ErrorMessage,
+    IReadOnlyList<string> ComponentErrors);
 
 public sealed record SolutionLayerInfo(
     Guid ComponentId,

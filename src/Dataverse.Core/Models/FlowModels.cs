@@ -64,3 +64,19 @@ public sealed record FlowRestoreResult(
     Guid RestoredFromVersionId,
     Guid WorkflowId,
     string Message);
+
+public sealed record RunActionSummary(
+    string Name,
+    string Status,
+    string? Code,
+    DateTime? StartTime,
+    DateTime? EndTime,
+    string? ErrorCode,
+    string? ErrorMessage,
+    string? OutputsLink);
+
+public sealed record FetchXmlValidationResult(
+    bool IsValid,
+    int ResultCount,
+    IReadOnlyList<string> Sample,
+    string? Error);

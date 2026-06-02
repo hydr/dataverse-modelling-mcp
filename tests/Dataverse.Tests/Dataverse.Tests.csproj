@@ -21,4 +21,8 @@
     <ProjectReference Include="..\..\src\Dataverse.Core\Dataverse.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\*.xaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

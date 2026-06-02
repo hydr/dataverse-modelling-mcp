@@ -4,6 +4,7 @@ using System.Text.Json;
 using Dataverse.Core.Clients;
 using Dataverse.Core.Json;
 using Dataverse.Core.Models;
+using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging;
 
 public sealed class TableService
@@ -171,6 +172,90 @@ public sealed class TableService
             orgUrl,
             $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes",
             attributeDefinition,
+            ct);
+    }
+
+    /// <summary>
+    /// Creates a rollup column (SourceType=2) on <paramref name="parentEntity"/> that aggregates a
+    /// value over related child records. Builds the numeric attribute metadata plus the RollupRule
+    /// FormulaDefinition XAML (see <see cref="RollupFormulaBuilder"/>) and posts it like any column.
+    /// </summary>
+    public async Task AddRollupColumnAsync(
+        string orgUrl,
+        string parentEntity,
+        string schemaName,
+        string displayName,
+        RollupNumericType numericType,
+        RollupDefinition rollup,
+        CancellationToken ct = default)
+    {
+        var formula = RollupFormulaBuilder.Build(rollup);
+
+        var attribute = new Dictionary<string, object?>
+        {
+            ["@odata.type"] = numericType switch
+            {
+                RollupNumericType.Integer => "Microsoft.Dynamics.CRM.IntegerAttributeMetadata",
+                RollupNumericType.Decimal => "Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
+                RollupNumericType.Money => "Microsoft.Dynamics.CRM.MoneyAttributeMetadata",
+                _ => throw new ArgumentOutOfRangeException(nameof(numericType))
+            },
+            ["SchemaName"] = schemaName,
+            ["DisplayName"] = new Dictionary<string, object?>
+            {
+                ["@odata.type"] = "Microsoft.Dynamics.CRM.Label",
+                ["LocalizedLabels"] = new[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["@odata.type"] = "Microsoft.Dynamics.CRM.LocalizedLabel",
+                        ["Label"] = displayName,
+                        ["LanguageCode"] = 1033
+                    }
+                }
+            },
+            ["RequiredLevel"] = new Dictionary<string, object?>
+            {
+                ["@odata.type"] = "Microsoft.Dynamics.CRM.AttributeRequiredLevelManagedProperty",
+                ["Value"] = "None",
+                ["CanBeChanged"] = true,
+                ["ManagedPropertyLogicalName"] = "canmodifyrequirementlevelsettings"
+            },
+            ["SourceType"] = 2,
+            ["FormulaDefinition"] = formula
+        };
+
+        switch (numericType)
+        {
+            case RollupNumericType.Integer:
+                attribute["Format"] = "None";
+                attribute["MinValue"] = int.MinValue;
+                attribute["MaxValue"] = int.MaxValue;
+                break;
+            case RollupNumericType.Decimal:
+                attribute["Precision"] = 2;
+                attribute["MinValue"] = -100000000000.00m;
+                attribute["MaxValue"] = 100000000000.00m;
+                break;
+            case RollupNumericType.Money:
+                attribute["PrecisionSource"] = 2; // use the currency precision
+                attribute["MinValue"] = 0.0;
+                attribute["MaxValue"] = 1000000000000.0;
+                break;
+        }
+
+        await AddColumnAsync(orgUrl, parentEntity, attribute, ct);
+    }
+
+    public async Task DeleteColumnAsync(
+        string orgUrl,
+        string tableLogicalName,
+        string columnLogicalName,
+        CancellationToken ct = default)
+    {
+        await _client.DeleteAsync(
+            orgUrl,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes(LogicalName='{columnLogicalName}')",
             ct);
     }
 

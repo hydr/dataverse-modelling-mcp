@@ -38,7 +38,10 @@ public sealed record WorkflowDetail(
     int Rank,
     // Logging
     bool SyncLogOnFailure,
-    bool AsyncAutoDelete);
+    bool AsyncAutoDelete,
+    // Designer metadata blob. In modern Dataverse this is typically null — the classic
+    // designer reconstructs its view from the XAML conventions instead.
+    string? ClientData = null);
 
 public sealed record WorkflowValidationReport(
     Guid WorkflowId,

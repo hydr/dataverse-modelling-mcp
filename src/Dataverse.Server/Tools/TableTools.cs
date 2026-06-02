@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using Dataverse.Core.Config;
 using Dataverse.Core.Services;
+using Dataverse.Core.Workflows;
 using ModelContextProtocol.Server;
 
 [McpServerToolType]
@@ -140,6 +141,55 @@ public sealed class TableTools
             var env = config.GetActiveEnvironment();
             await svc.UpdateColumnAsync(env.OrgUrl, tableLogicalName, columnLogicalName, props, ct);
             return JsonSerializer.Serialize(new { success = true, tableLogicalName, columnLogicalName });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "column_add_rollup")]
+    [Description("Add a rollup column (SourceType=2) that aggregates a value over related child records. " +
+                 "v1 covers the common unfiltered case over a single 1:N relationship: e.g. SUM of a child amount, " +
+                 "or COUNT of children. The platform provisions the recalculation automatically. " +
+                 "For Sum/Avg/Max/Min provide aggregateAttribute (a numeric child column); for Count it is optional " +
+                 "(the child primary key is used).")]
+    public static async Task<string> ColumnAddRollup(
+        TableService svc,
+        ConfigProvider config,
+        [Description("Logical name of the parent table that owns the rollup column (e.g. 'account')")] string parentEntity,
+        [Description("Schema name of the new rollup column (e.g. 'sample_totalrevenue')")] string schemaName,
+        [Description("Display label of the new column")] string displayName,
+        [Description("Numeric type of the rollup column: Integer | Decimal | Money")] string numericType,
+        [Description("Logical name of the child entity to aggregate over (e.g. 'salesorder')")] string childEntity,
+        [Description("Schema name of the 1:N relationship parent->child (e.g. 'opportunity_sales_orders')")] string relationshipSchemaName,
+        [Description("Lookup attribute on the child pointing to the parent (e.g. 'opportunityid')")] string lookupAttribute,
+        [Description("Aggregate operator: Sum | Count | Avg | Max | Min")] string aggregate,
+        [Description("Numeric child column to aggregate (required for Sum/Avg/Max/Min; ignored for Count)")] string? aggregateAttribute = null,
+        [Description("Child primary-key attribute used by Count (defaults to '{childEntity}id')")] string? childPrimaryKey = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!Enum.TryParse<RollupNumericType>(numericType, ignoreCase: true, out var numeric))
+                return JsonSerializer.Serialize(new { error = $"Invalid numericType '{numericType}'. Use Integer, Decimal or Money." });
+            if (!Enum.TryParse<RollupAggregate>(aggregate, ignoreCase: true, out var agg))
+                return JsonSerializer.Serialize(new { error = $"Invalid aggregate '{aggregate}'. Use Sum, Count, Avg, Max or Min." });
+
+            if (agg != RollupAggregate.Count && string.IsNullOrWhiteSpace(aggregateAttribute))
+                return JsonSerializer.Serialize(new { error = $"aggregateAttribute is required for {agg}." });
+
+            var rollup = new RollupDefinition(
+                ChildEntity: childEntity,
+                RelationshipSchemaName: relationshipSchemaName,
+                LookupAttribute: lookupAttribute,
+                Aggregate: agg,
+                AggregateAttribute: aggregateAttribute,
+                ChildPrimaryKey: childPrimaryKey);
+
+            var env = config.GetActiveEnvironment();
+            await svc.AddRollupColumnAsync(env.OrgUrl, parentEntity, schemaName, displayName, numeric, rollup, ct);
+            return JsonSerializer.Serialize(new { success = true, parentEntity, schemaName });
         }
         catch (Exception ex)
         {

@@ -139,6 +139,13 @@ public sealed class DataverseHttpClient
         await EnsureSuccessAsync(response, ct);
     }
 
+    public async Task DeleteAsync(string orgUrl, string relativeUrl, CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Delete, orgUrl, relativeUrl, body: null, ct);
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+    }
+
     public async Task<T?> ExecuteActionAsync<T>(
         string orgUrl,
         string actionName,

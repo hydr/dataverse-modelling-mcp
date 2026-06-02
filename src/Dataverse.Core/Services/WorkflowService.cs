@@ -4,6 +4,7 @@ using System.Text.Json;
 using Dataverse.Core.Clients;
 using Dataverse.Core.Json;
 using Dataverse.Core.Models;
+using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging;
 
 public sealed class WorkflowService
@@ -64,8 +65,8 @@ public sealed class WorkflowService
     {
         var url = $"api/data/v9.2/workflows({workflowId})" +
                   "?$select=workflowid,name,primaryentity,statecode,statuscode," +
-                  "_ownerid_value,description,xaml,createdon,modifiedon," +
-                  "ondemand,triggeroncreate,triggerondelete,triggeronupdateattributelist," +
+                  "_ownerid_value,description,xaml,clientdata,createdon,modifiedon," +
+                  "ondemand,triggerondelete,triggeronupdateattributelist," +
                   "createstage,updatestage,deletestage," +
                   "scope,mode,runas,istransacted,rank,syncworkflowlogonfailure,asyncautodelete";
 
@@ -89,9 +90,10 @@ public sealed class WorkflowService
             CreatedOn: item.GetDateTimeOrNull("createdon"),
             ModifiedOn: item.GetDateTimeOrNull("modifiedon"),
             OnDemand: item.TryGetProperty("ondemand", out var od) && od.ValueKind == JsonValueKind.True,
-            IsOnCreate: item.TryGetProperty("triggeroncreate", out var oc) && oc.ValueKind == JsonValueKind.True,
+            // A trigger is active when its pipeline-stage column is set (20=Pre, 40=Post); null/0 means off.
+            IsOnCreate: item.GetInt32OrZero("createstage") != 0,
             IsOnUpdate: item.GetInt32OrZero("updatestage") != 0,
-            IsOnDelete: item.TryGetProperty("triggerondelete", out var odl) && odl.ValueKind == JsonValueKind.True,
+            IsOnDelete: item.GetInt32OrZero("deletestage") != 0,
             TriggerOnUpdateAttributes: item.GetStringOrNull("triggeronupdateattributelist"),
             CreateStage: MapStage(item.GetInt32OrZero("createstage")),
             UpdateStage: MapStage(item.GetInt32OrZero("updatestage")),
@@ -102,7 +104,8 @@ public sealed class WorkflowService
             IsTransacted: item.TryGetProperty("istransacted", out var tr) && tr.ValueKind == JsonValueKind.True,
             Rank: item.GetInt32OrZero("rank"),
             SyncLogOnFailure: item.TryGetProperty("syncworkflowlogonfailure", out var slf) && slf.ValueKind == JsonValueKind.True,
-            AsyncAutoDelete: item.TryGetProperty("asyncautodelete", out var aad) && aad.ValueKind == JsonValueKind.True);
+            AsyncAutoDelete: item.TryGetProperty("asyncautodelete", out var aad) && aad.ValueKind == JsonValueKind.True,
+            ClientData: item.GetStringOrNull("clientdata"));
     }
 
     private static string? MapStage(int value) => value switch
@@ -194,6 +197,14 @@ public sealed class WorkflowService
             ownerid = $"/api/data/v9.2/{entityName}({ownerId})"
         };
         await _client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", body, ct);
+    }
+
+    public async Task DeleteAsync(
+        string orgUrl,
+        Guid workflowId,
+        CancellationToken ct = default)
+    {
+        await _client.DeleteAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", ct);
     }
 
     public async Task<IReadOnlyList<WorkflowActivitySummary>> ListActivitiesAsync(
@@ -335,5 +346,174 @@ public sealed class WorkflowService
 
         return new WorkflowValidationReport(workflowId, detail.Name, issues.Count == 0, issues);
     }
+
+    // ---- Template-based create / update / interpret ---------------------------------------
+
+    /// <summary>Parses a workflow's XAML into a best-effort structured interpretation.</summary>
+    public async Task<WorkflowInterpretation> InterpretAsync(
+        string orgUrl,
+        Guid workflowId,
+        CancellationToken ct = default)
+    {
+        var xaml = await GetXamlAsync(orgUrl, workflowId, ct);
+        return WorkflowXamlParser.Interpret(xaml);
+    }
+
+    /// <summary>
+    /// Creates a new Classic Workflow from a <see cref="WorkflowDefinition"/>: validates the
+    /// definition, creates the record (to obtain the GUID the x:Class name depends on), then
+    /// generates and writes the XAML plus execution/trigger metadata, and optionally activates it.
+    /// </summary>
+    public async Task<WorkflowWriteResult> CreateFromDefinitionAsync(
+        string orgUrl,
+        string name,
+        WorkflowDefinition def,
+        string? description,
+        bool activate,
+        CancellationToken ct = default)
+    {
+        var validation = await ValidateWithSemanticsAsync(orgUrl, def, ct);
+        if (!validation.IsValid)
+            return new WorkflowWriteResult(Guid.Empty, Written: false, Activated: false, validation);
+
+        // Single atomic create with the XAML already present. We generate the GUID client-side so
+        // the x:Class name matches, and create the record in one POST. A two-step "create empty then
+        // patch xaml" trips Dataverse's "workflow created outside the web application" guard (0x80045040).
+        var id = Guid.NewGuid();
+        var xaml = WorkflowXamlBuilder.Build(def, id);
+
+        var body = BuildMetadataBody(def);
+        body["workflowid"] = id;
+        body["name"] = name;
+        body["category"] = 0;   // Classic workflow
+        body["type"] = 1;       // Definition
+        body["description"] = description;
+        body["xaml"] = xaml;
+        body["statecode"] = 0;
+        body["statuscode"] = 1;
+
+        // Omit null-valued columns on create — sending e.g. createstage:null can trip the platform.
+        var createBody = body.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value);
+        await _client.PostAsync<JsonElement?>(orgUrl, "api/data/v9.2/workflows", createBody, ct);
+
+        if (activate)
+            await SetStateAsync(orgUrl, id, activate: true, ct);
+
+        return new WorkflowWriteResult(id, Written: true, Activated: activate, validation);
+    }
+
+    /// <summary>
+    /// Re-generates and writes the XAML of an existing workflow, but only if its current XAML is
+    /// recognised as a template the builder can reproduce (the edit gate). Deactivates while
+    /// writing and restores the prior activation state.
+    /// </summary>
+    public async Task<WorkflowWriteResult> UpdateFromDefinitionAsync(
+        string orgUrl,
+        Guid workflowId,
+        WorkflowDefinition def,
+        CancellationToken ct = default)
+    {
+        var detail = await GetAsync(orgUrl, workflowId, ct);
+        if (detail is null)
+            return new WorkflowWriteResult(workflowId, false, false,
+                new WorkflowDefinitionValidation(false, ["Workflow not found."], []));
+
+        var existing = WorkflowXamlParser.Interpret(detail.Xaml);
+        if (!existing.IsTemplateRecognized)
+            return new WorkflowWriteResult(workflowId, false, false,
+                new WorkflowDefinitionValidation(false,
+                    ["Existing workflow is not a recognised MCP template (it contains conditions or activities the builder cannot reproduce). Edit it in the Dataverse designer instead."],
+                    existing.Notes));
+
+        var validation = await ValidateWithSemanticsAsync(orgUrl, def, ct);
+        if (!validation.IsValid)
+            return new WorkflowWriteResult(workflowId, false, false, validation);
+
+        var wasActive = detail.StateCode == 1;
+        if (wasActive)
+            await SetStateAsync(orgUrl, workflowId, activate: false, ct);
+
+        var xaml = WorkflowXamlBuilder.Build(def, workflowId);
+        var body = BuildMetadataBody(def);
+        body["xaml"] = xaml;
+        await _client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", body, ct);
+
+        if (wasActive)
+            await SetStateAsync(orgUrl, workflowId, activate: true, ct);
+
+        return new WorkflowWriteResult(workflowId, Written: true, Activated: wasActive, validation);
+    }
+
+    /// <summary>
+    /// Maps the definition's execution + trigger settings onto workflow columns. Only emits columns
+    /// with concrete values — sending null for a stage column (e.g. createstage:null) trips the
+    /// platform (0x80040216). A consequence is that a previously-set trigger stage is not cleared by
+    /// an update; turning a trigger fully off should be done in the designer.
+    /// </summary>
+    private static Dictionary<string, object?> BuildMetadataBody(WorkflowDefinition def)
+    {
+        var t = def.Trigger;
+        var stage = (int)t.Stage;
+        var body = new Dictionary<string, object?>
+        {
+            ["mode"] = (int)def.Mode,
+            ["scope"] = (int)def.Scope,
+            ["ondemand"] = t.OnDemand,
+            ["subprocess"] = false,
+            ["primaryentity"] = def.PrimaryEntity,
+        };
+
+        if (t.OnCreate) body["createstage"] = stage;
+        if (t.OnUpdate) body["updatestage"] = stage;
+        if (t.OnDelete) body["deletestage"] = stage;
+        if (t.OnUpdate && t.UpdateAttributes is { Count: > 0 })
+            body["triggeronupdateattributelist"] = string.Join(",", t.UpdateAttributes);
+
+        return body;
+    }
+
+    /// <summary>
+    /// Structural validation plus best-effort semantic checks (custom activity registration).
+    /// Semantic findings are non-blocking warnings; only structural problems make it invalid.
+    /// </summary>
+    private async Task<WorkflowDefinitionValidation> ValidateWithSemanticsAsync(
+        string orgUrl,
+        WorkflowDefinition def,
+        CancellationToken ct)
+    {
+        var structural = WorkflowXamlValidator.Validate(def);
+        if (!structural.IsValid)
+            return structural;
+
+        var warnings = new List<string>(structural.Warnings);
+
+        var customSteps = def.Steps.OfType<CustomActivityStep>().ToList();
+        if (customSteps.Count > 0)
+        {
+            try
+            {
+                var activities = await ListActivitiesAsync(orgUrl, null, ct);
+                var registeredTypes = activities
+                    .Select(a => TypeNameOf(a.AssemblyQualifiedName))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var step in customSteps)
+                {
+                    var typeName = TypeNameOf(step.AssemblyQualifiedName);
+                    if (!registeredTypes.Contains(typeName))
+                        warnings.Add($"Custom activity '{typeName}' was not found among registered workflow activities. Verify the AssemblyQualifiedName.");
+                }
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Could not verify custom activity registration: {ex.Message}");
+            }
+        }
+
+        return new WorkflowDefinitionValidation(true, structural.Errors, warnings);
+    }
+
+    private static string TypeNameOf(string assemblyQualifiedName) =>
+        assemblyQualifiedName.Split(',').FirstOrDefault()?.Trim() ?? assemblyQualifiedName;
 }
 

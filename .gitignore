@@ -51,3 +51,6 @@ artifacts/
 # Local dev artifacts (workflow-spy log, reverse-engineering screenshots)
 ws-log.json
 pipeline-ui-state.png
+
+# HAR captures contain bearer tokens — never commit
+*.har

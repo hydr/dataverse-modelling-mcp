@@ -15,21 +15,18 @@ using Microsoft.Identity.Client;
 public sealed class DataverseTokenProvider : ITokenProvider
 {
     /// <summary>
-    /// Microsoft First-Party App ID for "Power Apps Maker portal" — the ONLY AppId whose tokens
-    /// the Pipeline-Backend accepts as a deploymentstagerun trigger source. A run created with any
-    /// other AppId returns HTTP 201 but stays in "Nicht gestartet" forever (validation never fires).
-    /// AAD issues a Device Code directly for this public first-party client (verified 2026-06-02),
-    /// so we acquire the token via plain Device Code Flow with this client_id — no FOCI exchange,
-    /// no app registration. The device-code request, the token poll, and the refresh-token exchange
-    /// must ALL use this same client_id so the resulting access-token carries <c>appid=a8f7a65c…</c>.
+    /// Microsoft First-Party App ID for "Power Apps Maker portal" — the one Pipeline-Backend
+    /// accepts as a trigger source. MSAL FOCI lets PublicClientApplication acquire tokens
+    /// for this AppId from the user's existing cached refresh-token, no app registration needed.
     /// </summary>
     public const string PowerAppsMakerClientId = "a8f7a65c-f5ba-4859-b2d6-df772c264e9d";
 
     /// <summary>
-    /// Power Platform CLI (PAC) AppId. Kept for reference only — NOT used for pipeline auth.
-    /// Tokens with this <c>appid=9cee029c…</c> are NOT accepted by the Pipeline-Backend: the run is
-    /// created (201) but its validation workflow never starts (stagerunstatus stays "Nicht gestartet").
-    /// This was the root cause of MCP pipeline deploys hanging — use <see cref="PowerAppsMakerClientId"/>.
+    /// Power Platform CLI (PAC) AppId — public client that AAD accepts as device-code initiator
+    /// without demanding a client secret. Extracted from <c>bolt.authentication.dll</c> in the
+    /// installed PAC CLI. Resulting access-token carries <c>appid=9cee029c...</c> and is accepted
+    /// by Pipeline-Backend (FOCI exchange to Power-Apps-Maker AppId no longer works as of 2026,
+    /// so we authenticate as PAC directly).
     /// </summary>
     public const string PacCliClientId = "9cee029c-6210-4654-90bb-17e6e9d36617";
 
@@ -112,7 +109,7 @@ public sealed class DataverseTokenProvider : ITokenProvider
         var resp = await http.PostAsync(tokenUrl, new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "refresh_token",
-            ["client_id"] = PowerAppsMakerClientId,
+            ["client_id"] = PacCliClientId,
             ["refresh_token"] = refreshToken,
             ["scope"] = scope
         }), CancellationToken.None);
@@ -165,7 +162,7 @@ public sealed class DataverseTokenProvider : ITokenProvider
         using var http = new HttpClient();
         var dcResp = await http.PostAsync(deviceCodeUrl, new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["client_id"] = PowerAppsMakerClientId,
+            ["client_id"] = PacCliClientId,
             ["scope"] = scope + " offline_access"
         }), CancellationToken.None);
         var dcBody = await dcResp.Content.ReadAsStringAsync();
@@ -241,7 +238,7 @@ public sealed class DataverseTokenProvider : ITokenProvider
             var tokResp = await http.PostAsync(tokenUrl, new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
-                ["client_id"] = PowerAppsMakerClientId,
+                ["client_id"] = PacCliClientId,
                 ["device_code"] = deviceCode
             }), CancellationToken.None);
             var tokBody = await tokResp.Content.ReadAsStringAsync();

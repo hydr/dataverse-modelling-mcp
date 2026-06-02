@@ -282,93 +282,15 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_deploy_pipeline")]
-    [Description("End-to-end Power Platform Pipeline deployment. Mirrors the 3 calls the Maker UI makes when clicking 'Bereitstellung' → 'Weiter' → 'Bereitstellen': (1) POST /deploymentstageruns (validation), (2) PATCH (version + notes), (3) POST /DeployPackageAsync (start). With autoConfirm=false only step 1 runs. Returns the stage-run id; use pipeline_run_status to poll until terminal.")]
-    public static async Task<string> SolutionDeployPipeline(
-        SolutionService svc,
-        ConfigProvider config,
-        [Description("Pipeline-Host org URL (where the deploymentpipeline rows live), e.g. https://orgexample.crm4.dynamics.com")] string pipelineHostOrgUrl,
-        [Description("Solution GUID from the source (Dev) environment")] Guid solutionId,
-        [Description("Solution unique name (also used as artifactname in the pipeline)")] string artifactName,
-        [Description("Internal deploymentenvironmentid of the source/Dev environment on the Pipeline-Host (NOT the Power Platform env GUID). Resolve via pipeline_environments.")] Guid devDeploymentEnvironmentId,
-        [Description("Target stage GUID (deploymentstageid). Resolve via pipeline_stages.")] Guid targetStageId,
-        [Description("Current solution version in the source env (e.g. '1.10.0'). Sent as artifactdevcurrentversion. Required when autoConfirm=true.")] string? currentVersion = null,
-        [Description("Target solution version after deploy (e.g. '1.11.0'). Sent as artifactversion. Required when autoConfirm=true.")] string? newVersion = null,
-        [Description("Deployment notes shown in the stage-run history. Required when autoConfirm=true to match Maker-UI behaviour.")] string deploymentNotes = "",
-        [Description("Optional deployment-settings JSON string. Required if the solution has pflicht-zu-setzende Environment Variables or Connection References on the target. Shape: '{\"EnvironmentVariables\":[{\"SchemaName\":\"sample_my_var\",\"Value\":\"42\"}],\"ConnectionReferences\":[]}'.")] string? deploymentSettingsJson = null,
-        [Description("Language code for auto-generated deployment notes (default 'en-US')")] string languageCode = "en-US",
-        [Description("If true (default), runs the full deploy (validate + commit + start). If false, only triggers validation — call pipeline_run_status to inspect.")] bool autoConfirm = true,
-        [Description("Max seconds to wait for validation to complete (default 600 = 10 min). Validation can take several minutes on solutions with many components.")] int validationTimeoutSeconds = 600,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            _ = config.Config;
-            var runId = await svc.DeployPipelineAsync(
-                pipelineHostOrgUrl, solutionId, artifactName, devDeploymentEnvironmentId, targetStageId,
-                languageCode, currentVersion, newVersion, deploymentNotes, deploymentSettingsJson,
-                autoConfirm, validationTimeoutSeconds, pollIntervalSeconds: 10, ct);
-            return JsonSerializer.Serialize(new { success = true, stageRunId = runId, artifactName, targetStageId, autoConfirm, newVersion });
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
-        }
-    }
-
-    [McpServerTool(Name = "pipeline_auth_init")]
-    [Description("Step 1 of Power-Apps-Maker login (two-step Device Code Flow). Returns IMMEDIATELY with the user_code and verification URL — also tries to auto-open the browser with the code pre-filled. The user must finish signing in, then call pipeline_auth_complete to persist the refresh token. Required once per device; token then cached for weeks.")]
-    public static async Task<string> PipelineAuthInit(
-        Dataverse.Core.Auth.DataverseTokenProvider tokenProvider,
-        ConfigProvider config,
-        [Description("Pipeline-Host org URL, e.g. https://orgexample.crm4.dynamics.com — used as the token resource.")] string pipelineHostOrgUrl,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            _ = config.Config;
-            var scope = $"{pipelineHostOrgUrl.TrimEnd('/')}/.default";
-            var (url, code, message, browserOpened, expiresIn) = await tokenProvider.RequestMakerDeviceCodeAsync(scope);
-            return JsonSerializer.Serialize(new
-            {
-                step = 1,
-                verificationUrl = url,
-                userCode = code,
-                expiresInSeconds = expiresIn,
-                browserOpened,
-                message,
-                nextStep = "After you complete the sign-in in the browser, call pipeline_auth_complete to persist the refresh token."
-            }, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
-        }
-    }
-
-    [McpServerTool(Name = "pipeline_auth_complete")]
-    [Description("Step 2 of Power-Apps-Maker login. Call AFTER you finished the browser sign-in started by pipeline_auth_init. Polls the token endpoint for up to ~60 seconds (or until the device code expires) and persists the refresh token. Then solution_deploy_pipeline runs silently for weeks.")]
-    public static async Task<string> PipelineAuthComplete(
-        Dataverse.Core.Auth.DataverseTokenProvider tokenProvider,
-        ConfigProvider config,
-        [Description("Max seconds to wait for the user-completed sign-in (default 60).")] int pollSeconds = 60,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            _ = config.Config;
-            await tokenProvider.CompleteMakerDeviceCodeAsync(pollSeconds);
-            return JsonSerializer.Serialize(new
-            {
-                success = true,
-                message = "Refresh token cached. solution_deploy_pipeline now runs silently."
-            }, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
-        }
-    }
+    // NOTE: solution_deploy_pipeline, pipeline_auth_init and pipeline_auth_complete were removed
+    // from the MCP surface on 2026-06-02. They cannot work from a headless MCP: the Pipeline-Backend
+    // only triggers validation for runs created with the Power Apps Maker AppId (a8f7a65c…), and that
+    // token is not obtainable headlessly (device-code needs a secret; FOCI exchange is cross-family;
+    // no capturable redirect URI for auth-code+PKCE). The create payload/sequence were otherwise
+    // HAR-verified correct. The tool wrappers are parked verbatim in Tools/_parked/PipelineDeployTools.cs.txt
+    // and the underlying SolutionService.DeployPipelineAsync + DataverseTokenProvider Maker methods are
+    // kept intact, so the feature can be revived if a viable auth path appears. See the solution-pipelines
+    // skill ("Token-AppId blocker") and memory project_pipeline_headless_appid_blocked for details.
 
     [McpServerTool(Name = "pipeline_run_status")]
     [Description("Get the status of a deployment stage run by id. Includes stagerunstatus, operation, operationstatus, validation results, error message. Returns formatted values where available.")]

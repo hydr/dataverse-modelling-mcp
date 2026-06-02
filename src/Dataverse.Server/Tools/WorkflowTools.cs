@@ -15,11 +15,18 @@ public sealed class WorkflowTools
 
     /// <summary>Options for parsing a <see cref="WorkflowDefinition"/> from tool input: enums as
     /// strings, case-insensitive, polymorphic "kind" discriminators handled by the records.</summary>
-    private static readonly JsonSerializerOptions DefOptions = new()
+    private static readonly JsonSerializerOptions DefOptions = CreateDefOptions();
+
+    private static JsonSerializerOptions CreateDefOptions()
     {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter() }
+        };
+        WorkflowJsonConverters.Register(options);
+        return options;
+    }
 
     [McpServerTool(Name = "workflow_list")]
     [Description("List Classic Workflows in the configured Dataverse environment.")]

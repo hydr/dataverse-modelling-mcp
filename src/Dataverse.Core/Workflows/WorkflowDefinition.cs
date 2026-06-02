@@ -1,7 +1,5 @@
 namespace Dataverse.Core.Workflows;
 
-using System.Text.Json.Serialization;
-
 /// <summary>
 /// Intermediate representation (IR) of a "simple" Classic Workflow that the MCP can
 /// safely generate and round-trip as WF4 XAML. This is deliberately a small subset of
@@ -67,9 +65,8 @@ public enum CrmValueType
     Guid
 }
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(LiteralValue), "literal")]
-[JsonDerivedType(typeof(FieldValue), "field")]
+// Polymorphism is handled by WorkflowJsonConverters (discriminator "kind"), which — unlike the
+// built-in [JsonPolymorphic] — tolerates the discriminator appearing at any property position.
 public abstract record ArgumentValue;
 
 /// <summary>A constant value, emitted via a typed <c>CreateCrmType</c> expression.</summary>
@@ -84,12 +81,6 @@ public sealed record FieldValue(
     string Attribute,
     CrmValueType Type) : ArgumentValue;
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(UpdateEntityStep), "updateEntity")]
-[JsonDerivedType(typeof(CustomActivityStep), "customActivity")]
-[JsonDerivedType(typeof(CreateEntityStep), "createEntity")]
-[JsonDerivedType(typeof(ConditionStep), "condition")]
-[JsonDerivedType(typeof(UnknownStep), "unknown")]
 public abstract record WorkflowStep;
 
 public sealed record FieldAssignment(

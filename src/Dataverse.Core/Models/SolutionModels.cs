@@ -51,3 +51,23 @@ public sealed record SolutionLayerInfo(
     Guid ComponentId,
     int ComponentType,
     IReadOnlyList<string> SolutionLayers);
+
+public sealed record PipelineSummary(
+    Guid PipelineId,
+    string Name,
+    string? Description,
+    string State);
+
+public sealed record PipelineStageSummary(
+    Guid StageId,
+    string Name,
+    Guid? PreviousStageId,
+    string State,
+    string? TargetEnvironmentName,
+    string? TargetEnvironmentId,
+    string? TargetDeploymentEnvironmentId);
+
+public sealed record DeploymentEnvironmentSummary(
+    Guid DeploymentEnvironmentId,
+    string Name,
+    string EnvironmentId);

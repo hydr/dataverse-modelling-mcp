@@ -28,6 +28,21 @@ public sealed class WorkflowTemplateIntegrationTests : IntegrationTestBase
         }
     }
 
+    /// <summary>Cleanup helper for manual MCP-protocol testing: removes leftover test artifacts.</summary>
+    [Test, Explicit]
+    public async Task Cleanup_ManualTestArtifacts()
+    {
+        var workflows = await WorkflowService.ListAsync(OrgUrl, "contains(name,'(delete me)')", 50);
+        foreach (var wf in workflows)
+        {
+            try { await WorkflowService.SetStateAsync(OrgUrl, wf.WorkflowId, activate: false); } catch { }
+            try { await WorkflowService.DeleteAsync(OrgUrl, wf.WorkflowId); TestContext.WriteLine($"Deleted workflow {wf.Name} ({wf.WorkflowId})"); } catch (Exception ex) { TestContext.WriteLine($"Could not delete {wf.WorkflowId}: {ex.Message}"); }
+        }
+
+        try { await TableService.DeleteColumnAsync(OrgUrl, "account", "sample_mcprolluptest"); TestContext.WriteLine("Deleted rollup column sample_mcprolluptest"); }
+        catch (Exception ex) { TestContext.WriteLine($"Rollup column cleanup: {ex.Message}"); }
+    }
+
     [Test]
     public async Task Create_Interpret_Update_UpdateEntityWorkflow()
     {

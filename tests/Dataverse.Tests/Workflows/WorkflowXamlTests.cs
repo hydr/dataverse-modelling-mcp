@@ -189,6 +189,16 @@ public sealed class WorkflowXamlTests
     }
 
     [Test]
+    public void Validate_NullStepsAndEntity_IsInvalidNotThrow()
+    {
+        // Simulates deserialization of a minimal/garbage payload (e.g. "{}").
+        var def = new WorkflowDefinition(null!, WorkflowMode.Realtime, WorkflowScope.Organization, new WorkflowTrigger(), null!);
+        WorkflowDefinitionValidation result = null!;
+        Assert.DoesNotThrow(() => result = WorkflowXamlValidator.Validate(def));
+        Assert.That(result.IsValid, Is.False);
+    }
+
+    [Test]
     public void Validate_NoSteps_IsError()
     {
         var def = new WorkflowDefinition("account", WorkflowMode.Realtime, WorkflowScope.Organization,

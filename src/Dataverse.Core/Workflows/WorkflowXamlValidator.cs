@@ -26,11 +26,14 @@ public static class WorkflowXamlValidator
         if (string.IsNullOrWhiteSpace(def.PrimaryEntity))
             errors.Add("PrimaryEntity is required.");
 
-        if (def.Steps.Count == 0)
+        // Steps can be null if the input JSON omitted it (the record property is non-nullable but
+        // System.Text.Json will still leave it null).
+        var steps = def.Steps ?? [];
+        if (steps.Count == 0)
             errors.Add("At least one step is required.");
 
-        for (var i = 0; i < def.Steps.Count; i++)
-            ValidateStep(def.Steps[i], i, def.PrimaryEntity, errors, warnings);
+        for (var i = 0; i < steps.Count; i++)
+            ValidateStep(steps[i], i, def.PrimaryEntity ?? "", errors, warnings);
 
         // Round-trip: only attempt if the IR is structurally sound so far.
         if (errors.Count == 0)
@@ -77,7 +80,7 @@ public static class WorkflowXamlValidator
                     errors.Add($"{prefix}: CustomActivity requires an AssemblyQualifiedName.");
                 if (string.IsNullOrWhiteSpace(a.Label))
                     warnings.Add($"{prefix}: CustomActivity has no Label; a generic name will be used.");
-                foreach (var arg in a.InputArguments)
+                foreach (var arg in a.InputArguments ?? [])
                 {
                     if (arg.Value is null)
                         errors.Add($"{prefix}: input argument '{arg.Name}' has no value.");
@@ -100,8 +103,9 @@ public static class WorkflowXamlValidator
         }
     }
 
-    private static void ValidateAssignments(IReadOnlyList<FieldAssignment> assignments, string prefix, List<string> errors)
+    private static void ValidateAssignments(IReadOnlyList<FieldAssignment>? assignments, string prefix, List<string> errors)
     {
+        assignments ??= [];
         if (assignments.Count == 0)
             errors.Add($"{prefix}: at least one field assignment is required.");
 

@@ -221,20 +221,91 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_deploy_pipeline")]
-    [Description("Trigger a Power Platform Pipeline deployment to a stage.")]
-    public static async Task<string> SolutionDeployPipeline(
+    [McpServerTool(Name = "pipeline_list")]
+    [Description("List all Power Platform Pipelines visible on a Pipeline-Host environment. The Pipeline-Host is typically a dedicated env (NOT the source/target) where the deploymentpipeline rows live.")]
+    public static async Task<string> PipelineList(
         SolutionService svc,
         ConfigProvider config,
-        [Description("Pipeline GUID")] string pipelineId,
-        [Description("Target stage GUID")] string stageId,
+        [Description("Pipeline-Host org URL, e.g. https://orgexample.crm4.dynamics.com")] string pipelineHostOrgUrl,
         CancellationToken ct = default)
     {
         try
         {
-            var env = config.GetActiveEnvironment();
-            await svc.DeployPipelineAsync(env.OrgUrl, pipelineId, stageId, ct);
-            return JsonSerializer.Serialize(new { success = true, pipelineId, stageId });
+            _ = config.Config;
+            var result = await svc.ListPipelinesAsync(pipelineHostOrgUrl, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "pipeline_stages")]
+    [Description("List the stages of a Power Platform Pipeline, including each stage's target deployment environment.")]
+    public static async Task<string> PipelineStages(
+        SolutionService svc,
+        ConfigProvider config,
+        [Description("Pipeline-Host org URL")] string pipelineHostOrgUrl,
+        [Description("Pipeline GUID (deploymentpipelineid)")] Guid pipelineId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _ = config.Config;
+            var result = await svc.ListPipelineStagesAsync(pipelineHostOrgUrl, pipelineId, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "pipeline_environments")]
+    [Description("List the deployment-environment mappings on a Pipeline-Host. Maps Power-Platform env GUIDs to their pipeline-internal mapping rows (needed as devDeploymentEnvironmentId for deploys).")]
+    public static async Task<string> PipelineEnvironments(
+        SolutionService svc,
+        ConfigProvider config,
+        [Description("Pipeline-Host org URL")] string pipelineHostOrgUrl,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _ = config.Config;
+            var result = await svc.ListDeploymentEnvironmentsAsync(pipelineHostOrgUrl, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    // NOTE: solution_deploy_pipeline, pipeline_auth_init and pipeline_auth_complete were removed
+    // from the MCP surface on 2026-06-02. They cannot work from a headless MCP: the Pipeline-Backend
+    // only triggers validation for runs created with the Power Apps Maker AppId (a8f7a65c…), and that
+    // token is not obtainable headlessly (device-code needs a secret; FOCI exchange is cross-family;
+    // no capturable redirect URI for auth-code+PKCE). The create payload/sequence were otherwise
+    // HAR-verified correct. The tool wrappers are parked verbatim in Tools/_parked/PipelineDeployTools.cs.txt
+    // and the underlying SolutionService.DeployPipelineAsync + DataverseTokenProvider Maker methods are
+    // kept intact, so the feature can be revived if a viable auth path appears. See the solution-pipelines
+    // skill ("Token-AppId blocker") and memory project_pipeline_headless_appid_blocked for details.
+
+    [McpServerTool(Name = "pipeline_run_status")]
+    [Description("Get the status of a deployment stage run by id. Includes stagerunstatus, operation, operationstatus, validation results, error message. Returns formatted values where available.")]
+    public static async Task<string> PipelineRunStatus(
+        SolutionService svc,
+        ConfigProvider config,
+        [Description("Pipeline-Host org URL")] string pipelineHostOrgUrl,
+        [Description("Deployment stage run GUID")] Guid stageRunId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _ = config.Config;
+            var result = await svc.GetDeploymentStageRunAsync(pipelineHostOrgUrl, stageRunId, ct);
+            return result.GetRawText();
         }
         catch (Exception ex)
         {

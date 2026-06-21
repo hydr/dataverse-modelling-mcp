@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dataverse-modelling": {
+      "command": "${CLAUDE_PLUGIN_DATA}/bin/DataverseMcp.exe",
+      "env": {
+        "DATAVERSE_URL": "${user_config.dataverse_url}",
+        "AZURE_CLIENT_ID": "${user_config.client_id}",
+        "AZURE_TENANT_ID": "${user_config.tenant_id}"
+      }
+    }
+  }
+}

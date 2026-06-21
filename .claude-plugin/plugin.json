@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "dataverse-modelling-mcp",
+  "displayName": "Dataverse Modelling MCP",
+  "version": "0.1.0",
+  "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten und Relationships. Binary wird beim ersten Start aus einem privaten Azure Blob Storage geladen.",
+  "author": {
+    "name": "Crossvertise GmbH",
+    "email": "it@crossvertise.com"
+  },
+  "homepage": "https://github.com/hydr/dataverse-modelling-mcp",
+  "repository": "https://github.com/hydr/dataverse-modelling-mcp",
+  "license": "UNLICENSED",
+  "keywords": ["dataverse", "modelling", "csharp", "local-mcp", "crossvertise"],
+  "userConfig": {
+    "dataverse_url": {
+      "type": "string",
+      "title": "Dataverse Environment URL",
+      "description": "z. B. https://contoso.crm4.dynamics.com — die URL der Dataverse-Umgebung, gegen die modelliert werden soll.",
+      "required": true
+    },
+    "client_id": {
+      "type": "string",
+      "title": "Azure AD Application (Client) ID",
+      "description": "AppRegistration mit Dataverse-Berechtigung. Wird im OS-Keychain gespeichert.",
+      "sensitive": true,
+      "required": true
+    },
+    "tenant_id": {
+      "type": "string",
+      "title": "Azure AD Tenant ID",
+      "description": "Optional. Default: Crossvertise-Tenant.",
+      "required": false
+    },
+    "release_repo": {
+      "type": "string",
+      "title": "Release-Repo fuer die Binary",
+      "description": "GitHub-Repo mit Release-Assets, z. B. 'hydr/dataverse-modelling-mcp'. Default reicht in der Regel.",
+      "default": "hydr/dataverse-modelling-mcp",
+      "required": false
+    }
+  }
+}

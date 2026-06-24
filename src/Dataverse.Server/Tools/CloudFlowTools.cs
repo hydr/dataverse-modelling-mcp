@@ -55,20 +55,49 @@ public sealed class CloudFlowTools
     }
 
     [McpServerTool(Name = "flow_create")]
-    [Description("Create a new Cloud Flow with the given display name and JSON definition.")]
+    [Description(
+        "Create a new Cloud Flow. " +
+        "If solutionUniqueName is provided, creates a solution-aware flow directly in Dataverse " +
+        "(supports flow_get_clientdata / flow_save_draft / versioning). " +
+        "Without solutionUniqueName, creates a personal flow via the Power Automate API " +
+        "(no versioning, clientdata tools not available).")]
     public static async Task<string> FlowCreate(
         CloudFlowService svc,
+        FlowVersionService versionSvc,
         ConfigProvider config,
         [Description("Display name for the flow")] string displayName,
-        [Description("Flow definition as JSON object")] string definitionJson,
+        [Description("Flow definition as JSON object (Logic Apps schema)")] string definitionJson,
+        [Description("Solution unique name — required to create a solution-aware flow that supports versioning and draft/publish tools")]
+            string? solutionUniqueName = null,
         CancellationToken ct = default)
     {
         try
         {
-            var definition = JsonSerializer.Deserialize<JsonElement>(definitionJson);
             var env = config.GetActiveEnvironment();
-            var flowId = await svc.CreateAsync(env.Region, env.EnvironmentId!, displayName, definition, ct);
-            return JsonSerializer.Serialize(new { flowId, displayName });
+
+            if (!string.IsNullOrWhiteSpace(solutionUniqueName))
+            {
+                var definition = JsonSerializer.Deserialize<JsonElement>(definitionJson);
+                var clientData = JsonSerializer.Serialize(new
+                {
+                    properties = new
+                    {
+                        connectionReferences = new { },
+                        definition
+                    },
+                    schemaVersion = "1.0.0.0"
+                });
+
+                var flowId = await versionSvc.CreateSolutionAwareAsync(
+                    env.OrgUrl, displayName, clientData, solutionUniqueName, ct);
+                return JsonSerializer.Serialize(new { flowId, displayName, solutionUniqueName, solutionAware = true });
+            }
+            else
+            {
+                var definition = JsonSerializer.Deserialize<JsonElement>(definitionJson);
+                var flowId = await svc.CreateAsync(env.Region, env.EnvironmentId!, displayName, definition, ct);
+                return JsonSerializer.Serialize(new { flowId, displayName, solutionAware = false });
+            }
         }
         catch (Exception ex)
         {

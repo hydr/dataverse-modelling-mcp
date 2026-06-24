@@ -21,7 +21,8 @@ Expert reference for managing **solution-aware** Power Automate cloud flows via 
 | List flows | `flow_list` | Power Automate Flow API |
 | Inspect single flow | `flow_get`, `flow_describe` | Power Automate Flow API |
 | **Get raw clientdata (with `connectionReferences` wrapper)** | `flow_get_clientdata` | Dataverse `GET /workflows({id})?$select=clientdata` |
-| Create / update definition | `flow_create`, `flow_update` | Power Automate Flow API |
+| **Create solution-aware flow (version history + draft/publish)** | `flow_create(…, solutionUniqueName=…)` | Dataverse `POST /workflows` (category=5, type=1) |
+| Create personal flow (no versioning) | `flow_create(…)` without `solutionUniqueName` | Power Automate Flow API |
 | List version history | `flow_list_versions` | Dataverse `GET /workflows({id})/componentversions` |
 | Inspect single version | `flow_get_version` | Filtered list (direct GET-by-key is blocked) |
 | **Save a draft (Op=1 Update version)** | `flow_save_draft` | `PATCH /workflows({id})` + header `mscrm.AsUnpublished: true` |

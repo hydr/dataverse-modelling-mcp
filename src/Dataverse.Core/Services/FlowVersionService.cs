@@ -184,6 +184,48 @@ public sealed class FlowVersionService
     }
 
     /// <summary>
+    /// Creates a solution-aware cloud flow by writing a <c>workflow</c> entity row directly into
+    /// Dataverse (category=5, type=1). Unlike the Power Automate Flow API used by
+    /// <c>CloudFlowService.CreateAsync</c>, this produces a proper Dataverse row that supports
+    /// version history, <c>flow_get_clientdata</c>, <c>flow_save_draft</c>, and all other
+    /// Dataverse-backed tools.
+    /// </summary>
+    public async Task<Guid> CreateSolutionAwareAsync(
+        string orgUrl,
+        string name,
+        string clientData,
+        string solutionUniqueName,
+        CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = name,
+            ["category"] = 5,
+            ["type"] = 1,
+            ["primaryentity"] = "none",
+            ["statecode"] = 0,
+            ["statuscode"] = 1,
+            ["clientdata"] = clientData
+        };
+
+        var headers = new Dictionary<string, string>
+        {
+            ["MSCRM.SolutionUniqueName"] = solutionUniqueName
+        };
+
+        var raw = await _client.PostRawAsync(
+            orgUrl,
+            "api/data/v9.2/workflows",
+            body,
+            extraHeaders: headers,
+            requestRepresentation: true,
+            ct);
+
+        var doc = JsonDocument.Parse(raw);
+        return Guid.Parse(doc.RootElement.GetProperty("workflowid").GetString()!);
+    }
+
+    /// <summary>
     /// Returns the raw <c>clientdata</c> string of a workflow record — the stringified Logic Apps
     /// JSON wrapper (<c>{ properties: { connectionReferences, definition }, schemaVersion }</c>).
     /// This is what <c>flow_save_draft</c> expects on the way back. <c>flow_get</c> only returns the

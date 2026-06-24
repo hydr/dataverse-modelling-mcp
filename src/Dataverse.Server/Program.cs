@@ -36,6 +36,9 @@ builder.Services.AddSingleton<EnvironmentVariableService>();
 // Config provider — reads config.json and wires up the token provider
 builder.Services.AddSingleton<ConfigProvider>();
 
+// Application Insights: no-ops when APPLICATIONINSIGHTS_CONNECTION_STRING is unset (local dev).
+builder.Services.AddApplicationInsightsTelemetryWorkerService();
+
 // MCP server
 var mcpBuilder = builder.Services
     .AddMcpServer()

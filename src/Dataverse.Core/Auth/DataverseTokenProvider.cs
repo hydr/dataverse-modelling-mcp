@@ -84,6 +84,33 @@ public sealed class DataverseTokenProvider : ITokenProvider
     }
 
     /// <summary>
+    /// Forces an interactive re-login. Removes every cached account first (so no stale token is
+    /// silently reused), then opens the system browser with an account picker
+    /// (<see cref="Prompt.SelectAccount"/>) and blocks until the user finishes signing in.
+    /// Use this to switch the identity the MCP server acts as — e.g. to an admin account that owns
+    /// the connection a flow must be activated with. Returns the signed-in account's username.
+    /// </summary>
+    public async Task<string> ReauthenticateAsync(string scope, CancellationToken ct = default)
+    {
+        var app = await GetOrCreateAppAsync(ct);
+
+        // Drop all cached accounts so GetTokenAsync cannot silently reuse the previous identity.
+        var accounts = await app.GetAccountsAsync();
+        foreach (var account in accounts)
+            await app.RemoveAsync(account);
+
+        _logger.LogInformation("Cleared {Count} cached account(s); opening browser for interactive re-login", accounts.Count());
+
+        var result = await app
+            .AcquireTokenInteractive(new[] { scope })
+            .WithPrompt(Prompt.SelectAccount)
+            .ExecuteAsync(ct);
+
+        _logger.LogInformation("Re-authenticated as {User}", result.Account?.Username);
+        return result.Account?.Username ?? "(unknown)";
+    }
+
+    /// <summary>
     /// Acquire a token whose <c>appid</c> claim is the Power-Apps-Maker AppId. Required for the
     /// Pipeline-Backend mutating endpoints. **Silent only** — if no cached token exists, throws
     /// <see cref="PipelineAuthRequiredException"/> so the caller can route the user to the

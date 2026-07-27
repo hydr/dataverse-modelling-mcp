@@ -1,7 +1,19 @@
 {
   "mcpServers": {
     "dataverse-modelling": {
-      "command": "${CLAUDE_PLUGIN_DATA}/bin/DataverseMcp.exe",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${CLAUDE_PLUGIN_ROOT}/scripts/run-server.ps1",
+        "-PluginRoot",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "-PluginData",
+        "${CLAUDE_PLUGIN_DATA}"
+      ],
       "env": {
         "DATAVERSE_URL": "${user_config.dataverse_url}",
         "AZURE_CLIENT_ID": "${user_config.client_id}",

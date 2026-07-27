@@ -1,29 +1,67 @@
 # Binary-Auslieferung über GitHub Releases
 
 Das Plugin liefert **keine** vorkompilierte MCP-Server-Binary im Git-Repo aus.
-Stattdessen lädt ein `SessionStart`-Hook die passende, self-contained Binary beim
-ersten Start aus einem GitHub-Release und legt sie dort ab, wo `.mcp.json` sie
-erwartet.
+Stattdessen wird die passende, self-contained Binary aus einem GitHub-Release
+geladen — beim `SessionStart` **und** bei jedem Start des MCP-Servers.
 
 ## Beteiligte Teile
 
 | Datei | Rolle |
 |---|---|
-| `.mcp.json` | Startet `${CLAUDE_PLUGIN_DATA}/bin/DataverseMcp.exe` (fester Runtime-Name) |
+| `.mcp.json` | Startet den Launcher `scripts/run-server.ps1` (nicht mehr die Binary direkt) |
+| `scripts/run-server.ps1` / `.sh` | Launcher: aktualisiert die Binary, startet sie, reicht stdio durch |
+| `scripts/binary-common.ps1` / `.sh` | Gemeinsame Download-/Auflösungslogik von Hook und Launcher |
 | `hooks/hooks.json` | Registriert den `SessionStart`-Hook (PowerShell **und** bash) |
-| `scripts/ensure-binary.ps1` | Windows-nativer Download (PowerShell) |
-| `scripts/ensure-binary.sh` | git-bash/Unix-Download; auf echtem Unix aktuell No-op |
+| `scripts/ensure-binary.ps1` | SessionStart-Hook (Windows), dünner Wrapper um `binary-common.ps1` |
+| `scripts/ensure-binary.sh` | dito für git-bash; auf echtem Unix weiterhin No-op |
 | `scripts/BINARY_VERSION` | Erwartete Binary-Version — **muss dem Release-Tag entsprechen** |
 | `.github/workflows/release.yml` | Baut & veröffentlicht die Binary als Release-Asset |
+
+## Update ohne Session-Neustart
+
+Weil der Launcher bei **jedem** Serverstart läuft, genügt nach einem Release ein
+**Reconnect im `/mcp`-Menü** — der Serverprozess startet neu, der Launcher zieht die
+neue Version und startet sie. Vorher war die Binary nur über den `SessionStart`-Hook
+aktualisierbar, d. h. erst in der nächsten Session nutzbar.
+
+Der Hook bleibt erhalten (wärmt den Download vor). Doppelte Downloads gibt es nicht:
+beide Pfade nutzen dieselbe Funktion, die sofort zurückkehrt, wenn die erwartete
+Version bereits installiert ist.
+
+## Layout auf Platte (versioniert)
+
+```
+<plugin-data>/bin/<version>/DataverseMcp.exe   <- wird ausgeführt
+<plugin-data>/bin/DataverseMcp.exe             <- Legacy-Pfad, Best-Effort-Kopie
+<plugin-data>/bin/.version                     <- Legacy-Marker
+```
+
+Versionierte Verzeichnisse, weil Windows eine **laufende `.exe` nicht überschreiben**
+lässt: Bei parallelen Claude-Sessions oder einem Reconnect, während der alte Prozess
+noch herunterfährt, würde ein In-Place-Update scheitern. Eine neue Version landet in
+einem neuen Verzeichnis, alte Verzeichnisse werden per Best-Effort aufgeräumt
+(gesperrte werden übersprungen und beim nächsten Lauf erneut versucht).
+
+Die Legacy-Kopie unter `bin/DataverseMcp.exe` bleibt bestehen, damit Installationen
+mit älterer `.mcp.json` (die direkt auf diesen Pfad zeigt) weiter starten.
 
 ## Namenskonvention
 
 - **Release-Asset:** `DataverseMcp-win-x64.exe` (RID-Suffix, damit spätere
   Plattformen koexistieren können).
-- **Runtime-Name auf Platte:** `DataverseMcp.exe` — so verlangt es `.mcp.json`.
-  Der Hook normalisiert den Asset-Namen beim Ablegen auf diesen festen Namen.
-- **`.version`-Marker:** Der Hook schreibt neben die Binary eine `.version`-Datei.
-  Stimmt sie mit `BINARY_VERSION` überein, wird kein erneuter Download ausgelöst.
+- **Runtime-Name auf Platte:** `DataverseMcp.exe`. Der Asset-Name wird beim Ablegen
+  auf diesen festen Namen normalisiert.
+
+## stdout-Disziplin (wichtig)
+
+Der Launcher teilt sich stdout mit dem MCP-stdio-Stream. Deshalb schreiben Launcher
+und gemeinsame Logik **ausschließlich nach stderr**; die Binary wird ohne Redirection
+gestartet und erbt stdin/stdout/stderr unverändert. Eine einzige Zeile auf stdout
+(z. B. ein `Write-Host`) würde die MCP-Verbindung zerstören.
+
+Ist GitHub nicht erreichbar, startet der Launcher die bereits installierte Binary und
+warnt nur auf stderr — Offline-Betrieb bleibt möglich. Der Hook bricht dagegen
+weiterhin laut ab.
 
 ## Versionskopplung (wichtig)
 

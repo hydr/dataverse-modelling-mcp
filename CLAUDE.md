@@ -26,4 +26,13 @@ Bei Änderungen am MCP-Server immer:
 3. PR mergen
 4. Git-Tag setzen (`git tag v<Version> && git push origin v<Version>`) → löst den Release-Workflow aus (NuGet-Publish + GitHub Release inkl. Server-Binary-Asset)
 
+## Neue Version in einer laufenden Session nutzen
+
+Kein Session-Neustart nötig: `.mcp.json` startet nicht die Binary direkt, sondern den Launcher
+`scripts/run-server.ps1`, der bei jedem Serverstart die Binary auf die in `scripts/BINARY_VERSION`
+gepinnte Version bringt und sie dann startet (stdio unverändert durchgereicht).
+
+Nach einem Release also: Plugin aktualisieren (damit `BINARY_VERSION` stimmt), dann im
+**`/mcp`-Menü** den Server `dataverse-modelling` **neu verbinden (Reconnect)** — fertig.
+
 Details zur Binary-Auslieferung: siehe `docs/GH-RELEASE-SETUP.md`.

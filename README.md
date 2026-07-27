@@ -124,6 +124,30 @@ Integration tests connect to the environment configured in `config.json` and exp
 
 ---
 
+## Updating to a new release (no session restart needed)
+
+When installed as a Claude Code plugin, the server binary is not started directly —
+`.mcp.json` launches `scripts/run-server.ps1`, which installs the binary version pinned in
+`scripts/BINARY_VERSION` (skipping the download when it is already there) and then execs it,
+passing stdio straight through.
+
+So after a new release, getting the new tools takes:
+
+1. Update the plugin so `scripts/BINARY_VERSION` points at the new version (`/plugin` → update,
+   or however the marketplace entry is refreshed).
+2. Open the **`/mcp`** menu, pick `dataverse-modelling`, and choose **Reconnect**.
+
+That restarts the server process, which re-runs the launcher and picks up the new binary — no
+new Claude Code session required. The `SessionStart` hook (`scripts/ensure-binary.ps1`) still
+pre-warms the download; because both paths share `scripts/binary-common.ps1` and short-circuit
+when the expected version is already installed, nothing is downloaded twice.
+
+Binaries live in versioned directories (`<plugin-data>/bin/<version>/DataverseMcp.exe`) so an
+update never has to overwrite a running `.exe` — which Windows would refuse while another
+session still has it open.
+
+---
+
 ## Docs
 
 - [Setup guide](docs/setup.md)

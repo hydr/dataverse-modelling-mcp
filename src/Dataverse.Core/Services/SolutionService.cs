@@ -407,28 +407,104 @@ public sealed class SolutionService
         await _client.ExecuteActionAsync(orgUrl, "RemoveSolutionComponent", parameters, ct);
     }
 
+    /// <summary>
+    /// Retrieve the solution layers of a single component — the same data the Maker's
+    /// "Solution Layers" view shows.
+    /// </summary>
+    /// <remarks>
+    /// Source is the <c>msdyn_componentlayer</c> virtual table. It requires BOTH
+    /// <c>msdyn_componentid</c> and <c>msdyn_solutioncomponentname</c> in the filter; the latter is the
+    /// component type's *name* (e.g. "Entity", "WebResource"), not its numeric code, so
+    /// <paramref name="componentType"/> is translated via <see cref="MapComponentType"/> first.
+    /// Filtering on the id alone silently returns zero rows, which is why an unresolvable component type
+    /// throws instead of reporting "no layers".
+    /// Note that <c>msdyn_componentlayer</c> ignores <c>$select</c> and always ships the large
+    /// <c>msdyn_changes</c>/<c>msdyn_componentjson</c> blobs; they are deliberately not read here so they
+    /// never reach the MCP channel.
+    /// </remarks>
     public async Task<SolutionLayerInfo> CheckLayersAsync(
         string orgUrl,
         Guid componentId,
         int componentType,
         CancellationToken ct = default)
     {
-        var url = $"api/data/v9.2/msdyn_solutionhistories" +
-                  $"?$filter=msdyn_solutionid ne null" +
-                  $"&$select=msdyn_name,msdyn_solutionversion";
+        var componentTypeName = await ResolveComponentTypeNameAsync(orgUrl, componentType, ct);
+
+        var filter = $"msdyn_componentid eq '{componentId}' and " +
+                     $"msdyn_solutioncomponentname eq '{componentTypeName}'";
+        var url = "api/data/v9.2/msdyn_componentlayers" +
+                  $"?$filter={Uri.EscapeDataString(filter)}" +
+                  "&$orderby=msdyn_order";
 
         var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
-        var doc = JsonDocument.Parse(raw);
-        var layers = new List<string>();
+        using var doc = JsonDocument.Parse(raw);
 
-        if (doc.RootElement.TryGetProperty("value", out var items))
+        var layers = new List<SolutionLayer>();
+        if (doc.RootElement.TryGetProperty("value", out var items) && items.ValueKind == JsonValueKind.Array)
+        {
             foreach (var item in items.EnumerateArray())
             {
-                var name = item.GetStringOrNull("msdyn_name");
-                if (name is not null) layers.Add(name);
-            }
+                var solutionName = item.GetStringOrNull("msdyn_solutionname");
+                if (string.IsNullOrWhiteSpace(solutionName))
+                    continue;
 
-        return new SolutionLayerInfo(componentId, componentType, layers);
+                layers.Add(new SolutionLayer(
+                    Order: item.GetInt32OrZero("msdyn_order"),
+                    SolutionName: solutionName!,
+                    PublisherName: item.GetStringOrNull("msdyn_publishername"),
+                    OverwriteTime: item.GetDateTimeOrNull("msdyn_overwritetime"),
+                    IsTopLayer: false));
+            }
+        }
+
+        // $orderby on a virtual table is not guaranteed — sort locally so "last entry wins" always holds.
+        layers.Sort((a, b) => a.Order.CompareTo(b.Order));
+        if (layers.Count > 0)
+        {
+            layers[^1] = layers[^1] with { IsTopLayer = true };
+        }
+
+        // msdyn_name repeats the component's name on every layer row — take it from the first one.
+        string? componentName = null;
+        if (items.ValueKind == JsonValueKind.Array && items.GetArrayLength() > 0)
+        {
+            componentName = items[0].GetStringOrNull("msdyn_name");
+        }
+
+        _logger.LogInformation(
+            "Component {ComponentId} ({TypeName}) has {LayerCount} solution layer(s).",
+            componentId, componentTypeName, layers.Count);
+
+        return new SolutionLayerInfo(
+            ComponentId: componentId,
+            ComponentType: componentType,
+            ComponentTypeName: componentTypeName,
+            ComponentName: componentName,
+            LayerCount: layers.Count,
+            TopLayerSolutionName: layers.Count > 0 ? layers[^1].SolutionName : null,
+            Layers: layers);
+    }
+
+    /// <summary>
+    /// Translate a numeric component type into the name <c>msdyn_componentlayer</c> expects. Falls back
+    /// to the environment's <c>solutioncomponentdefinitions</c> for Solution-Component-Framework codes.
+    /// Throws when the type cannot be named — querying with an unknown name would silently yield an
+    /// empty layer list, which reads like "this component has no layers".
+    /// </summary>
+    private async Task<string> ResolveComponentTypeNameAsync(string orgUrl, int componentType, CancellationToken ct)
+    {
+        var name = MapComponentType(componentType);
+        if (name != $"Type{componentType}")
+            return name;
+
+        var frameworkTypes = await TryResolveFrameworkComponentTypesAsync(orgUrl, ct);
+        if (frameworkTypes.TryGetValue(componentType, out var resolved))
+            return resolved;
+
+        throw new InvalidOperationException(
+            $"Unknown component type {componentType} — cannot query solution layers. " +
+            "msdyn_componentlayer must be filtered by the component type's name (e.g. 'Entity', " +
+            "'WebResource'), and this code maps to no known name in this environment.");
     }
 
     public async Task RemoveActiveLayerAsync(

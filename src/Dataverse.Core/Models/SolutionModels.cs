@@ -47,10 +47,32 @@ public sealed record SolutionImportResult(
     string? ErrorMessage,
     IReadOnlyList<string> ComponentErrors);
 
+/// <summary>
+/// The solution layers of a single component, as shown by the Maker's "Solution Layers" view.
+/// Sourced from the <c>msdyn_componentlayer</c> virtual table.
+/// <paramref name="Layers"/> is ordered bottom-up (<c>msdyn_order</c> ascending): the first entry is
+/// the base layer, each following layer overrides the ones before it, and the last entry is the layer
+/// currently in effect (also surfaced as <paramref name="TopLayerSolutionName"/>).
+/// </summary>
 public sealed record SolutionLayerInfo(
     Guid ComponentId,
     int ComponentType,
-    IReadOnlyList<string> SolutionLayers);
+    string ComponentTypeName,
+    string? ComponentName,
+    int LayerCount,
+    string? TopLayerSolutionName,
+    IReadOnlyList<SolutionLayer> Layers);
+
+/// <summary>
+/// One layer of a component. <paramref name="Order"/> is the platform's <c>msdyn_order</c> — a higher
+/// order sits higher in the stack and overrides everything below it.
+/// </summary>
+public sealed record SolutionLayer(
+    int Order,
+    string SolutionName,
+    string? PublisherName,
+    DateTime? OverwriteTime,
+    bool IsTopLayer);
 
 public sealed record PipelineSummary(
     Guid PipelineId,

@@ -395,6 +395,150 @@ public sealed class SolutionServiceTests
             "Documented component types must be mapped without an extra metadata roundtrip.");
     }
 
+    [Test]
+    public async Task CheckLayersAsync_QueriesComponentLayers_ConstrainedToTheComponent()
+    {
+        var componentId = Guid.NewGuid();
+        var requestedUrls = new List<string>();
+
+        SetupHttpResponseByUrl(requestedUrls, _ => ComponentLayers(
+            ("System", "MicrosoftCorporation", 1),
+            ("Active", "Default Publisher", 2)));
+
+        await _svc.CheckLayersAsync(OrgUrl, componentId, 61, CancellationToken.None);
+
+        var url = Uri.UnescapeDataString(requestedUrls.Single());
+        Assert.That(url, Does.Contain("msdyn_componentlayers"),
+            "Solution layers come from msdyn_componentlayer, not from the import history.");
+        Assert.That(url, Does.Not.Contain("msdyn_solutionhistories"));
+        Assert.That(url, Does.Contain($"msdyn_componentid eq '{componentId}'"),
+            "The query must be constrained to the component.");
+        Assert.That(url, Does.Contain("msdyn_solutioncomponentname eq 'WebResource'"),
+            "componentType 61 must be translated to its name — the virtual table filters by name.");
+    }
+
+    [Test]
+    public async Task CheckLayersAsync_ReturnsLayersBottomUp_WithTopLayerMarked()
+    {
+        SetupHttpResponse(HttpStatusCode.OK, ComponentLayers(
+            ("Active", "Default Publisher", 3),
+            ("System", "MicrosoftCorporation", 1),
+            ("msdynce_Sales", "MicrosoftCorporation", 2)));
+
+        var info = await _svc.CheckLayersAsync(OrgUrl, Guid.NewGuid(), 1, CancellationToken.None);
+
+        Assert.That(info.ComponentTypeName, Is.EqualTo("Entity"));
+        Assert.That(info.ComponentName, Is.EqualTo("Account"));
+        Assert.That(info.LayerCount, Is.EqualTo(3));
+        // Sorted locally by msdyn_order, regardless of the order the virtual table returned them in.
+        Assert.That(info.Layers.Select(l => l.SolutionName),
+            Is.EqualTo(new[] { "System", "msdynce_Sales", "Active" }));
+        Assert.That(info.Layers[0].IsTopLayer, Is.False);
+        Assert.That(info.Layers[^1].IsTopLayer, Is.True);
+        Assert.That(info.TopLayerSolutionName, Is.EqualTo("Active"));
+        Assert.That(info.Layers[^1].PublisherName, Is.EqualTo("Default Publisher"));
+    }
+
+    [Test]
+    public async Task CheckLayersAsync_ReturnsDifferentResults_ForDifferentComponents()
+    {
+        var webResourceId = Guid.NewGuid();
+        var entityId = Guid.NewGuid();
+
+        SetupHttpResponseByUrl(new List<string>(), url =>
+            url.Contains(webResourceId.ToString())
+                ? ComponentLayers(("Active", "Default Publisher", 1))
+                : ComponentLayers(
+                    ("System", "MicrosoftCorporation", 1),
+                    ("Active", "Default Publisher", 2)));
+
+        var webResource = await _svc.CheckLayersAsync(OrgUrl, webResourceId, 61, CancellationToken.None);
+        var entity = await _svc.CheckLayersAsync(OrgUrl, entityId, 1, CancellationToken.None);
+
+        Assert.That(webResource.LayerCount, Is.EqualTo(1));
+        Assert.That(entity.LayerCount, Is.EqualTo(2));
+        Assert.That(webResource.TopLayerSolutionName, Is.EqualTo("Active"));
+        Assert.That(entity.Layers.Select(l => l.SolutionName), Does.Contain("System"));
+    }
+
+    [Test]
+    public async Task CheckLayersAsync_ReturnsEmptyLayers_WhenComponentHasNone()
+    {
+        SetupHttpResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { value = Array.Empty<object>() }));
+
+        var info = await _svc.CheckLayersAsync(OrgUrl, Guid.NewGuid(), 1, CancellationToken.None);
+
+        Assert.That(info.LayerCount, Is.Zero);
+        Assert.That(info.Layers, Is.Empty);
+        Assert.That(info.TopLayerSolutionName, Is.Null);
+    }
+
+    [Test]
+    public void CheckLayersAsync_Throws_WhenComponentTypeCannotBeNamed()
+    {
+        // Unknown type => no name to filter by => the query would silently return zero rows,
+        // which must not be reported as "this component has no layers".
+        SetupHttpResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { value = Array.Empty<object>() }));
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await _svc.CheckLayersAsync(OrgUrl, Guid.NewGuid(), 987654, CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("987654"));
+    }
+
+    [Test]
+    public async Task CheckLayersAsync_ResolvesFrameworkComponentTypeName_BeforeQuerying()
+    {
+        var requestedUrls = new List<string>();
+        SetupHttpResponseByUrl(requestedUrls, url => url.Contains("solutioncomponentdefinitions")
+            ? JsonSerializer.Serialize(new
+            {
+                value = new[] { new { name = "ManagedIdentity", objecttypecode = 10228 } }
+            })
+            : ComponentLayers(("Active", "Default Publisher", 1)));
+
+        var info = await _svc.CheckLayersAsync(OrgUrl, Guid.NewGuid(), 10228, CancellationToken.None);
+
+        Assert.That(info.ComponentTypeName, Is.EqualTo("ManagedIdentity"));
+        Assert.That(
+            Uri.UnescapeDataString(requestedUrls.Single(u => u.Contains("msdyn_componentlayers"))),
+            Does.Contain("msdyn_solutioncomponentname eq 'ManagedIdentity'"));
+    }
+
+    private static string ComponentLayers(params (string Solution, string Publisher, int Order)[] layers) =>
+        JsonSerializer.Serialize(new
+        {
+            value = layers.Select(l => new
+            {
+                msdyn_componentlayerid = Guid.NewGuid().ToString(),
+                msdyn_name = "Account",
+                msdyn_solutionname = l.Solution,
+                msdyn_publishername = l.Publisher,
+                msdyn_order = l.Order,
+                msdyn_overwritetime = "2024-01-01T00:00:00Z",
+                msdyn_solutioncomponentname = "Entity"
+            }).ToArray()
+        });
+
+    private void SetupHttpResponseByUrl(List<string> requestedUrls, Func<string, string> bodyFactory)
+    {
+        _handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync((HttpRequestMessage req, CancellationToken _) =>
+            {
+                var url = req.RequestUri!.ToString();
+                requestedUrls.Add(url);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(bodyFactory(url), Encoding.UTF8, "application/json")
+                };
+            });
+    }
+
     private static string SolutionWithComponents(params int[] componentTypes) => JsonSerializer.Serialize(new
     {
         value = new[]

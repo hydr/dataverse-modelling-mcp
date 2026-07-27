@@ -174,12 +174,16 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_check_layers")]
-    [Description("Check the solution layers for a given component.")]
+    [Description("Show the solution layers of a single component — the same stack the Maker's " +
+                 "\"Solution Layers\" view displays (source: the msdyn_componentlayer virtual table). " +
+                 "Layers come back bottom-up: each one overrides the layers before it, and the last " +
+                 "entry (IsTopLayer, also given as topLayerSolutionName) is the one currently in effect. " +
+                 "For a table, pass its MetadataId as componentId and 1 as componentType.")]
     public static async Task<string> SolutionCheckLayers(
         SolutionService svc,
         ConfigProvider config,
-        [Description("GUID of the component")] string componentId,
-        [Description("Component type code")] int componentType,
+        [Description("GUID of the component (for a table: its MetadataId)")] string componentId,
+        [Description("Component type code, e.g. 1=Entity, 2=Attribute, 61=WebResource, 91=PluginAssembly")] int componentType,
         CancellationToken ct = default)
     {
         try

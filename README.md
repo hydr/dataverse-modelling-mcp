@@ -2,7 +2,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI clients (Claude Code, GitHub Copilot, etc.) first-class access to Dataverse and Power Platform.
 
-Covers 38 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, and Solutions/ALM — all via delegated user auth (no secrets, no service accounts).
+Covers 47 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, Solutions/ALM, Web Resources, Publishing, and Modern Commands — all via delegated user auth (no secrets, no service accounts).
 
 ---
 
@@ -17,6 +17,9 @@ Covers 38 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, 
 | **Security Roles** | `role_list`, `role_get`, `role_create`, `role_update` |
 | **Environment Variables** | `envvar_list`, `envvar_get`, `envvar_set` |
 | **Solutions / ALM** | `solution_list`, `solution_get`, `solution_create`, `solution_export`, `solution_import`, `solution_add_component`, `solution_remove_component`, `solution_check_layers`, `solution_remove_active_layer`, `solution_deploy_pipeline` |
+| **Web Resources** | `webresource_list`, `webresource_get`, `webresource_upsert` |
+| **Publishing** | `publish_customizations` |
+| **Modern Commands** | `command_list`, `command_get`, `command_create`, `command_update`, `command_delete` |
 
 ---
 
@@ -154,6 +157,7 @@ session still has it open.
 - [Architecture](docs/architecture.md)
 - [Authentication](docs/authentication.md)
 - [Tool reference](docs/tools/)
+- [Modern commands (`appaction`) — field semantics and gotchas](docs/tools/modern-commands.md)
 
 ---
 

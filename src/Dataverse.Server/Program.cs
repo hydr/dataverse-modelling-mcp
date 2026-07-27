@@ -32,6 +32,9 @@ builder.Services.AddSingleton<ViewService>();
 builder.Services.AddSingleton<SolutionService>();
 builder.Services.AddSingleton<SecurityRoleService>();
 builder.Services.AddSingleton<EnvironmentVariableService>();
+builder.Services.AddSingleton<WebResourceService>();
+builder.Services.AddSingleton<PublishService>();
+builder.Services.AddSingleton<CommandService>();
 
 // Config provider — reads config.json and wires up the token provider
 builder.Services.AddSingleton<ConfigProvider>();

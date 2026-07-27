@@ -19,6 +19,9 @@ public abstract class IntegrationTestBase
     protected WorkflowService WorkflowService = null!;
     protected CloudFlowService CloudFlowService = null!;
     protected FlowVersionService FlowVersionService = null!;
+    protected WebResourceService WebResourceService = null!;
+    protected PublishService PublishService = null!;
+    protected CommandService CommandService = null!;
 
     [OneTimeSetUp]
     public void BaseOneTimeSetUp()
@@ -46,5 +49,8 @@ public abstract class IntegrationTestBase
         WorkflowService = new WorkflowService(dvHttpClient, NullLogger<WorkflowService>.Instance);
         CloudFlowService = new CloudFlowService(paHttpClient, NullLogger<CloudFlowService>.Instance);
         FlowVersionService = new FlowVersionService(dvHttpClient, NullLogger<FlowVersionService>.Instance);
+        WebResourceService = new WebResourceService(dvHttpClient, NullLogger<WebResourceService>.Instance);
+        PublishService = new PublishService(dvHttpClient, WebResourceService, NullLogger<PublishService>.Instance);
+        CommandService = new CommandService(dvHttpClient, NullLogger<CommandService>.Instance);
     }
 }

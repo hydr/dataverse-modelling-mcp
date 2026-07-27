@@ -59,7 +59,10 @@ public sealed class ViewTools
 
     [McpServerTool(Name = "view_create")]
     [Description("Create a new saved view for a Dataverse table from FetchXml + LayoutXml. " +
-                 "Optionally adds the new view to a solution (component type 26 = SavedQuery).")]
+                 "Optionally runs AddSolutionComponent for the new view (component type 26 = SavedQuery). " +
+                 "Note: Dataverse does not create a standalone SavedQuery row in solutioncomponents for this — " +
+                 "it folds the view into the root Entity component (type 1) of the owning table. " +
+                 "So the view ships with the solution, but solution_get will not list it separately.")]
     public static async Task<string> ViewCreate(
         ViewService svc,
         SolutionService solutionSvc,
@@ -80,7 +83,8 @@ public sealed class ViewTools
             var viewId = await svc.CreateAsync(
                 env.OrgUrl, tableLogicalName, name, fetchXml, layoutXml, description, queryType, isDefault, ct);
 
-            var addedToSolution = false;
+            var solutionComponentAdded = false;
+            string? solutionNote = null;
             if (!string.IsNullOrWhiteSpace(solutionUniqueName))
             {
                 if (viewId == Guid.Empty)
@@ -89,7 +93,16 @@ public sealed class ViewTools
 
                 // 26 = SavedQuery
                 await solutionSvc.AddComponentAsync(env.OrgUrl, solutionUniqueName, viewId, 26, ct);
-                addedToSolution = true;
+                solutionComponentAdded = true;
+
+                // AddSolutionComponent with type 26 does NOT produce its own solutioncomponents row —
+                // Dataverse attributes the view to the root Entity component (type 1) of the table.
+                // Say so explicitly, otherwise a follow-up solution_get looks like the call did nothing.
+                solutionNote =
+                    $"AddSolutionComponent (type 26 = SavedQuery) succeeded for solution '{solutionUniqueName}'. " +
+                    "Dataverse records this on the root Entity component (type 1) of " +
+                    $"'{tableLogicalName}' instead of creating a separate SavedQuery component row, " +
+                    "so solution_get will not list the view as its own component. This is expected.";
             }
 
             return JsonSerializer.Serialize(new
@@ -101,7 +114,8 @@ public sealed class ViewTools
                 queryType,
                 isDefault,
                 solutionUniqueName,
-                addedToSolution
+                solutionComponentAdded,
+                solutionNote
             }, JsonOptions);
         }
         catch (Exception ex)

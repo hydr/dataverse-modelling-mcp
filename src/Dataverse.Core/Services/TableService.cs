@@ -23,10 +23,16 @@ public sealed class TableService
         string? solutionUniqueName = null,
         CancellationToken ct = default)
     {
-        // EntityDefinitions metadata endpoint only supports $select and $expand — no $filter or $top.
-        // Client-side filtering is applied below when a filter string is provided.
         // MetadataId is selected so the solution filter can match against solutioncomponents.objectid.
         var url = "api/data/v9.2/EntityDefinitions?$select=MetadataId,LogicalName,DisplayName,EntitySetName,TableType,IsCustomEntity";
+
+        // The metadata endpoint does support $filter on simple metadata properties
+        // (e.g. "IsCustomEntity eq true"). Pass it through instead of silently dropping it — the
+        // parameter used to be accepted and ignored, which made table_list return the full table list.
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            url += "&$filter=" + Uri.EscapeDataString(filter);
+        }
 
         // The metadata endpoint has no notion of solutions, so the restriction is resolved separately
         // via solutioncomponents (componenttype 1 = Entity) and applied client-side on MetadataId.

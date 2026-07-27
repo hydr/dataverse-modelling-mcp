@@ -134,6 +134,26 @@ public sealed class SolutionService
             }
         }
 
+        // Solution-Component-Framework types (>= 1000) carry environment-specific codes and are not part
+        // of the documented componenttype choice — resolve those names once from the metadata instead of
+        // guessing. Everything else keeps the static (documented) mapping.
+        if (components.Any(c => c.ComponentType >= 1000 && c.ComponentTypeName == $"Type{c.ComponentType}"))
+        {
+            var frameworkTypes = await TryResolveFrameworkComponentTypesAsync(orgUrl, ct);
+            if (frameworkTypes.Count > 0)
+            {
+                for (var i = 0; i < components.Count; i++)
+                {
+                    var c = components[i];
+                    if (c.ComponentTypeName == $"Type{c.ComponentType}"
+                        && frameworkTypes.TryGetValue(c.ComponentType, out var resolvedName))
+                    {
+                        components[i] = c with { ComponentTypeName = resolvedName };
+                    }
+                }
+            }
+        }
+
         string? detailPubName = null;
         if (item.TryGetProperty("publisherid", out var detailPubEl) && detailPubEl.ValueKind == JsonValueKind.Object)
             detailPubName = detailPubEl.GetStringOrNull("friendlyname");
@@ -167,14 +187,20 @@ public sealed class SolutionService
             publisherId = pubs[0].TryGetGuid("publisherid");
 
         if (publisherId == Guid.Empty)
-            throw new InvalidOperationException($"Publisher '{publisherUniqueName}' not found.");
+            throw new InvalidOperationException(
+                $"Publisher '{publisherUniqueName}' not found in {orgUrl}. " +
+                "Pass the publisher's *unique name* (column 'uniquename' of the publisher table, " +
+                "e.g. 'crossvertise'), not its display name.");
 
-        var body = new
+        // publisherid is a lookup — it MUST be sent as an OData navigation-property binding.
+        // Sending it as a primitive value ("publisherid": "/publishers(...)") makes Dataverse reject
+        // the payload with 0x80048d19 ("a 'StartArray'/'StartObject'/null node was expected").
+        var body = new Dictionary<string, object?>
         {
-            uniquename = uniqueName,
-            friendlyname = displayName,
-            version,
-            publisherid = $"/publishers({publisherId})"
+            ["uniquename"] = uniqueName,
+            ["friendlyname"] = displayName,
+            ["version"] = version,
+            ["publisherid@odata.bind"] = $"/publishers({publisherId})"
         };
 
         await _client.PostAsync(orgUrl, "api/data/v9.2/solutions", body, ct);
@@ -673,21 +699,146 @@ public sealed class SolutionService
         return results;
     }
 
+    /// <summary>
+    /// Map a <c>componenttype</c> code to its label. Values mirror the official <c>componenttype</c>
+    /// global choice of the <c>solutioncomponent</c> table
+    /// (learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent).
+    /// Codes not listed there — in particular the Solution-Component-Framework range (&gt;= 1000,
+    /// e.g. Custom API or Managed Identity) — are deliberately NOT hard-coded: they are assigned per
+    /// environment and are resolved at runtime via <c>solutioncomponentdefinitions</c>
+    /// (see <see cref="TryResolveFrameworkComponentTypesAsync"/>). Unknown codes fall back to
+    /// <c>Type&lt;code&gt;</c> rather than guessing.
+    /// </summary>
     private static string MapComponentType(int type) => type switch
     {
         1 => "Entity",
         2 => "Attribute",
         3 => "Relationship",
+        4 => "AttributePicklistValue",
+        5 => "AttributeLookupValue",
+        6 => "ViewAttribute",
+        7 => "LocalizedLabel",
+        8 => "RelationshipExtraCondition",
         9 => "OptionSet",
-        14 => "ConnectionRole",
-        24 => "Workflow",
+        10 => "EntityRelationship",
+        11 => "EntityRelationshipRole",
+        12 => "EntityRelationshipRelationships",
+        13 => "ManagedProperty",
+        14 => "EntityKey",
+        16 => "Privilege",
+        17 => "PrivilegeObjectTypeCode",
+        18 => "Index",
+        20 => "Role",
+        21 => "RolePrivilege",
+        22 => "DisplayString",
+        23 => "DisplayStringMap",
+        24 => "Form",
+        25 => "Organization",
         26 => "SavedQuery",
-        29 => "Report",
-        44 => "WebResource",
-        60 => "SiteMap",
-        61 => "PluginType",
-        62 => "PluginAssembly",
-        92 => "Role",
+        29 => "Workflow",
+        31 => "Report",
+        32 => "ReportEntity",
+        33 => "ReportCategory",
+        34 => "ReportVisibility",
+        35 => "Attachment",
+        36 => "EmailTemplate",
+        37 => "ContractTemplate",
+        38 => "KBArticleTemplate",
+        39 => "MailMergeTemplate",
+        44 => "DuplicateRule",
+        45 => "DuplicateRuleCondition",
+        46 => "EntityMap",
+        47 => "AttributeMap",
+        48 => "RibbonCommand",
+        49 => "RibbonContextGroup",
+        50 => "RibbonCustomization",
+        52 => "RibbonRule",
+        53 => "RibbonTabToCommandMap",
+        55 => "RibbonDiff",
+        59 => "SavedQueryVisualization",
+        60 => "SystemForm",
+        61 => "WebResource",
+        62 => "SiteMap",
+        63 => "ConnectionRole",
+        64 => "ComplexControl",
+        65 => "HierarchyRule",
+        66 => "CustomControl",
+        68 => "CustomControlDefaultConfig",
+        70 => "FieldSecurityProfile",
+        71 => "FieldPermission",
+        90 => "PluginType",
+        91 => "PluginAssembly",
+        92 => "SdkMessageProcessingStep",
+        93 => "SdkMessageProcessingStepImage",
+        95 => "ServiceEndpoint",
+        150 => "RoutingRule",
+        151 => "RoutingRuleItem",
+        152 => "SLA",
+        153 => "SLAItem",
+        154 => "ConvertRule",
+        155 => "ConvertRuleItem",
+        161 => "MobileOfflineProfile",
+        162 => "MobileOfflineProfileItem",
+        165 => "SimilarityRule",
+        166 => "DataSourceMapping",
+        201 => "SdkMessage",
+        202 => "SdkMessageFilter",
+        203 => "SdkMessagePair",
+        204 => "SdkMessageRequest",
+        205 => "SdkMessageRequestField",
+        206 => "SdkMessageResponse",
+        207 => "SdkMessageResponseField",
+        208 => "ImportMap",
+        210 => "WebWizard",
+        300 => "CanvasApp",
+        371 or 372 => "Connector",
+        380 => "EnvironmentVariableDefinition",
+        381 => "EnvironmentVariableValue",
+        400 => "AIProjectType",
+        401 => "AIProject",
+        402 => "AIConfiguration",
+        430 => "EntityAnalyticsConfiguration",
+        431 => "AttributeImageConfiguration",
+        432 => "EntityImageConfiguration",
         _ => $"Type{type}"
     };
+
+    /// <summary>
+    /// Resolve labels for Solution-Component-Framework component types (codes &gt;= 1000, e.g. Custom API
+    /// or Managed Identity). Those codes are not part of the documented <c>componenttype</c> choice and
+    /// are assigned per environment, so they are looked up from <c>solutioncomponentdefinitions</c>
+    /// instead of being hard-coded. Failures are swallowed — the caller keeps the <c>Type&lt;code&gt;</c>
+    /// fallback rather than reporting a wrong name.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<int, string>> TryResolveFrameworkComponentTypesAsync(
+        string orgUrl,
+        CancellationToken ct)
+    {
+        var map = new Dictionary<int, string>();
+        try
+        {
+            var raw = await _client.GetRawAsync(
+                orgUrl,
+                "api/data/v9.2/solutioncomponentdefinitions?$select=name,objecttypecode",
+                ct: ct);
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("value", out var items) || items.ValueKind != JsonValueKind.Array)
+                return map;
+
+            foreach (var item in items.EnumerateArray())
+            {
+                if (!item.TryGetProperty("objecttypecode", out var otc) || otc.ValueKind != JsonValueKind.Number)
+                    continue;
+                var name = item.GetStringOrNull("name");
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+                map[otc.GetInt32()] = name!;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve solutioncomponentdefinitions for component-type labels.");
+        }
+        return map;
+    }
 }

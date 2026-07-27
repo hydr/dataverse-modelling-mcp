@@ -182,6 +182,87 @@ public sealed class TableServiceTests
     }
 
     [Test]
+    public async Task ListAsync_PassesFilterAsODataFilter_WhenFilterGiven()
+    {
+        var requestedUrls = new List<string>();
+        SetupHttpResponseByUrl(requestedUrls, _ => JsonSerializer.Serialize(new
+        {
+            value = new[]
+            {
+                new { MetadataId = Guid.NewGuid().ToString(), LogicalName = "sample_mcptest" }
+            }
+        }));
+
+        await _svc.ListAsync(OrgUrl, filter: "IsCustomEntity eq true", ct: CancellationToken.None);
+
+        var metadataUrl = requestedUrls.Single(u => u.Contains("EntityDefinitions"));
+        Assert.That(Uri.UnescapeDataString(metadataUrl), Does.Contain("$filter=IsCustomEntity eq true"),
+            "The filter parameter must be forwarded to EntityDefinitions as $filter.");
+    }
+
+    [Test]
+    public async Task ListAsync_SendsNoFilter_WhenFilterIsNullOrWhitespace()
+    {
+        var requestedUrls = new List<string>();
+        SetupHttpResponseByUrl(requestedUrls, _ => JsonSerializer.Serialize(new
+        {
+            value = new[] { new { MetadataId = Guid.NewGuid().ToString(), LogicalName = "account" } }
+        }));
+
+        await _svc.ListAsync(OrgUrl, filter: "   ", ct: CancellationToken.None);
+
+        var metadataUrl = requestedUrls.Single(u => u.Contains("EntityDefinitions"));
+        Assert.That(metadataUrl, Does.Not.Contain("$filter"));
+    }
+
+    [Test]
+    public async Task ListAsync_CombinesFilterAndSolution_WhenBothGiven()
+    {
+        var accountMetadataId = Guid.NewGuid();
+        var customMetadataId = Guid.NewGuid();
+        var requestedUrls = new List<string>();
+
+        SetupHttpResponseByUrl(requestedUrls, url =>
+        {
+            if (url.Contains("/solutions?"))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    value = new[] { new { solutionid = Guid.NewGuid().ToString() } }
+                });
+            }
+
+            if (url.Contains("/solutioncomponents?"))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    value = new[] { new { objectid = customMetadataId.ToString() } }
+                });
+            }
+
+            // What a server-side "$filter=IsCustomEntity eq true" would return.
+            return JsonSerializer.Serialize(new
+            {
+                value = new[]
+                {
+                    new { MetadataId = accountMetadataId.ToString(), LogicalName = "sample_other" },
+                    new { MetadataId = customMetadataId.ToString(), LogicalName = "sample_mcptest" }
+                }
+            });
+        });
+
+        var results = await _svc.ListAsync(
+            OrgUrl, filter: "IsCustomEntity eq true", solutionUniqueName: "XvTestSolution", ct: CancellationToken.None);
+
+        // Server-side filter goes to the metadata endpoint, the solution restriction is applied on top.
+        var metadataUrl = requestedUrls.Single(u => u.Contains("EntityDefinitions"));
+        Assert.That(Uri.UnescapeDataString(metadataUrl), Does.Contain("$filter=IsCustomEntity eq true"));
+        Assert.That(requestedUrls.Any(u => u.Contains("solutioncomponents")), Is.True);
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].LogicalName, Is.EqualTo("sample_mcptest"));
+    }
+
+    [Test]
     public async Task GetAsync_ReturnsTableDetail_WithColumns_WhenFound()
     {
         var responseBody = JsonSerializer.Serialize(new

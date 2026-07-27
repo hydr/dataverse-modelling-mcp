@@ -29,7 +29,15 @@ jobs:
 
       # --- NuGet tool (Dataverse.Setup) ---
       - run: dotnet pack src/Dataverse.Setup -c Release -o ./artifacts
-      - run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+      # The NuGet push is optional — it only runs when a NUGET_API_KEY secret exists.
+      # Without this guard the step failed with "Source parameter was not specified"
+      # (empty --api-key eats the following argument) and aborted the whole job, so the
+      # GitHub release incl. the server binary asset was never created.
+      - name: Push NuGet package (only when an API key is configured)
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        if: env.NUGET_API_KEY != ''
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
 
       # --- MCP server binary (self-contained, single file) ---
       # Runtime name is fixed to DataverseMcp.exe by .mcp.json; the release asset

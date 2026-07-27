@@ -1,0 +1,7 @@
+# Shell scripts and the version marker must stay LF, otherwise the SessionStart
+# hook breaks in git-bash/Unix ("bad interpreter: ...^M").
+*.sh            text eol=lf
+scripts/BINARY_VERSION text eol=lf
+
+# PowerShell tolerates both, keep it stable.
+*.ps1           text

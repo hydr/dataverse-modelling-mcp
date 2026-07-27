@@ -118,6 +118,68 @@ public sealed class DataverseHttpClient
         return await response.Content.ReadAsStringAsync(ct);
     }
 
+    /// <summary>POST returning the GUID of the newly created row. Dataverse reports it in the
+    /// <c>OData-EntityId</c> response header (e.g. <c>https://org.crm4.dynamics.com/api/data/v9.2/savedqueries(guid)</c>);
+    /// when that header is missing the value is read from <paramref name="idPropertyName"/> in the
+    /// response body. Returns <see cref="Guid.Empty"/> when neither carries an id.</summary>
+    public async Task<Guid> PostForIdAsync(
+        string orgUrl,
+        string relativeUrl,
+        object body,
+        string idPropertyName,
+        CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+
+        if (response.Headers.TryGetValues("OData-EntityId", out var headerValues))
+        {
+            var id = ParseEntityIdHeader(headerValues.FirstOrDefault());
+            if (id != Guid.Empty)
+                return id;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            return Guid.Empty;
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrWhiteSpace(json))
+            return Guid.Empty;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty(idPropertyName, out var idEl) &&
+                idEl.ValueKind == JsonValueKind.String &&
+                Guid.TryParse(idEl.GetString(), out var bodyId))
+            {
+                return bodyId;
+            }
+        }
+        catch (JsonException)
+        {
+            // Non-JSON body — no id to recover, fall through.
+        }
+
+        return Guid.Empty;
+    }
+
+    /// <summary>Extract the GUID from an <c>OData-EntityId</c> header value ("…/collection(guid)").</summary>
+    private static Guid ParseEntityIdHeader(string? entityUri)
+    {
+        if (string.IsNullOrWhiteSpace(entityUri))
+            return Guid.Empty;
+
+        var open = entityUri.LastIndexOf('(');
+        var close = entityUri.LastIndexOf(')');
+        if (open < 0 || close < open)
+            return Guid.Empty;
+
+        return Guid.TryParse(entityUri.Substring(open + 1, close - open - 1), out var id) ? id : Guid.Empty;
+    }
+
     public async Task PatchAsync(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);

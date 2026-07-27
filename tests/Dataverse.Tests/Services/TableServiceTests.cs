@@ -87,6 +87,101 @@ public sealed class TableServiceTests
     }
 
     [Test]
+    public async Task ListAsync_FiltersBySolution_WhenSolutionUniqueNameGiven()
+    {
+        var accountMetadataId = Guid.NewGuid();
+        var customMetadataId = Guid.NewGuid();
+        var solutionId = Guid.NewGuid();
+        var requestedUrls = new List<string>();
+
+        SetupHttpResponseByUrl(requestedUrls, url =>
+        {
+            if (url.Contains("/solutions?"))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    value = new[] { new { solutionid = solutionId.ToString() } }
+                });
+            }
+
+            if (url.Contains("/solutioncomponents?"))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    value = new[] { new { objectid = customMetadataId.ToString() } }
+                });
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                value = new[]
+                {
+                    new
+                    {
+                        MetadataId = accountMetadataId.ToString(),
+                        LogicalName = "account",
+                        DisplayName = new { UserLocalizedLabel = new { Label = "Account" } },
+                        EntitySetName = "accounts",
+                        TableType = "Standard",
+                        IsCustomEntity = false
+                    },
+                    new
+                    {
+                        MetadataId = customMetadataId.ToString(),
+                        LogicalName = "sample_mcptest",
+                        DisplayName = new { UserLocalizedLabel = new { Label = "MCP Test" } },
+                        EntitySetName = "sample_mcptests",
+                        TableType = "Standard",
+                        IsCustomEntity = true
+                    }
+                }
+            });
+        });
+
+        var results = await _svc.ListAsync(OrgUrl, filter: null, solutionUniqueName: "XvTestSolution", ct: CancellationToken.None);
+
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].LogicalName, Is.EqualTo("sample_mcptest"));
+
+        Assert.That(requestedUrls.Any(u => u.Contains("uniquename%20eq%20'XvTestSolution'")
+                                           || u.Contains("uniquename eq 'XvTestSolution'")), Is.True,
+            "Expected the solution to be resolved by unique name.");
+        Assert.That(requestedUrls.Any(u => u.Contains("solutioncomponents") && u.Contains("componenttype")), Is.True,
+            "Expected solutioncomponents to be queried for componenttype 1 (Entity).");
+    }
+
+    [Test]
+    public void ListAsync_Throws_WhenSolutionNotFound()
+    {
+        SetupHttpResponseByUrl(new List<string>(), _ =>
+            JsonSerializer.Serialize(new { value = Array.Empty<object>() }));
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await _svc.ListAsync(OrgUrl, filter: null, solutionUniqueName: "DoesNotExist", ct: CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("DoesNotExist"));
+    }
+
+    [Test]
+    public async Task ListAsync_ReturnsAllTables_WhenNoSolutionGiven()
+    {
+        var requestedUrls = new List<string>();
+        SetupHttpResponseByUrl(requestedUrls, _ => JsonSerializer.Serialize(new
+        {
+            value = new[]
+            {
+                new { MetadataId = Guid.NewGuid().ToString(), LogicalName = "account" },
+                new { MetadataId = Guid.NewGuid().ToString(), LogicalName = "contact" }
+            }
+        }));
+
+        var results = await _svc.ListAsync(OrgUrl, ct: CancellationToken.None);
+
+        Assert.That(results, Has.Count.EqualTo(2));
+        Assert.That(requestedUrls.Any(u => u.Contains("solutioncomponents")), Is.False);
+    }
+
+    [Test]
     public async Task GetAsync_ReturnsTableDetail_WithColumns_WhenFound()
     {
         var responseBody = JsonSerializer.Serialize(new
@@ -209,6 +304,26 @@ public sealed class TableServiceTests
         Assert.That(detail, Is.Not.Null);
         Assert.That(detail!.DisplayName, Is.Null);
         Assert.That(detail.Attributes, Is.Empty);
+    }
+
+    /// <summary>Respond per request URL — needed for calls that hit several endpoints in sequence.</summary>
+    private void SetupHttpResponseByUrl(List<string> requestedUrls, Func<string, string> bodyFactory)
+    {
+        _handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync((HttpRequestMessage req, CancellationToken _) =>
+            {
+                var url = req.RequestUri!.ToString();
+                requestedUrls.Add(url);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(bodyFactory(url), Encoding.UTF8, "application/json")
+                };
+            });
     }
 
     private void SetupHttpResponse(HttpStatusCode statusCode, string body)

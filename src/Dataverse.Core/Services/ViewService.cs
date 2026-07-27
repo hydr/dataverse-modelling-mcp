@@ -76,6 +76,40 @@ public sealed class ViewService
             Description: item.GetStringOrNull("description"));
     }
 
+    /// <summary>
+    /// Create a new saved view (<c>savedquery</c>) for a table. <paramref name="queryType"/> follows
+    /// the Dataverse querytype codes — 0 = Public (Saved Query), 1 = Advanced Find, 2 = Associated,
+    /// 4 = QuickFind.
+    /// </summary>
+    /// <returns>The GUID of the created view.</returns>
+    public async Task<Guid> CreateAsync(
+        string orgUrl,
+        string tableLogicalName,
+        string name,
+        string fetchXml,
+        string layoutXml,
+        string? description = null,
+        int queryType = 0,
+        bool isDefault = false,
+        CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["returnedtypecode"] = tableLogicalName,
+            ["name"] = name,
+            ["description"] = description,
+            ["fetchxml"] = fetchXml,
+            ["layoutxml"] = layoutXml,
+            ["querytype"] = queryType,
+            ["isdefault"] = isDefault
+        };
+
+        var viewId = await _client.PostForIdAsync(orgUrl, "api/data/v9.2/savedqueries", body, "savedqueryid", ct);
+        _logger.LogInformation(
+            "Created saved view '{Name}' ({ViewId}) on table {Table}.", name, viewId, tableLogicalName);
+        return viewId;
+    }
+
     public async Task UpdateAsync(
         string orgUrl,
         Guid viewId,

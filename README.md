@@ -2,7 +2,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI clients (Claude Code, GitHub Copilot, etc.) first-class access to Dataverse and Power Platform.
 
-Covers 37 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, and Solutions/ALM — all via delegated user auth (no secrets, no service accounts).
+Covers 38 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, and Solutions/ALM — all via delegated user auth (no secrets, no service accounts).
 
 ---
 
@@ -13,7 +13,7 @@ Covers 37 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, 
 | **Classic Workflows** | `workflow_list`, `workflow_get`, `workflow_create`, `workflow_update`, `workflow_set_state`, `workflow_assign`, `workflow_validate` |
 | **Cloud Flows** | `flow_list`, `flow_get`, `flow_create`, `flow_update`, `flow_set_state`, `flow_get_runs`, `flow_describe` |
 | **Tables & Columns** | `table_list`, `table_get`, `table_create`, `table_update`, `column_add`, `column_update` |
-| **Views** | `view_list`, `view_get`, `view_update`, `view_add_column`, `view_set_sort` |
+| **Views** | `view_list`, `view_get`, `view_create`, `view_update`, `view_add_column`, `view_set_sort` |
 | **Security Roles** | `role_list`, `role_get`, `role_create`, `role_update` |
 | **Environment Variables** | `envvar_list`, `envvar_get`, `envvar_set` |
 | **Solutions / ALM** | `solution_list`, `solution_get`, `solution_create`, `solution_export`, `solution_import`, `solution_add_component`, `solution_remove_component`, `solution_check_layers`, `solution_remove_active_layer`, `solution_deploy_pipeline` |

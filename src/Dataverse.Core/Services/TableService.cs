@@ -25,7 +25,14 @@ public sealed class TableService
     {
         // EntityDefinitions metadata endpoint only supports $select and $expand — no $filter or $top.
         // Client-side filtering is applied below when a filter string is provided.
-        var url = "api/data/v9.2/EntityDefinitions?$select=LogicalName,DisplayName,EntitySetName,TableType,IsCustomEntity";
+        // MetadataId is selected so the solution filter can match against solutioncomponents.objectid.
+        var url = "api/data/v9.2/EntityDefinitions?$select=MetadataId,LogicalName,DisplayName,EntitySetName,TableType,IsCustomEntity";
+
+        // The metadata endpoint has no notion of solutions, so the restriction is resolved separately
+        // via solutioncomponents (componenttype 1 = Entity) and applied client-side on MetadataId.
+        HashSet<Guid>? solutionEntityIds = null;
+        if (!string.IsNullOrWhiteSpace(solutionUniqueName))
+            solutionEntityIds = await GetSolutionEntityIdsAsync(orgUrl, solutionUniqueName, ct);
 
         var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
@@ -35,6 +42,9 @@ public sealed class TableService
         {
             foreach (var item in items.EnumerateArray())
             {
+                if (solutionEntityIds is not null && !solutionEntityIds.Contains(item.TryGetGuid("MetadataId")))
+                    continue;
+
                 var displayName = item.TryGetProperty("DisplayName", out var dn)
                     ? dn.GetStringOrNull("UserLocalizedLabel.Label") ?? dn.GetStringOrNull("LocalizedLabels[0].Label")
                     : null;
@@ -57,6 +67,50 @@ public sealed class TableService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Resolve the <c>MetadataId</c>s of all entities contained in a solution, via
+    /// <c>solutioncomponents</c> filtered on componenttype 1 (Entity). The components' objectid
+    /// is the entity's MetadataId.
+    /// </summary>
+    private async Task<HashSet<Guid>> GetSolutionEntityIdsAsync(
+        string orgUrl,
+        string solutionUniqueName,
+        CancellationToken ct)
+    {
+        var solUrl = $"api/data/v9.2/solutions?$filter=uniquename eq '{solutionUniqueName}'&$select=solutionid";
+        var solRaw = await _client.GetRawAsync(orgUrl, solUrl, ct: ct);
+        using var solDoc = JsonDocument.Parse(solRaw);
+
+        var solutionId = Guid.Empty;
+        if (solDoc.RootElement.TryGetProperty("value", out var solutions) && solutions.GetArrayLength() > 0)
+            solutionId = solutions[0].TryGetGuid("solutionid");
+
+        if (solutionId == Guid.Empty)
+            throw new InvalidOperationException($"Solution '{solutionUniqueName}' not found.");
+
+        var compUrl = $"api/data/v9.2/solutioncomponents" +
+                      $"?$filter=_solutionid_value eq {solutionId} and componenttype eq 1" +
+                      "&$select=objectid";
+
+        var compRaw = await _client.GetRawAsync(orgUrl, compUrl, ct: ct);
+        using var compDoc = JsonDocument.Parse(compRaw);
+
+        var ids = new HashSet<Guid>();
+        if (compDoc.RootElement.TryGetProperty("value", out var components))
+        {
+            foreach (var comp in components.EnumerateArray())
+            {
+                var objectId = comp.TryGetGuid("objectid");
+                if (objectId != Guid.Empty)
+                    ids.Add(objectId);
+            }
+        }
+
+        _logger.LogInformation(
+            "Solution '{Solution}' contains {Count} entity components.", solutionUniqueName, ids.Count);
+        return ids;
     }
 
     public async Task<TableDetail?> GetAsync(

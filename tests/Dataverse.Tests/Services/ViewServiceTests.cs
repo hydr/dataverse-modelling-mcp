@@ -110,6 +110,95 @@ public sealed class ViewServiceTests
     }
 
     [Test]
+    public async Task CreateAsync_PostsToSavedQueries_AndReturnsIdFromEntityIdHeader()
+    {
+        var viewId = Guid.NewGuid();
+        Uri? capturedUri = null;
+        HttpMethod? capturedMethod = null;
+        string? capturedBody = null;
+
+        _handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedUri = req.RequestUri;
+                capturedMethod = req.Method;
+                capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(() =>
+            {
+                var resp = new HttpResponseMessage(HttpStatusCode.NoContent);
+                resp.Headers.TryAddWithoutValidation(
+                    "OData-EntityId", $"{OrgUrl}/api/data/v9.2/savedqueries({viewId})");
+                return resp;
+            });
+
+        var created = await _svc.CreateAsync(
+            OrgUrl,
+            tableLogicalName: "sample_purchaseorder",
+            name: "Offene Bestellungen",
+            fetchXml: "<fetch><entity name=\"sample_purchaseorder\"/></fetch>",
+            layoutXml: "<grid><row><cell name=\"sample_name\" width=\"200\"/></row></grid>",
+            description: "Alle offenen Bestellungen",
+            queryType: 0,
+            isDefault: false,
+            ct: CancellationToken.None);
+
+        Assert.That(created, Is.EqualTo(viewId));
+        Assert.That(capturedMethod, Is.EqualTo(HttpMethod.Post));
+        Assert.That(capturedUri!.ToString(), Does.Contain("api/data/v9.2/savedqueries"));
+
+        using var body = JsonDocument.Parse(capturedBody!);
+        Assert.That(body.RootElement.GetProperty("returnedtypecode").GetString(), Is.EqualTo("sample_purchaseorder"));
+        Assert.That(body.RootElement.GetProperty("name").GetString(), Is.EqualTo("Offene Bestellungen"));
+        Assert.That(body.RootElement.GetProperty("description").GetString(), Is.EqualTo("Alle offenen Bestellungen"));
+        Assert.That(body.RootElement.GetProperty("querytype").GetInt32(), Is.EqualTo(0));
+        Assert.That(body.RootElement.GetProperty("isdefault").GetBoolean(), Is.False);
+        Assert.That(body.RootElement.GetProperty("fetchxml").GetString(), Does.Contain("sample_purchaseorder"));
+        Assert.That(body.RootElement.GetProperty("layoutxml").GetString(), Does.Contain("sample_name"));
+    }
+
+    [Test]
+    public async Task CreateAsync_FallsBackToResponseBody_WhenEntityIdHeaderMissing()
+    {
+        var viewId = Guid.NewGuid();
+        SetupHttpResponse(HttpStatusCode.Created, JsonSerializer.Serialize(new
+        {
+            savedqueryid = viewId.ToString(),
+            name = "QuickFind"
+        }));
+
+        var created = await _svc.CreateAsync(
+            OrgUrl,
+            tableLogicalName: "account",
+            name: "QuickFind",
+            fetchXml: "<fetch><entity name=\"account\"/></fetch>",
+            layoutXml: "<grid><row><cell name=\"name\" width=\"200\"/></row></grid>",
+            queryType: 4,
+            ct: CancellationToken.None);
+
+        Assert.That(created, Is.EqualTo(viewId));
+    }
+
+    [Test]
+    public void CreateAsync_Throws_WhenApiReturnsError()
+    {
+        SetupHttpResponse(HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"Invalid fetchxml\"}}");
+
+        Assert.ThrowsAsync<HttpRequestException>(async () => await _svc.CreateAsync(
+            OrgUrl,
+            tableLogicalName: "account",
+            name: "Broken",
+            fetchXml: "<fetch>",
+            layoutXml: "<grid/>",
+            ct: CancellationToken.None));
+    }
+
+    [Test]
     public async Task UpdateAsync_SendsPatchRequest_ToCorrectEndpoint()
     {
         var viewId = Guid.NewGuid();

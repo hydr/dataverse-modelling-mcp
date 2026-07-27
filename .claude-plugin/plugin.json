@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dataverse-modelling-mcp",
   "displayName": "Dataverse Modelling MCP",
-  "version": "0.4.0",
-  "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten und Relationships. Binary wird beim ersten Start aus einem privaten Azure Blob Storage geladen.",
+  "version": "0.6.0",
+  "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten und Relationships. Binary wird beim ersten Start per SessionStart-Hook aus einem GitHub-Release geladen.",
   "author": {
     "name": "Crossvertise GmbH",
     "email": "it@crossvertise.com"

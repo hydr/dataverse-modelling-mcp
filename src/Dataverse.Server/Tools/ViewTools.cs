@@ -57,6 +57,59 @@ public sealed class ViewTools
         }
     }
 
+    [McpServerTool(Name = "view_create")]
+    [Description("Create a new saved view for a Dataverse table from FetchXml + LayoutXml. " +
+                 "Optionally adds the new view to a solution (component type 26 = SavedQuery).")]
+    public static async Task<string> ViewCreate(
+        ViewService svc,
+        SolutionService solutionSvc,
+        ConfigProvider config,
+        [Description("Logical name of the table the view belongs to (e.g. 'sample_purchaseorder')")] string tableLogicalName,
+        [Description("Display name of the new view")] string name,
+        [Description("FetchXml defining the view's query")] string fetchXml,
+        [Description("LayoutXml defining the view's grid columns")] string layoutXml,
+        [Description("Optional description")] string? description = null,
+        [Description("Query type code: 0=Public (default), 1=AdvancedFind, 2=Associated, 4=QuickFind")] int queryType = 0,
+        [Description("true to make this the default view of the table")] bool isDefault = false,
+        [Description("Optional solution unique name — the new view is added to it as a component")] string? solutionUniqueName = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var viewId = await svc.CreateAsync(
+                env.OrgUrl, tableLogicalName, name, fetchXml, layoutXml, description, queryType, isDefault, ct);
+
+            var addedToSolution = false;
+            if (!string.IsNullOrWhiteSpace(solutionUniqueName))
+            {
+                if (viewId == Guid.Empty)
+                    throw new InvalidOperationException(
+                        "View was created but Dataverse did not return its id — cannot add it to the solution.");
+
+                // 26 = SavedQuery
+                await solutionSvc.AddComponentAsync(env.OrgUrl, solutionUniqueName, viewId, 26, ct);
+                addedToSolution = true;
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                viewId,
+                tableLogicalName,
+                name,
+                queryType,
+                isDefault,
+                solutionUniqueName,
+                addedToSolution
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "view_update")]
     [Description("Update properties of a saved view (e.g. name, fetchxml, layoutxml).")]
     public static async Task<string> ViewUpdate(

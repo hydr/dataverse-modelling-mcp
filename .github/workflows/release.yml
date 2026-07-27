@@ -9,11 +9,43 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      # Guard: the SessionStart hook downloads the binary from
+      # releases/download/v<BINARY_VERSION>/... — that file MUST match this tag,
+      # otherwise clients would resolve a non-existent asset (the 0.0.0 bug).
+      - name: Verify BINARY_VERSION matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          BINVER="$(tr -d '[:space:]' < scripts/BINARY_VERSION)"
+          echo "Tag=$TAG  BINARY_VERSION=$BINVER"
+          if [ "$TAG" != "$BINVER" ]; then
+            echo "::error::scripts/BINARY_VERSION ($BINVER) does not match release tag ($TAG). Bump BINARY_VERSION before tagging."
+            exit 1
+          fi
+
+      # --- NuGet tool (Dataverse.Setup) ---
       - run: dotnet pack src/Dataverse.Setup -c Release -o ./artifacts
       - run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+
+      # --- MCP server binary (self-contained, single file) ---
+      # Runtime name is fixed to DataverseMcp.exe by .mcp.json; the release asset
+      # is suffixed with the RID so future platforms can coexist. The ensure-binary
+      # hook downloads the RID-suffixed asset and normalises the on-disk name.
+      - name: Publish Windows server binary
+        run: |
+          dotnet publish src/Dataverse.Server -c Release -r win-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -o ./publish/win-x64
+          cp ./publish/win-x64/Dataverse.Server.exe ./artifacts/DataverseMcp-win-x64.exe
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: ./artifacts/*.nupkg
+          files: |
+            ./artifacts/*.nupkg
+            ./artifacts/DataverseMcp-win-x64.exe

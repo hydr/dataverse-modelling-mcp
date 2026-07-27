@@ -38,16 +38,135 @@ public enum CommandOrigin
 }
 
 /// <summary>
-/// <c>appaction.visibilitytype</c> (<c>appaction_visibilitytype</c> choice).
+/// <c>appaction.visibilitytype</c> (<c>appaction_visibilitytype</c> choice, values read off the live
+/// option set): <c>0 = None</c>, <c>1 = Formula</c> (Power Fx), <c>2 = ClassicRules</c>.
+/// <para>
+/// <b>None is not "always visible" on a grid.</b> This is the single most common trap of the modern
+/// command bar: a grid command with <c>visibilitytype = None</c> renders while nothing is selected and
+/// <b>disappears the moment rows are ticked</b>, because the command bar switches into its selection
+/// context and commands without a rule drop out of it. If the button has to survive a selection it needs
+/// either <c>Formula</c> or <c>ClassicRules</c>.
+/// </para>
+/// <para>
+/// <c>Formula</c> is stored across three fields — <c>visibilityformulacomponentlibraryid</c> (a lookup to
+/// a <b>canvas component library</b>, <c>canvasapp</c> with <c>canvasapptype = 1</c>),
+/// <c>visibilityformulacomponentname</c> and <c>visibilityformulafunctionname</c>. The library can only
+/// be authored by the Command Designer <b>opened from an app</b>, which is precisely the app dependency
+/// that makes the classic <c>SelectionCountRule</c> the better tool for an entity-bound button.
+/// </para>
+/// <para>
 /// <c>ClassicRules</c> requires <c>appactionrule</c> rows associated through the
-/// <c>appaction_appactionrule_classicrules</c> N:N relationship; without them the button
-/// evaluates against nothing. Use <c>None</c> for always-visible commands.
+/// <c>appaction_appactionrule_classicrules</c> N:N relationship; without them there is nothing to
+/// evaluate.
+/// </para>
 /// </summary>
 public enum CommandVisibilityType
 {
     None = 0,
     Formula = 1,
     ClassicRules = 2
+}
+
+/// <summary>
+/// A canvas component library (<c>canvasapp</c> with <c>canvasapptype = 1</c>) — the thing a modern
+/// command's Power Fx visibility formula lives in.
+/// </summary>
+public sealed record ComponentLibrarySummary(
+    Guid CanvasAppId,
+    string Name,
+    string? DisplayName,
+    bool IsManaged);
+
+/// <summary>
+/// The <c>fonticon</c> values that are known to render.
+/// <para>
+/// An unknown value does not error and does not fall back to a default — the command simply never
+/// appears on the command bar, with nothing logged anywhere. The only visible symptom is the Command
+/// Designer flagging "Icon is required" in red. <c>$clientsvg:Money</c>, for instance, looks entirely
+/// plausible and silently kills the button.
+/// </para>
+/// <para>
+/// This list is the set observed across the 729 icon-bearing <c>appaction</c> rows of a live org. It is
+/// a floor, not a ceiling: <see cref="CommandService.ValidateFontIconAsync"/> unions it with whatever the
+/// target environment actually uses, so an org with more icons stays usable.
+/// </para>
+/// </summary>
+public static class CommandFontIcons
+{
+    /// <summary>Fluent icons referenced as <c>$clientsvg:&lt;Name&gt;</c>.</summary>
+    public static readonly IReadOnlyList<string> ClientSvg = new[]
+    {
+        "$clientsvg:Accept",
+        "$clientsvg:Add",
+        "$clientsvg:Archive",
+        "$clientsvg:Calendar",
+        "$clientsvg:CreateMajor",
+        "$clientsvg:CreateMinor",
+        "$clientsvg:Delete",
+        "$clientsvg:Edit",
+        "$clientsvg:EditMail",
+        "$clientsvg:FollowUser",
+        "$clientsvg:ImportToExcel",
+        "$clientsvg:MailLink",
+        "$clientsvg:MergeCase",
+        "$clientsvg:OpenEnrollment",
+        "$clientsvg:Org",
+        "$clientsvg:PageBlock",
+        "$clientsvg:PageCompleted",
+        "$clientsvg:Phone",
+        "$clientsvg:Pin",
+        "$clientsvg:Refresh",
+        "$clientsvg:RelatedKnowledgeArticle",
+        "$clientsvg:RevertToDraft",
+        "$clientsvg:RoutingRule",
+        "$clientsvg:Save",
+        "$clientsvg:SaveAndClose",
+        "$clientsvg:Share",
+        "$clientsvg:TranslationNew",
+        "$clientsvg:UpdateRestore"
+    };
+
+    /// <summary>Legacy bare icon names that migrated system commands still carry.</summary>
+    public static readonly IReadOnlyList<string> Legacy = new[]
+    {
+        "Cancel",
+        "Close",
+        "Connection",
+        "DeleteBulk",
+        "EditDefaultFilter",
+        "FormDesign",
+        "NewMeeting",
+        "No",
+        "OpenDelve",
+        "OpenEmail",
+        "OpenRecord",
+        "PublishKnowledgeArticle",
+        "QueueItemRelease",
+        "QueueItemRemove",
+        "Report",
+        "Resolve",
+        "RestoreArticle",
+        "SendSelected",
+        "SetRegarding",
+        "SharePointAddDocumentLocation",
+        "SharePointCheckinDocument",
+        "SharePointCheckoutDocument",
+        "SharePointDeleteDocument",
+        "SharePointDiscardCheckoutDocument",
+        "SharePointEditDocument",
+        "SharePointEditDocumentProperties",
+        "SharePointOpenLocation",
+        "SharePointUploadDocument",
+        "TableGroup",
+        "ViewHierarchy",
+        "Yes"
+    };
+
+    /// <summary>Every statically known-good value.</summary>
+    public static IReadOnlyList<string> All { get; } = ClientSvg.Concat(Legacy).ToArray();
+
+    public static bool IsKnown(string fontIcon) =>
+        All.Contains(fontIcon, StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -196,4 +315,7 @@ public sealed record CommandDetail(
     bool Hidden,
     bool IsDisabled,
     Guid? AppModuleId,
-    bool IsManaged);
+    bool IsManaged,
+    Guid? VisibilityFormulaComponentLibraryId = null,
+    string? VisibilityFormulaComponentName = null,
+    string? VisibilityFormulaFunctionName = null);

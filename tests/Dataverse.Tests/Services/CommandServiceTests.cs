@@ -361,6 +361,189 @@ public sealed class CommandServiceTests
         Assert.That(CommandService.InferCustomizationPrefix("account"), Is.Null);
     }
 
+    // -------------------------------------------------------------------------------------------
+    // Visibility
+    // -------------------------------------------------------------------------------------------
+
+    [Test]
+    public void ValidateVisibility_RejectsAGridCommandWithoutAVisibilityRule()
+    {
+        // visibilitytype=None looks fine until rows are selected: the command bar switches into its
+        // selection context and drops every command that has no rule.
+        var ex = Assert.Throws<ArgumentException>(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.None, (int)CommandLocation.MainGrid, null, null, null));
+
+        Assert.That(ex!.Message, Does.Contain("selection"));
+        Assert.That(ex.Message, Does.Contain("SelectionCountRule"));
+    }
+
+    [Test]
+    public void ValidateVisibility_AllowsAGridCommandWithoutARuleWhenExplicitlyRequested()
+    {
+        Assert.DoesNotThrow(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.None,
+            (int)CommandLocation.SubGrid,
+            null, null, null,
+            allowGridWithoutVisibilityRule: true));
+    }
+
+    [Test]
+    public void ValidateVisibility_AllowsAFormCommandWithoutARule()
+    {
+        Assert.DoesNotThrow(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.None, (int)CommandLocation.Form, null, null, null));
+    }
+
+    [Test]
+    public void ValidateVisibility_RequiresAllThreeFormulaFields()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.Formula,
+            (int)CommandLocation.MainGrid,
+            Guid.NewGuid(),
+            "838813193347447db39c7ad8e32689c6",
+            functionName: null));
+
+        Assert.That(ex!.Message, Does.Contain("visibilityFormulaFunctionName"));
+    }
+
+    [Test]
+    public void ValidateVisibility_AcceptsACompleteFormulaConfiguration()
+    {
+        Assert.DoesNotThrow(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.Formula,
+            (int)CommandLocation.MainGrid,
+            Guid.Parse("31eaa81c-b8d7-4f9d-8e4d-900e1c81c301"),
+            "838813193347447db39c7ad8e32689c6",
+            "Visible"));
+    }
+
+    [Test]
+    public void ValidateVisibility_RejectsFormulaFieldsWithoutFormulaVisibility()
+    {
+        Assert.Throws<ArgumentException>(() => CommandService.ValidateVisibility(
+            (int)CommandVisibilityType.None,
+            (int)CommandLocation.Form,
+            Guid.NewGuid(),
+            "component",
+            "Visible"));
+    }
+
+    [Test]
+    public void VisibilityTypeEnum_MatchesTheLiveOptionSet()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That((int)CommandVisibilityType.None, Is.EqualTo(0));
+            Assert.That((int)CommandVisibilityType.Formula, Is.EqualTo(1));
+            Assert.That((int)CommandVisibilityType.ClassicRules, Is.EqualTo(2));
+        });
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Font icons
+    // -------------------------------------------------------------------------------------------
+
+    [Test]
+    public async Task ValidateFontIconAsync_AcceptsAKnownIconWithoutCallingTheApi()
+    {
+        await _svc.ValidateFontIconAsync(OrgUrl, "$clientsvg:Add", CancellationToken.None);
+
+        _handlerMock.Protected().Verify(
+            "SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Test]
+    public void ValidateFontIconAsync_RejectsAnIconTheEnvironmentDoesNotKnow()
+    {
+        // $clientsvg:Money reads as entirely plausible and silently prevents the command from rendering.
+        SetupResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            value = new[] { new { fonticon = "$clientsvg:Add" } }
+        }));
+
+        var ex = Assert.ThrowsAsync<ArgumentException>(
+            () => _svc.ValidateFontIconAsync(OrgUrl, "$clientsvg:Money", CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("silently"));
+        Assert.That(ex.Message, Does.Contain("$clientsvg:Add"));
+    }
+
+    [Test]
+    public async Task ValidateFontIconAsync_AcceptsAnIconTheEnvironmentActuallyUses()
+    {
+        SetupResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            value = new[] { new { fonticon = "$clientsvg:SomethingNewerThanThisBuild" } }
+        }));
+
+        await _svc.ValidateFontIconAsync(
+            OrgUrl, "$clientsvg:SomethingNewerThanThisBuild", CancellationToken.None);
+    }
+
+    [Test]
+    public async Task ValidateFontIconAsync_IgnoresANullIcon()
+    {
+        await _svc.ValidateFontIconAsync(OrgUrl, null, CancellationToken.None);
+        await _svc.ValidateFontIconAsync(OrgUrl, "   ", CancellationToken.None);
+    }
+
+    [Test]
+    public void FontIconCatalogue_CoversTheIconsSeenOnALiveOrg()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(CommandFontIcons.IsKnown("$clientsvg:Add"), Is.True);
+            Assert.That(CommandFontIcons.IsKnown("$clientsvg:PageCompleted"), Is.True);
+            Assert.That(CommandFontIcons.IsKnown("$clientsvg:FollowUser"), Is.True);
+            Assert.That(CommandFontIcons.IsKnown("Close"), Is.True);
+            Assert.That(CommandFontIcons.IsKnown("$clientsvg:Money"), Is.False);
+            Assert.That(CommandFontIcons.All, Is.Unique);
+        });
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Component libraries
+    // -------------------------------------------------------------------------------------------
+
+    [Test]
+    public async Task ListComponentLibrariesAsync_FiltersOnCanvasAppTypeOne()
+    {
+        Uri? captured = null;
+        var libraryId = Guid.NewGuid();
+
+        SetupResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            value = new[]
+            {
+                new
+                {
+                    canvasappid = libraryId.ToString(),
+                    name = "sample_mainappdefaultcommandlibrary_01af8",
+                    displayname = "mainapp_DefaultCommandLibrary",
+                    ismanaged = false
+                }
+            }
+        }), req => captured = req.RequestUri);
+
+        var result = await _svc.ListComponentLibrariesAsync(OrgUrl, CancellationToken.None);
+
+        Assert.That(result, Has.Count.EqualTo(1));
+        Assert.That(result[0].CanvasAppId, Is.EqualTo(libraryId));
+        Assert.That(Uri.UnescapeDataString(captured!.ToString()), Does.Contain("canvasapptype eq 1"));
+    }
+
+    [Test]
+    public void ResolveComponentLibraryAsync_ExplainsThatNoneCanBeCreated()
+    {
+        SetupResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { value = Array.Empty<object>() }));
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(
+            () => _svc.ResolveComponentLibraryAsync(OrgUrl, "whatever", CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("Command Designer"));
+    }
+
     private void SetupResponse(HttpStatusCode statusCode, string body) =>
         SetupResponse(statusCode, body, _ => { });
 

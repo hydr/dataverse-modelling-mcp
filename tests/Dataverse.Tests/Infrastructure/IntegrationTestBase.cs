@@ -22,6 +22,7 @@ public abstract class IntegrationTestBase
     protected WebResourceService WebResourceService = null!;
     protected PublishService PublishService = null!;
     protected CommandService CommandService = null!;
+    protected RibbonService RibbonService = null!;
 
     [OneTimeSetUp]
     public void BaseOneTimeSetUp()
@@ -52,5 +53,7 @@ public abstract class IntegrationTestBase
         WebResourceService = new WebResourceService(dvHttpClient, NullLogger<WebResourceService>.Instance);
         PublishService = new PublishService(dvHttpClient, WebResourceService, NullLogger<PublishService>.Instance);
         CommandService = new CommandService(dvHttpClient, NullLogger<CommandService>.Instance);
+        RibbonService = new RibbonService(
+            dvHttpClient, SolutionService, PublishService, NullLogger<RibbonService>.Instance);
     }
 }

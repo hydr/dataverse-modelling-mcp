@@ -130,7 +130,138 @@ public sealed class CommandService
             Hidden: item.TryGetProperty("hidden", out var hid) && hid.ValueKind == JsonValueKind.True,
             IsDisabled: item.TryGetProperty("isdisabled", out var dis) && dis.ValueKind == JsonValueKind.True,
             AppModuleId: NullableGuid(item, "_appmoduleid_value"),
-            IsManaged: item.TryGetProperty("ismanaged", out var man) && man.ValueKind == JsonValueKind.True);
+            IsManaged: item.TryGetProperty("ismanaged", out var man) && man.ValueKind == JsonValueKind.True,
+            VisibilityFormulaComponentLibraryId: NullableGuid(item, "_visibilityformulacomponentlibraryid_value"),
+            VisibilityFormulaComponentName: item.GetStringOrNull("visibilityformulacomponentname"),
+            VisibilityFormulaFunctionName: item.GetStringOrNull("visibilityformulafunctionname"));
+    }
+
+    /// <summary>
+    /// List the canvas component libraries of the environment — <c>canvasapp</c> rows with
+    /// <c>canvasapptype = 1</c>. These are the only places a modern command's Power Fx visibility formula
+    /// can live.
+    /// <para>
+    /// There is no API to <b>create</b> one. A <c>POST /canvasapps</c> is rejected outright
+    /// (<c>0x80040200 — attribute 'aadlastpublishedbyid' cannot be NULL</c>), and even past that a
+    /// library is only meaningful with a valid <c>.msapp</c> document behind it. The Command Designer
+    /// creates them, and only when it is opened <b>from an app</b>; opened from a solution it offers just
+    /// "Show". So a Power Fx visibility rule always drags an app dependency along with it.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<ComponentLibrarySummary>> ListComponentLibrariesAsync(
+        string orgUrl,
+        CancellationToken ct = default)
+    {
+        var url = "api/data/v9.2/canvasapps?$filter=canvasapptype eq 1" +
+                  "&$select=canvasappid,name,displayname,ismanaged&$orderby=displayname";
+
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
+        using var doc = JsonDocument.Parse(raw);
+        var results = new List<ComponentLibrarySummary>();
+
+        if (doc.RootElement.TryGetProperty("value", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                results.Add(new ComponentLibrarySummary(
+                    CanvasAppId: item.TryGetGuid("canvasappid"),
+                    Name: item.GetStringOrEmpty("name"),
+                    DisplayName: item.GetStringOrNull("displayname"),
+                    IsManaged: item.TryGetProperty("ismanaged", out var m) && m.ValueKind == JsonValueKind.True));
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>Resolve a component library by GUID, unique name, or display name.</summary>
+    public async Task<ComponentLibrarySummary> ResolveComponentLibraryAsync(
+        string orgUrl,
+        string nameOrId,
+        CancellationToken ct = default)
+    {
+        var libraries = await ListComponentLibrariesAsync(orgUrl, ct);
+
+        if (Guid.TryParse(nameOrId, out var id))
+        {
+            return libraries.FirstOrDefault(l => l.CanvasAppId == id)
+                   ?? throw new InvalidOperationException(
+                       $"No canvas component library with id {id} exists in this environment.");
+        }
+
+        var match = libraries.FirstOrDefault(
+                        l => string.Equals(l.Name, nameOrId, StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(l.DisplayName, nameOrId, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException(
+                        $"No canvas component library named '{nameOrId}'. Available: " +
+                        (libraries.Count == 0
+                            ? "(none — a library can only be created by the Command Designer opened from " +
+                              "an app; there is no API for it)"
+                            : string.Join(", ", libraries.Select(l => $"{l.DisplayName} ({l.Name})"))));
+
+        return match;
+    }
+
+    /// <summary>
+    /// Reject a <c>fonticon</c> the environment does not know.
+    /// <para>
+    /// An invalid value is the worst kind of failure this table offers: the create succeeds, the row is
+    /// stored, nothing is logged — and the command never renders. The check unions the statically known
+    /// values with the ones actually in use in the target org, so a genuinely novel-but-valid icon in a
+    /// richer environment still passes.
+    /// </para>
+    /// </summary>
+    public async Task ValidateFontIconAsync(string orgUrl, string? fontIcon, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fontIcon))
+        {
+            return;
+        }
+
+        if (CommandFontIcons.IsKnown(fontIcon))
+        {
+            return;
+        }
+
+        var inUse = await ListFontIconsInUseAsync(orgUrl, ct);
+        if (inUse.Contains(fontIcon, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        throw new ArgumentException(
+            $"fonticon '{fontIcon}' is not a known icon. Dataverse accepts the value, stores it, and then " +
+            "silently never renders the command — the only hint is the Command Designer showing " +
+            "\"Icon is required\". Known-good values: " +
+            string.Join(", ", CommandFontIcons.All.Concat(inUse).Distinct(StringComparer.Ordinal).Order()) +
+            ".",
+            nameof(fontIcon));
+    }
+
+    /// <summary>The distinct <c>fonticon</c> values actually used by commands in this environment.</summary>
+    public async Task<IReadOnlyList<string>> ListFontIconsInUseAsync(
+        string orgUrl,
+        CancellationToken ct = default)
+    {
+        var raw = await _client.GetRawAsync(
+            orgUrl, $"{EntitySet}?$select=fonticon&$filter=fonticon ne null", ct: ct);
+
+        using var doc = JsonDocument.Parse(raw);
+        var icons = new HashSet<string>(StringComparer.Ordinal);
+
+        if (doc.RootElement.TryGetProperty("value", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                var icon = item.GetStringOrNull("fonticon");
+                if (!string.IsNullOrWhiteSpace(icon))
+                {
+                    icons.Add(icon!);
+                }
+            }
+        }
+
+        return icons.Order(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>Resolve the <c>MetadataId</c> of a table — the value the <c>ContextEntity</c> lookup expects.</summary>
@@ -173,8 +304,21 @@ public sealed class CommandService
         int visibilityType = (int)CommandVisibilityType.None,
         int buttonType = (int)CommandButtonType.StandardButton,
         string? customizationPrefix = null,
+        Guid? visibilityFormulaComponentLibraryId = null,
+        string? visibilityFormulaComponentName = null,
+        string? visibilityFormulaFunctionName = null,
+        bool allowGridWithoutVisibilityRule = false,
         CancellationToken ct = default)
     {
+        await ValidateFontIconAsync(orgUrl, fontIcon, ct);
+        ValidateVisibility(
+            visibilityType,
+            location,
+            visibilityFormulaComponentLibraryId,
+            visibilityFormulaComponentName,
+            visibilityFormulaFunctionName,
+            allowGridWithoutVisibilityRule);
+
         var metadataId = await GetTableMetadataIdAsync(orgUrl, tableLogicalName, ct);
         var resolvedUniqueName = uniqueName ?? BuildUniqueName(
             name,
@@ -211,6 +355,16 @@ public sealed class CommandService
             body["sequence"] = sequence.Value;
         }
 
+        if (visibilityType == (int)CommandVisibilityType.Formula)
+        {
+            // Like the other two lookups on this table, the component library binds through its
+            // navigation property name, not its attribute name.
+            body["VisibilityFormulaComponentLibraryId@odata.bind"] =
+                $"/canvasapps({visibilityFormulaComponentLibraryId})";
+            body["visibilityformulacomponentname"] = visibilityFormulaComponentName;
+            body["visibilityformulafunctionname"] = visibilityFormulaFunctionName;
+        }
+
         var id = await _client.PostForIdAsync(orgUrl, EntitySet, body, "appactionid", ct);
         _logger.LogInformation(
             "Created modern command '{Name}' ({Id}) on {Table}, location {Location}.",
@@ -231,6 +385,66 @@ public sealed class CommandService
     {
         await _client.DeleteAsync(orgUrl, $"{EntitySet}({appActionId})", ct);
         _logger.LogInformation("Deleted modern command {Id}.", appActionId);
+    }
+
+    /// <summary>
+    /// Guard the visibility configuration before it reaches Dataverse.
+    /// <para>
+    /// Two things are checked. <c>Formula</c> needs all three of its fields — a half-configured formula is
+    /// accepted by the API and then evaluates to nothing. And a <b>grid</b> command with
+    /// <c>visibilitytype = None</c> gets a warning-by-exception: it looks fine until rows are selected,
+    /// at which point the command bar switches to the selection context and drops every command without a
+    /// rule. That is the most-reported "my button vanished" symptom on the modern command bar.
+    /// </para>
+    /// </summary>
+    public static void ValidateVisibility(
+        int visibilityType,
+        int location,
+        Guid? componentLibraryId,
+        string? componentName,
+        string? functionName,
+        bool allowGridWithoutVisibilityRule = false)
+    {
+        if (visibilityType == (int)CommandVisibilityType.Formula)
+        {
+            if (componentLibraryId is null || componentLibraryId == Guid.Empty
+                || string.IsNullOrWhiteSpace(componentName)
+                || string.IsNullOrWhiteSpace(functionName))
+            {
+                throw new ArgumentException(
+                    "visibilityType=Formula needs all three of visibilityFormulaComponentLibrary, " +
+                    "visibilityFormulaComponentName and visibilityFormulaFunctionName. Dataverse accepts a " +
+                    "partial configuration and then evaluates nothing. Note that the component library " +
+                    "itself cannot be created through any API — only by the Command Designer opened from " +
+                    "an app.");
+            }
+
+            return;
+        }
+
+        if (componentLibraryId is not null || componentName is not null || functionName is not null)
+        {
+            throw new ArgumentException(
+                "Power Fx visibility fields were supplied but visibilityType is not Formula (1).");
+        }
+
+        var isGrid = location is (int)CommandLocation.MainGrid
+            or (int)CommandLocation.SubGrid
+            or (int)CommandLocation.AssociatedGrid;
+
+        if (isGrid
+            && visibilityType == (int)CommandVisibilityType.None
+            && !allowGridWithoutVisibilityRule)
+        {
+            throw new ArgumentException(
+                "A grid command with visibilityType=None (0) renders while nothing is selected and " +
+                "disappears as soon as rows are ticked — the command bar switches into its selection " +
+                "context and commands without a visibility rule fall out of it. Either give it a " +
+                "visibility rule, or pass allowGridWithoutVisibilityRule=true if the button really is " +
+                "only meant for the unselected state. For an entity-bound 'enabled when exactly one row " +
+                "is selected' button, a classic ribbon SelectionCountRule (ribbon_add_button) does the " +
+                "same job without the app dependency a Power Fx formula brings.");
+        }
     }
 
     /// <summary>

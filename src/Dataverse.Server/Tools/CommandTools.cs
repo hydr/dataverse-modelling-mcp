@@ -25,9 +25,37 @@ public sealed class CommandTools
         "origin=Migrated has no ribbon CommandDefinition to bind to and does not render. " +
         "origin is create-only: a PATCH changing it returns 200 and silently keeps the old value, so a " +
         "command created with the wrong origin has to be deleted and recreated. " +
-        "visibilitytype 0=None, 1=Formula, 2=ClassicRules — ClassicRules needs appactionrule rows linked " +
-        "through the appaction_appactionrule_classicrules N:N, so use None for always-visible buttons. " +
+        "visibilitytype 0=None, 1=Formula (Power Fx), 2=ClassicRules. None is NOT 'always visible' on a " +
+        "grid: a grid command with visibilitytype=None renders while nothing is selected and disappears " +
+        "the moment rows are ticked, because the command bar switches into its selection context and " +
+        "commands without a rule drop out — the most common 'my button vanished' report. Formula is " +
+        "stored across visibilityformulacomponentlibraryid (lookup to a canvas component library, i.e. a " +
+        "canvasapp with canvasapptype=1), visibilityformulacomponentname and " +
+        "visibilityformulafunctionname. ClassicRules needs appactionrule rows linked through the " +
+        "appaction_appactionrule_classicrules N:N. " +
         "onclickeventtype 2=JavaScript. type 0=StandardButton, 1=Dropdown, 2=Split, 3=Group.";
+
+    private const string IconNote =
+        "fontIcon is validated before the create. An unknown value is the nastiest failure this table " +
+        "offers: Dataverse accepts it, stores the row, logs nothing — and the command never appears on " +
+        "the command bar. The only visible symptom is the Command Designer flagging 'Icon is required' " +
+        "in red. '$clientsvg:Money', for example, looks entirely plausible and silently kills the " +
+        "button. Known-good values include $clientsvg:Add, Delete, Edit, PageBlock, PageCompleted, " +
+        "FollowUser, Share, MailLink, Accept, Refresh, Save, SaveAndClose, Archive, Pin, Phone, Calendar, " +
+        "Org, ImportToExcel — plus legacy bare names such as Close, Cancel, Report, Resolve, Yes, No. " +
+        "Validation unions that list with the icons actually in use in the target environment, so a " +
+        "richer org stays usable; use command_list_icons to see the effective set.";
+
+    private const string LibraryNote =
+        "A Power Fx visibility formula lives in a canvas component library (canvasapp with " +
+        "canvasapptype=1). There is NO API to create one — POST /canvasapps is rejected outright " +
+        "(0x80040200, aadlastpublishedbyid cannot be NULL) and a library is only meaningful with a valid " +
+        ".msapp document behind it. Libraries are created by the Command Designer, and only when it is " +
+        "opened FROM AN APP; opened from a solution it offers just 'Show'. So Power Fx visibility always " +
+        "creates an app dependency. Use command_list_component_libraries to find an existing one. If all " +
+        "you need is 'enabled when exactly one row is selected' on an entity-bound button, a classic " +
+        "ribbon SelectionCountRule via ribbon_add_button does the same job with no app dependency and " +
+        "with XML you can keep in source control.";
 
     private const string ParameterNote =
         "parameters is the argument list handed to the JavaScript function, stored as the JSON array " +
@@ -102,7 +130,7 @@ public sealed class CommandTools
                  "(target collection 'webresourceset') — using the attribute names contextentity / " +
                  "onclickeventjavascriptwebresourceid in @odata.bind fails with 0x80048d19 " +
                  "'undeclared property'. Run publish_customizations for the table afterwards. " +
-                 SemanticsNote + " " + ParameterNote)]
+                 SemanticsNote + " " + IconNote + " " + LibraryNote + " " + ParameterNote)]
     public static async Task<string> CommandCreate(
         CommandService svc,
         WebResourceService webResourceSvc,
@@ -125,6 +153,15 @@ public sealed class CommandTools
         [Description("Customization prefix for the generated unique name; defaults to the prefix of the " +
                      "table's logical name (e.g. 'xv' for 'sample_purchaseorder')")] string? customizationPrefix = null,
         [Description("Optional solution unique name — the command is added as component type 10343")] string? solutionUniqueName = null,
+        [Description("0=None, 1=Formula (Power Fx), 2=ClassicRules. Beware: on a grid, None means the " +
+                     "command disappears as soon as rows are selected.")] int visibilityType = 0,
+        [Description("For visibilityType=1: GUID, unique name or display name of the canvas component " +
+                     "library holding the formula. Cannot be created via API — see this tool's " +
+                     "description.")] string? visibilityFormulaComponentLibrary = null,
+        [Description("For visibilityType=1: the component name inside the library, e.g. " +
+                     "'838813193347447db39c7ad8e32689c6'")] string? visibilityFormulaComponentName = null,
+        [Description("For visibilityType=1: the output property evaluated for visibility, e.g. 'Visible'")] string? visibilityFormulaFunctionName = null,
+        [Description("Suppress the guard that rejects a grid command with visibilityType=None")] bool allowGridWithoutVisibilityRule = false,
         CancellationToken ct = default)
     {
         try
@@ -141,6 +178,13 @@ public sealed class CommandTools
 
             var parsed = CommandService.ParseParameterSpec(parameters);
 
+            Guid? libraryId = null;
+            if (!string.IsNullOrWhiteSpace(visibilityFormulaComponentLibrary))
+            {
+                libraryId = (await svc.ResolveComponentLibraryAsync(
+                    env.OrgUrl, visibilityFormulaComponentLibrary, ct)).CanvasAppId;
+            }
+
             var id = await svc.CreateAsync(
                 env.OrgUrl,
                 tableLogicalName,
@@ -155,7 +199,12 @@ public sealed class CommandTools
                 tooltipDescription,
                 fontIcon,
                 sequence is null ? null : (decimal)sequence.Value,
+                visibilityType: visibilityType,
                 customizationPrefix: customizationPrefix,
+                visibilityFormulaComponentLibraryId: libraryId,
+                visibilityFormulaComponentName: visibilityFormulaComponentName,
+                visibilityFormulaFunctionName: visibilityFormulaFunctionName,
+                allowGridWithoutVisibilityRule: allowGridWithoutVisibilityRule,
                 ct: ct);
 
             var solutionComponentAdded = false;
@@ -174,6 +223,8 @@ public sealed class CommandTools
                 name,
                 location,
                 parameters = parsed,
+                visibilityType,
+                visibilityFormulaComponentLibraryId = libraryId,
                 solutionUniqueName,
                 solutionComponentAdded,
                 note = "Run publish_customizations with entities='" + tableLogicalName +
@@ -190,7 +241,8 @@ public sealed class CommandTools
     [Description("Update properties of a modern command. Convenience arguments cover the common " +
                  "fields; propertiesJson is merged on top for anything else. Note that origin cannot " +
                  "be changed after create — Dataverse accepts the PATCH and keeps the old value; " +
-                 "delete and recreate instead. Publish the table afterwards. " + ParameterNote)]
+                 "delete and recreate instead. Publish the table afterwards. " +
+                 IconNote + " " + LibraryNote + " " + ParameterNote)]
     public static async Task<string> CommandUpdate(
         CommandService svc,
         ConfigProvider config,
@@ -203,6 +255,11 @@ public sealed class CommandTools
         [Description("New Fluent icon, e.g. '$clientsvg:Edit'")] string? fontIcon = null,
         [Description("New display order")] double? sequence = null,
         [Description("Hide or show the button")] bool? hidden = null,
+        [Description("New visibility type: 0=None, 1=Formula, 2=ClassicRules")] int? visibilityType = null,
+        [Description("For visibilityType=1: GUID, unique name or display name of the canvas component " +
+                     "library holding the formula")] string? visibilityFormulaComponentLibrary = null,
+        [Description("For visibilityType=1: the component name inside the library")] string? visibilityFormulaComponentName = null,
+        [Description("For visibilityType=1: the output property, e.g. 'Visible'")] string? visibilityFormulaFunctionName = null,
         [Description("Raw JSON object of additional appaction properties to PATCH")] string? propertiesJson = null,
         CancellationToken ct = default)
     {
@@ -227,6 +284,36 @@ public sealed class CommandTools
                     CommandService.SerializeParameters(CommandService.ParseParameterSpec(parameters));
             }
 
+            var env = config.GetActiveEnvironment();
+
+            if (fontIcon is not null)
+            {
+                await svc.ValidateFontIconAsync(env.OrgUrl, fontIcon, ct);
+            }
+
+            if (visibilityType is not null)
+            {
+                props["visibilitytype"] = visibilityType.Value;
+            }
+
+            if (!string.IsNullOrWhiteSpace(visibilityFormulaComponentLibrary))
+            {
+                var library = await svc.ResolveComponentLibraryAsync(
+                    env.OrgUrl, visibilityFormulaComponentLibrary, ct);
+                // Navigation property, like the other lookups on this table.
+                props["VisibilityFormulaComponentLibraryId@odata.bind"] = $"/canvasapps({library.CanvasAppId})";
+            }
+
+            if (visibilityFormulaComponentName is not null)
+            {
+                props["visibilityformulacomponentname"] = visibilityFormulaComponentName;
+            }
+
+            if (visibilityFormulaFunctionName is not null)
+            {
+                props["visibilityformulafunctionname"] = visibilityFormulaFunctionName;
+            }
+
             if (!string.IsNullOrWhiteSpace(propertiesJson))
             {
                 var extra = JsonSerializer.Deserialize<Dictionary<string, object?>>(propertiesJson)
@@ -242,7 +329,6 @@ public sealed class CommandTools
                 return JsonSerializer.Serialize(new { error = "Nothing to update." });
             }
 
-            var env = config.GetActiveEnvironment();
             await svc.UpdateAsync(env.OrgUrl, id, props, ct);
 
             var originIgnored = props.ContainsKey("origin");
@@ -282,6 +368,63 @@ public sealed class CommandTools
             var env = config.GetActiveEnvironment();
             await svc.DeleteAsync(env.OrgUrl, id, ct);
             return JsonSerializer.Serialize(new { success = true, appActionId = id });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "command_list_component_libraries")]
+    [Description("List the canvas component libraries of the environment (canvasapp rows with " +
+                 "canvasapptype=1) — the only place a modern command's Power Fx visibility formula can " +
+                 "live. " + LibraryNote)]
+    public static async Task<string> CommandListComponentLibraries(
+        CommandService svc,
+        ConfigProvider config,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.ListComponentLibrariesAsync(env.OrgUrl, ct);
+            return JsonSerializer.Serialize(new
+            {
+                count = result.Count,
+                libraries = result,
+                note = "Creating one through an API is not possible — POST /canvasapps fails with " +
+                       "0x80040200 (aadlastpublishedbyid cannot be NULL), and a library needs a valid " +
+                       ".msapp document besides. Only the Command Designer opened from an app creates " +
+                       "them. Prefer a classic ribbon SelectionCountRule (ribbon_add_button) when the " +
+                       "rule is entity-bound."
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "command_list_icons")]
+    [Description("List the fontIcon values command_create will accept: the statically known-good set " +
+                 "unioned with the icons actually used by commands in this environment. " + IconNote)]
+    public static async Task<string> CommandListIcons(
+        CommandService svc,
+        ConfigProvider config,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var inUse = await svc.ListFontIconsInUseAsync(env.OrgUrl, ct);
+            return JsonSerializer.Serialize(new
+            {
+                knownGood = CommandFontIcons.All,
+                inUseInThisEnvironment = inUse,
+                accepted = CommandFontIcons.All.Concat(inUse).Distinct(StringComparer.Ordinal).Order(),
+                note = "An unknown value is accepted and stored by Dataverse and then never renders — " +
+                       "no error, no log. command_create rejects anything outside this set."
+            }, JsonOptions);
         }
         catch (Exception ex)
         {

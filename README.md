@@ -2,7 +2,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI clients (Claude Code, GitHub Copilot, etc.) first-class access to Dataverse and Power Platform.
 
-Covers 47 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, Solutions/ALM, Web Resources, Publishing, and Modern Commands — all via delegated user auth (no secrets, no service accounts).
+Covers 52 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, Security Roles, Environment Variables, Solutions/ALM, Web Resources, Publishing, Modern Commands and Classic Ribbons — all via delegated user auth (no secrets, no service accounts).
 
 ---
 
@@ -19,7 +19,13 @@ Covers 47 tools across Classic Workflows, Cloud Flows, Tables & Columns, Views, 
 | **Solutions / ALM** | `solution_list`, `solution_get`, `solution_create`, `solution_export`, `solution_import`, `solution_add_component`, `solution_remove_component`, `solution_check_layers`, `solution_remove_active_layer`, `solution_deploy_pipeline` |
 | **Web Resources** | `webresource_list`, `webresource_get`, `webresource_upsert` |
 | **Publishing** | `publish_customizations` |
-| **Modern Commands** | `command_list`, `command_get`, `command_create`, `command_update`, `command_delete` |
+| **Modern Commands** | `command_list`, `command_get`, `command_create`, `command_update`, `command_delete`, `command_list_component_libraries`, `command_list_icons` |
+| **Classic Ribbons** | `ribbon_get`, `ribbon_add_button`, `ribbon_remove_button` |
+
+> Adding a button to a command bar? Read
+> **[Classic ribbon vs modern command](docs/tools/buttons-classic-vs-modern.md)** first. It covers which
+> mechanism to pick, how a ribbon is really stored (and therefore how to remove a button, which a
+> solution import cannot do), and the dozen ways both mechanisms fail completely silently.
 
 ---
 
@@ -157,6 +163,7 @@ session still has it open.
 - [Architecture](docs/architecture.md)
 - [Authentication](docs/authentication.md)
 - [Tool reference](docs/tools/)
+- [Command bar buttons — classic ribbon vs modern command](docs/tools/buttons-classic-vs-modern.md)
 - [Modern commands (`appaction`) — field semantics and gotchas](docs/tools/modern-commands.md)
 
 ---

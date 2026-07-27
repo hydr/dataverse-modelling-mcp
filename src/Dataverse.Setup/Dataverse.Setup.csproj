@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dataverse-modelling-mcp</ToolCommandName>
     <PackageId>Dataverse.ModellingMcp.Setup</PackageId>
-    <Version>1.7.0</Version>
+    <Version>1.8.0</Version>
     <Authors>crossvertise</Authors>
     <Description>Setup wizard for the Dataverse Modelling MCP server</Description>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>

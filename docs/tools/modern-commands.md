@@ -2,8 +2,14 @@
 
 Modern commands are the Unified Interface successor to classic RibbonDiffXml buttons. They live in the
 `appaction` table (entity set `appactions`) and are what the **Command Designer** in the maker portal
-writes. Several tables no longer render RibbonDiffXml at all, so on those a command bar button *has to*
-be an `appaction` row.
+writes.
+
+> **Read [buttons-classic-vs-modern.md](buttons-classic-vs-modern.md) before choosing this route.**
+> Classic `RibbonDiffXml` is not dead — it renders side by side with modern commands even on an org
+> whose `appactionmigration` row `msdyn_System` has `ismigrated = true`. For a button whose visibility
+> depends on the grid selection, the classic entity-bound `SelectionCountRule` is usually the better
+> tool, because the modern equivalent needs a canvas component library that only the Command Designer
+> opened *from an app* can create.
 
 Most of what follows is not in the product documentation; it was verified against the `appaction`
 option-set metadata and the migrated system commands of a live org.
@@ -45,9 +51,57 @@ row with `origin = Migrated` has no ribbon definition to bind to.
 
 ### `visibilitytype` (`appaction_visibilitytype`)
 
-`0` = None, `1` = Formula, `2` = Classic Rules. Classic Rules requires `appactionrule` rows associated
-through the `appaction_appactionrule_classicrules` N:N relationship; without them there is nothing to
-evaluate. Use `None` for always-visible buttons.
+| Value | Label | Notes |
+|-------|-------|-------|
+| 0 | None | **Not the same as "always visible"** — see below |
+| 1 | Formula | Power Fx, stored across three fields |
+| 2 | Classic Rules | Needs `appactionrule` rows via the `appaction_appactionrule_classicrules` N:N |
+
+> **`None` on a grid is the most common trap on this table.** A grid command with `visibilitytype = 0`
+> renders while nothing is selected and **disappears the moment rows are ticked**: the command bar
+> switches into its selection context, and commands without a visibility rule fall out of it. If the
+> button has to survive a selection it needs `Formula` or `ClassicRules`. `command_create` refuses this
+> combination unless you pass `allowGridWithoutVisibilityRule=true`.
+
+**Power Fx visibility** is stored across three fields:
+
+| Field | Example |
+|-------|---------|
+| `visibilityformulacomponentlibraryid` | lookup to `canvasapp` `31eaa81c-b8d7-4f9d-8e4d-900e1c81c301` |
+| `visibilityformulacomponentname` | `838813193347447db39c7ad8e32689c6` |
+| `visibilityformulafunctionname` | `Visible` |
+
+The lookup binds through its navigation property, like the other two on this table:
+`"VisibilityFormulaComponentLibraryId@odata.bind": "/canvasapps(<id>)"`.
+
+A **canvas component library** is a `canvasapp` row with `canvasapptype = 1`.
+`command_list_component_libraries` lists them. **None can be created through an API**: `POST
+/canvasapps` fails with `0x80040200 — Attribute 'aadlastpublishedbyid' cannot be NULL`, and a usable
+library additionally needs a valid `.msapp` document behind it. Only the Command Designer creates them,
+and only when opened **from an app** — opened from a solution it offers just "Show". So Power Fx
+visibility always brings an app dependency along. For an entity-bound rule such as "exactly one row
+selected", the classic ribbon `SelectionCountRule` does the same job without one — see
+[buttons-classic-vs-modern.md](buttons-classic-vs-modern.md).
+
+### `fonticon` — validated, because an invalid value is invisible
+
+An unknown `fonticon` is accepted, stored, and then the command **never renders**. Nothing is logged.
+The only symptom is the Command Designer flagging "Icon is required" in red. `$clientsvg:Money` looks
+entirely plausible and silently kills the button.
+
+`command_create` therefore rejects values outside the known-good set, which is the statically catalogued
+list unioned with the icons actually in use in the target environment (so a richer org stays usable).
+`command_list_icons` prints the effective set. The catalogued values are:
+
+`$clientsvg:` — `Accept`, `Add`, `Archive`, `Calendar`, `CreateMajor`, `CreateMinor`, `Delete`, `Edit`,
+`EditMail`, `FollowUser`, `ImportToExcel`, `MailLink`, `MergeCase`, `OpenEnrollment`, `Org`,
+`PageBlock`, `PageCompleted`, `Phone`, `Pin`, `Refresh`, `RelatedKnowledgeArticle`, `RevertToDraft`,
+`RoutingRule`, `Save`, `SaveAndClose`, `Share`, `TranslationNew`, `UpdateRestore`.
+
+Legacy bare names — `Cancel`, `Close`, `Connection`, `DeleteBulk`, `EditDefaultFilter`, `FormDesign`,
+`NewMeeting`, `No`, `OpenDelve`, `OpenEmail`, `OpenRecord`, `PublishKnowledgeArticle`,
+`QueueItemRelease`, `QueueItemRemove`, `Report`, `Resolve`, `RestoreArticle`, `SendSelected`,
+`SetRegarding`, `SharePoint*` (9 values), `TableGroup`, `ViewHierarchy`, `Yes`.
 
 ### `onclickeventtype` / `type`
 
@@ -146,6 +200,11 @@ Returns the full definition with resolved enum names and a decoded parameter lis
 | `uniqueName` | string | No | Must carry a customization prefix |
 | `customizationPrefix` | string | No | Defaults to the table's prefix |
 | `solutionUniqueName` | string | No | Adds the command as component type **10343** |
+| `visibilityType` | int | No | `0` None, `1` Formula, `2` ClassicRules |
+| `visibilityFormulaComponentLibrary` | string | No | GUID, unique name or display name; required for `visibilityType = 1` |
+| `visibilityFormulaComponentName` | string | No | Required for `visibilityType = 1` |
+| `visibilityFormulaFunctionName` | string | No | Required for `visibilityType = 1`, e.g. `Visible` |
+| `allowGridWithoutVisibilityRule` | bool | No | Suppress the guard on grid + `visibilityType = 0` |
 
 Always follow with `publish_customizations` for the table.
 
@@ -160,9 +219,10 @@ Sample.PurchaseOrder.CorrectPrice.onFormButton in sample_purchaseorder_correct_p
 |-----------|------|----------|-------------|
 | `appActionId` | GUID string | Yes | |
 | `buttonLabelText`, `tooltipTitle`, `tooltipDescription`, `functionName`, `parameters`, `fontIcon`, `sequence`, `hidden` | | No | Convenience fields |
+| `visibilityType`, `visibilityFormulaComponentLibrary`, `visibilityFormulaComponentName`, `visibilityFormulaFunctionName` | | No | Attach or change a Power Fx visibility formula |
 | `propertiesJson` | JSON | No | Merged on top for anything else |
 
-`origin` cannot be changed — see above.
+`origin` cannot be changed — see above. `fontIcon` is validated here too.
 
 ---
 
@@ -172,4 +232,21 @@ Sample.PurchaseOrder.CorrectPrice.onFormButton in sample_purchaseorder_correct_p
 |-----------|------|----------|-------------|
 | `appActionId` | GUID string | Yes | |
 
-Publish the table afterwards so the button disappears from the client.
+Publish the table afterwards so the button disappears from the client. Unlike a classic ribbon button —
+which survives an import that omits it and has to be deleted row-wise — a modern command really does go
+away when its record does.
+
+---
+
+### `command_list_component_libraries`
+
+No parameters. Lists the `canvasapp` rows with `canvasapptype = 1`, i.e. the places a Power Fx
+visibility formula can live. Creating one through an API is not possible; see the `visibilitytype`
+section above.
+
+---
+
+### `command_list_icons`
+
+No parameters. Returns the statically catalogued `fontIcon` values, the ones actually used in this
+environment, and the union of both — which is exactly what `command_create` accepts.

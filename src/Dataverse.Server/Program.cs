@@ -35,6 +35,7 @@ builder.Services.AddSingleton<EnvironmentVariableService>();
 builder.Services.AddSingleton<WebResourceService>();
 builder.Services.AddSingleton<PublishService>();
 builder.Services.AddSingleton<CommandService>();
+builder.Services.AddSingleton<RibbonService>();
 
 // Config provider — reads config.json and wires up the token provider
 builder.Services.AddSingleton<ConfigProvider>();

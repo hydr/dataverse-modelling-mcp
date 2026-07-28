@@ -168,6 +168,25 @@ session still has it open.
 
 ---
 
+## Skills
+
+Skills load automatically when a conversation touches their subject — they exist so the hard-won
+parts of the docs above surface without anyone having to know they exist.
+
+| Skill | Loads when |
+|---|---|
+| [`command-bar-buttons`](skills/command-bar-buttons/SKILL.md) | adding, changing or debugging a button on a table's command bar |
+| [`cloud-flows`](skills/cloud-flows/SKILL.md) | working with solution-aware Power Automate flows |
+| [`solution-pipelines`](skills/solution-pipelines/SKILL.md) | promoting a solution dev → staging → prod |
+| [`modeling-patterns`](skills/modeling-patterns/SKILL.md) | designing tables, columns or relationships |
+
+They belong in **`skills/`**, which ships with the plugin and is therefore active in every repo the
+plugin is installed in. `.claude/skills/` would scope them to *this* repository — the one place the
+Dataverse advice is least needed. Two of them sat there until 28.07.2026 and consequently never
+loaded where the work happens.
+
+---
+
 ## CI
 
 GitHub Actions runs `dotnet build` and `dotnet test` (unit tests only) on every pull request. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).

@@ -26,6 +26,8 @@ und zu veraendern. Default-Vorgehen: erst lesen, dann aendern.
 
 ## Lokales MCP
 
-Dieses MCP laeuft als lokale C#-Konsolenanwendung. Die Binary wird beim ersten
-Start automatisch aus Azure Blob Storage geladen (siehe README). Falls der Start
-fehlschlaegt, pruefe `binary_sas_url` und den `${CLAUDE_PLUGIN_DATA}/bin/`-Pfad.
+Dieses MCP laeuft als lokale C#-Konsolenanwendung. Die Binary wird nicht direkt
+gestartet, sondern ueber den Launcher `scripts/run-server.ps1`, der sie bei jedem
+Serverstart auf die in `scripts/BINARY_VERSION` gepinnte Version bringt und aus
+dem passenden GitHub-Release laedt. Falls der Start fehlschlaegt, pruefe
+`release_repo` und den `${CLAUDE_PLUGIN_DATA}/bin/`-Pfad.

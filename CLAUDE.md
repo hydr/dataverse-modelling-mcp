@@ -15,6 +15,16 @@ dotnet run --project src/Dataverse.Setup
 ## Pack (dotnet tool)
 dotnet pack src/Dataverse.Setup -c Release
 
+## Skills
+
+Skills gehören nach **`skills/`** — dieses Verzeichnis wird mit dem Plugin ausgeliefert und ist damit
+in jedem Repo aktiv, in dem das Plugin installiert ist. **Nicht** nach `.claude/skills/`: das
+beschränkt sie auf dieses Repository, also ausgerechnet auf die eine Umgebung, in der Dataverse-Wissen
+am wenigsten gebraucht wird.
+
+Skills sind reine Markdown-Dateien ohne Binary-Bezug. Eine Änderung an ihnen braucht deshalb weder
+eine neue Binary noch einen Release-Tag — nur `.claude-plugin/plugin.json` hochzählen und mergen.
+
 ## Release-Prozess (bei jeder Änderung)
 
 Bei Änderungen am MCP-Server immer:

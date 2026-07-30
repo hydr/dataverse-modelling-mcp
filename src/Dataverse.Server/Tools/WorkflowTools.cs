@@ -141,8 +141,22 @@ public sealed class WorkflowTools
                         ?? throw new ArgumentException("propertiesJson could not be parsed.");
 
             var env = config.GetActiveEnvironment();
+
+            // Changing the mode changes what the XAML may contain: a real-time process must not carry
+            // persistence points. Existing logic does not adapt on its own.
+            string? warning = null;
+            if (props.Keys.Any(k => string.Equals(k, "mode", StringComparison.OrdinalIgnoreCase)))
+            {
+                var before = await svc.GetAsync(env.OrgUrl, id, ct);
+                if (before?.Xaml is { Length: > 0 } xaml && xaml.Contains("<Persist", StringComparison.Ordinal))
+                    warning = "The workflow already has logic containing persistence points (<Persist />), "
+                        + "which a real-time process must not have. If you switched it to real-time, write "
+                        + "the logic again with workflow_set_definition — otherwise activation fails with "
+                        + "0x80040216.";
+            }
+
             await svc.UpdateAsync(env.OrgUrl, id, props, ct);
-            return JsonSerializer.Serialize(new { success = true, workflowId });
+            return JsonSerializer.Serialize(new { success = true, workflowId, warning });
         }
         catch (Exception ex)
         {
@@ -167,6 +181,117 @@ public sealed class WorkflowTools
             var env = config.GetActiveEnvironment();
             await svc.SetStateAsync(env.OrgUrl, id, activate, ct);
             return JsonSerializer.Serialize(new { success = true, workflowId, activate });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "workflow_delete")]
+    [Description("Delete one or more Classic Workflows. Irreversible — export the XAML first if the " +
+                 "logic might be needed again (workflow_export_xaml). " +
+                 "Activating a workflow makes Dataverse store a second row (type=2, the activation " +
+                 "copy) that neither deactivating nor deleting the definition removes; this tool " +
+                 "deletes those copies along with the definition, which is how an environment fills " +
+                 "up with leftovers otherwise. " +
+                 "An activated workflow is refused unless deactivateFirst=true, so a running process " +
+                 "cannot be removed by a typo.")]
+    public static async Task<string> WorkflowDelete(
+        WorkflowService svc,
+        ConfigProvider config,
+        [Description("Workflow GUID, or several separated by commas. Leave empty when using namePrefix.")]
+        string workflowIds = "",
+        [Description("Deactivate an activated workflow before deleting it (default false)")]
+        bool deactivateFirst = false,
+        [Description("Instead of ids: every workflow whose name starts with this, e.g. \"ZZ \". " +
+                     "Lists the matches WITHOUT deleting unless confirmPrefix=true.")]
+        string? namePrefix = null,
+        [Description("Required to actually delete a namePrefix match — the safety catch for bulk deletes")]
+        bool confirmPrefix = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env0 = config.GetActiveEnvironment();
+            var ids = new List<Guid>();
+            var malformed = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(namePrefix))
+            {
+                var matches = await svc.FindByNamePrefixAsync(env0.OrgUrl, namePrefix!, ct);
+
+                if (!confirmPrefix)
+                    return JsonSerializer.Serialize(new
+                    {
+                        dryRun = true,
+                        namePrefix,
+                        matchCount = matches.Count,
+                        matches = matches.Select(m => new { m.WorkflowId, m.Name, m.Type, m.IsActivated }),
+                        note = "Nothing was deleted. Re-run with confirmPrefix=true to delete these."
+                    }, JsonOptions);
+
+                ids.AddRange(matches.Select(m => m.WorkflowId));
+            }
+
+            foreach (var raw in workflowIds.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (Guid.TryParse(raw, out var id))
+                    ids.Add(id);
+                else
+                    malformed.Add(raw);
+            }
+
+            if (malformed.Count > 0)
+                return JsonSerializer.Serialize(new
+                {
+                    error = $"Not a GUID: {string.Join(", ", malformed)}",
+                    fix = "Pass workflow ids as GUIDs, separated by commas. Nothing was deleted."
+                });
+
+            if (ids.Count == 0)
+                return JsonSerializer.Serialize(new { error = "No workflow id given." });
+
+            var env = config.GetActiveEnvironment();
+            var deleted = new List<object>();
+            var skipped = new List<object>();
+
+            foreach (var id in ids)
+            {
+                var detail = await svc.GetAsync(env.OrgUrl, id, ct);
+                if (detail is null)
+                {
+                    skipped.Add(new { workflowId = id, reason = "not found" });
+                    continue;
+                }
+
+                if (detail.StateCode == 1)
+                {
+                    if (!deactivateFirst)
+                    {
+                        skipped.Add(new
+                        {
+                            workflowId = id,
+                            name = detail.Name,
+                            reason = "activated — pass deactivateFirst=true to deactivate and delete it"
+                        });
+                        continue;
+                    }
+
+                    await svc.SetStateAsync(env.OrgUrl, id, activate: false, ct);
+                }
+
+                await svc.DeleteAsync(env.OrgUrl, id, ct);
+                deleted.Add(new { workflowId = id, name = detail.Name });
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                success = skipped.Count == 0,
+                deletedCount = deleted.Count,
+                deleted,
+                skipped = skipped.Count == 0 ? null : skipped
+            }, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -351,13 +476,16 @@ public sealed class WorkflowTools
                  "Nothing is written unless validation passes (structure, value expressions, and table/" +
                  "attribute existence) and the generated XAML passes a self-check. " +
                  "The workflow must be a draft; pass reactivate=true to deactivate, write and " +
-                 "re-activate in one call. The response contains the previous XAML as 'backup'.")]
+                 "re-activate in one call. The response contains the previous XAML as 'backup'. " +
+                 "Pass dryRun=true first on a workflow you did not author: it validates and reports " +
+                 "what would change, in 'diff', without writing anything.")]
     public static async Task<string> WorkflowSetDefinition(
         WorkflowAuthoringService authoring,
         ConfigProvider config,
         [Description("The workflow GUID")] string workflowId,
         [Description("The workflow definition as JSON (see the classic-workflows skill for the shape)")] string definitionJson,
         [Description("If the workflow is active: deactivate, write, re-activate (default false = refuse)")] bool reactivate = false,
+        [Description("Validate and report what would change, without writing (default false)")] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -370,11 +498,13 @@ public sealed class WorkflowTools
                 return JsonSerializer.Serialize(new { applied = false, issues = new[] { parseError } }, JsonOptions);
 
             var env = config.GetActiveEnvironment();
-            var result = await authoring.SetDefinitionAsync(env.OrgUrl, id, definition, reactivate, ct);
+            var result = await authoring.SetDefinitionAsync(env.OrgUrl, id, definition, reactivate, dryRun, ct);
 
             return JsonSerializer.Serialize(new
             {
                 applied = result.Applied,
+                dryRun = dryRun ? true : (bool?)null,
+                diff = result.Diff,
                 workflowId = result.WorkflowId,
                 message = result.Message,
                 stepIds = result.StepIds,
@@ -384,6 +514,48 @@ public sealed class WorkflowTools
                 issues = result.Validation.Issues,
                 // Keep this to undo the change with workflow_restore_xaml.
                 backup = result.Backup
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "workflow_diagnose_activation")]
+    [Description("Find out WHICH PART of a definition Dataverse refuses to activate. " +
+                 "Activation errors say almost nothing on their own (0x80040216 is literally " +
+                 "'an unexpected error occurred'), so this writes subsets of the definition into " +
+                 "throwaway workflows and activates each, until the culprit is isolated — first per " +
+                 "step, then per case of a condition. The throwaway workflows are deleted again. " +
+                 "Use this instead of guessing when workflow_set_state fails after a clean write.")]
+    public static async Task<string> WorkflowDiagnoseActivation(
+        WorkflowActivationDiagnoser diagnoser,
+        ConfigProvider config,
+        [Description("The workflow definition as JSON — the one that will not activate")] string definitionJson,
+        [Description("Logical name of the primary entity")] string primaryEntity,
+        [Description("true if the workflow is real-time (default false = background)")] bool isRealtime = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var definition = ParseDefinition(definitionJson, out var parseError);
+            if (definition is null)
+                return JsonSerializer.Serialize(new { issues = new[] { parseError } }, JsonOptions);
+
+            if (definition.Steps.Count == 0)
+                return JsonSerializer.Serialize(new { error = "The definition has no steps to bisect." });
+
+            var env = config.GetActiveEnvironment();
+            var result = await diagnoser.DiagnoseAsync(
+                env.OrgUrl, definition, primaryEntity, isRealtime, ct);
+
+            return JsonSerializer.Serialize(new
+            {
+                activated = result.Activated,
+                error = result.Error,
+                culprit = result.Culprit,
+                attempts = result.Attempts
             }, JsonOptions);
         }
         catch (Exception ex)

@@ -44,6 +44,13 @@ public sealed class CommandIntegrationTests : IntegrationTestBase
             new CommandParameter((int)CommandParameterType.SelectedControl, null)
         };
 
+        // The button has to actually render, and on a grid that is not the default: with
+        // visibilityType=None it shows while nothing is selected and drops out of the command bar the
+        // moment rows are ticked. Saying so explicitly is the only way to get a visible grid command
+        // through the API — a Power Fx rule needs a formula inside a canvas component library, and
+        // there is no API that creates one (nor a single formula in this environment to point at).
+        // For 'visible once a row is selected', ribbon_add_button with a SelectionCountRule is the
+        // supported route; see RibbonIntegrationTests.
         var id = await CommandService.CreateAsync(
             OrgUrl,
             Table,
@@ -53,7 +60,8 @@ public sealed class CommandIntegrationTests : IntegrationTestBase
             javaScriptWebResourceId: webResourceId!.Value,
             functionName: "Sample.PurchaseOrder.CorrectPrice.onGridButton",
             parameters: parameters,
-            tooltipTitle: "MCP Test");
+            tooltipTitle: "MCP Test",
+            allowGridWithoutVisibilityRule: true);
 
         try
         {

@@ -200,10 +200,85 @@ public sealed class WorkflowService
     /// Deletes a Classic Workflow. The workflow must be a draft — Dataverse refuses to delete an
     /// activated one.
     /// </summary>
+    /// <summary>One workflow as found by name, enough to decide whether to delete it.</summary>
+    public sealed record WorkflowMatch(Guid WorkflowId, string Name, string Type, bool IsActivated);
+
+    /// <summary>
+    /// Finds every workflow whose name starts with a prefix — definitions and activation copies alike,
+    /// because both have to go when clearing out test leftovers.
+    /// </summary>
+    public async Task<List<WorkflowMatch>> FindByNamePrefixAsync(
+        string orgUrl, string namePrefix, CancellationToken ct = default)
+    {
+        var filter = $"startswith(name,'{namePrefix.Replace("'", "''")}')";
+        var url = "api/data/v9.2/workflows?$select=workflowid,name,type,statecode" +
+                  $"&$filter={Uri.EscapeDataString(filter)}&$orderby=name";
+
+        var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
+        var result = new List<WorkflowMatch>();
+
+        if (JsonDocument.Parse(raw).RootElement.TryGetProperty("value", out var items))
+            foreach (var item in items.EnumerateArray())
+                result.Add(new WorkflowMatch(
+                    item.TryGetGuid("workflowid"),
+                    item.GetStringOrEmpty("name"),
+                    item.GetInt32OrZero("type") == 2 ? "activation copy" : "definition",
+                    item.GetInt32OrZero("statecode") == 1));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Deletes a workflow definition together with the activation copies it left behind.
+    /// </summary>
+    /// <remarks>
+    /// Activating a classic workflow makes Dataverse store a second row (<c>type=2</c>, pointing back
+    /// via <c>parentworkflowid</c>). Deactivating does not remove it and deleting the definition does
+    /// not cascade, so every activate/delete cycle leaves an orphan draft behind — which is how an
+    /// environment fills up with copies of test workflows.
+    /// </remarks>
     public async Task DeleteAsync(string orgUrl, Guid workflowId, CancellationToken ct = default)
     {
+        foreach (var copy in await ActivationCopiesAsync(orgUrl, workflowId, ct))
+        {
+            try
+            {
+                await _client.DeleteAsync(orgUrl, $"api/data/v9.2/workflows({copy})", ct);
+                _logger.LogInformation("Deleted activation copy {Id} of workflow {Parent}", copy, workflowId);
+            }
+            catch (Exception ex)
+            {
+                // The definition is the important one; a stuck copy must not block it.
+                _logger.LogWarning(ex, "Could not delete activation copy {Id}", copy);
+            }
+        }
+
         await _client.DeleteAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", ct);
         _logger.LogInformation("Deleted classic workflow {Id}", workflowId);
+    }
+
+    private async Task<List<Guid>> ActivationCopiesAsync(string orgUrl, Guid workflowId, CancellationToken ct)
+    {
+        var copies = new List<Guid>();
+
+        try
+        {
+            var filter = $"_parentworkflowid_value eq {workflowId} and type eq 2";
+            var url = "api/data/v9.2/workflows?$select=workflowid" +
+                      $"&$filter={Uri.EscapeDataString(filter)}";
+
+            var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
+            if (JsonDocument.Parse(raw).RootElement.TryGetProperty("value", out var items))
+                copies.AddRange(items.EnumerateArray()
+                    .Select(i => i.TryGetGuid("workflowid"))
+                    .Where(id => id != Guid.Empty));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not look up activation copies of workflow {Id}", workflowId);
+        }
+
+        return copies;
     }
 
     public async Task SetStateAsync(

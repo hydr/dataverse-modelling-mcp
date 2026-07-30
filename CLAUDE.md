@@ -25,6 +25,21 @@ am wenigsten gebraucht wird.
 Skills sind reine Markdown-Dateien ohne Binary-Bezug. Eine Änderung an ihnen braucht deshalb weder
 eine neue Binary noch einen Release-Tag — nur `.claude-plugin/plugin.json` hochzählen und mergen.
 
+## Doku gehört zum Fix
+
+Eine Erkenntnis, die nur im Code steht, ist für den nächsten Agenten nicht vorhanden. Deshalb bei
+jeder Änderung mitziehen:
+
+| Was sich ändert | Wohin |
+|---|---|
+| Neuer Validierungscode | Codetabelle in `skills/classic-workflows/SKILL.md` |
+| Neues Feld im Definitionsmodell | `SKILL.md` |
+| Neues Tool | Tool-Map in `SKILL.md` **und** `docs/tools/<bereich>.md` |
+| Erkenntnis über das XAML-Format | `docs/classic-workflows-reference.md` |
+
+`DocumentationCoverageTests` prüft die ersten drei automatisch und schlägt fehl, wenn etwas fehlt —
+Verlassen muss man sich also nur beim vierten Punkt auf Disziplin.
+
 ## Release-Prozess (bei jeder Änderung)
 
 Bei Änderungen am MCP-Server immer:

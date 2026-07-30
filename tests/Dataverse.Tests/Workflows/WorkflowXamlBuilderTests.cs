@@ -246,6 +246,79 @@ public sealed class WorkflowXamlBuilderTests
     }
 
     [Test]
+    public void Build_ConditionChain_PutsEveryCaseInOneSequenceNamedAfterItsBranch()
+    {
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "invoice",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    Description = "Voraussetzungen",
+                    Branches =
+                    [
+                        new WorkflowConditionBranch
+                        {
+                            Conditions = [new WorkflowCondition { Attribute = "dc_invoicenumber", Operator = "Null" }],
+                            Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
+                        },
+                        new WorkflowConditionBranch
+                        {
+                            LogicalOperator = "Or",
+                            Conditions =
+                            [
+                                new WorkflowCondition { Attribute = "dc_reminderdate", Operator = "NotNull" },
+                                new WorkflowCondition { Attribute = "emailaddress", Operator = "Null" }
+                            ],
+                            Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
+                        }
+                    ],
+                    Else =
+                    [
+                        new WorkflowStep
+                        {
+                            Kind = WorkflowStepKind.UpdateRecord,
+                            Attributes =
+                            [
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "description",
+                                    Value = new WorkflowValue { Literal = "ok" }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var result = WorkflowXamlBuilder.Build(definition);
+        var xaml = result.Xaml;
+
+        // One ConditionSequence carries all cases plus the default one.
+        Assert.That(System.Text.RegularExpressions.Regex.Matches(xaml, "ConditionSequence").Count, Is.EqualTo(1));
+        Assert.That(System.Text.RegularExpressions.Regex.Matches(xaml, @"\.ConditionBranch,").Count, Is.EqualTo(3));
+        Assert.That(xaml, Does.Contain("<x:Boolean x:Key=\"ContainsElseBranch\">True</x:Boolean>"));
+
+        // Helper variables are named after their branch — that is what makes the comparisons
+        // assignable back to their case when reading.
+        Assert.That(xaml, Does.Contain("Name=\"ConditionBranchStep2_condition\""));
+        Assert.That(xaml, Does.Contain("Name=\"ConditionBranchStep4_condition\""));
+        Assert.That(xaml, Does.Contain("Name=\"ConditionBranchStep4_1\""));
+
+        // Ids run in document order: step, branch, its contents, next branch, ...
+        Assert.That(result.StepIds, Is.EqualTo(new[]
+        {
+            "ConditionStep1", "ConditionBranchStep2", "StopWorkflowStep3",
+            "ConditionBranchStep4", "StopWorkflowStep5",
+            "ConditionBranchStep6", "UpdateStep7"
+        }));
+        Assert.That(WorkflowDefinitionValidator.ValidateGeneratedXaml(xaml).CanSave, Is.True);
+    }
+
+    [Test]
     public void Build_CustomActivity_TypesArgumentsFromTheActivityMetadata()
     {
         var definition = new WorkflowDefinition

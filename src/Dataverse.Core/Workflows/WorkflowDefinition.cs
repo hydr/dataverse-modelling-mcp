@@ -20,6 +20,12 @@ public sealed record WorkflowDefinition
 
     /// <summary>Top-level steps, executed in order.</summary>
     public List<WorkflowStep> Steps { get; init; } = [];
+
+    /// <summary>
+    /// True for a real-time (synchronous) workflow. Set from the workflow record when writing; a
+    /// real-time process must not contain persistence points, which is why the builder needs to know.
+    /// </summary>
+    public bool Realtime { get; init; }
 }
 
 /// <summary>Step kinds this server can generate and parse.</summary>
@@ -51,7 +57,7 @@ public static class WorkflowStepKind
     public static readonly string[] Writable =
     [
         Condition, Wait, Stage, CreateRecord, UpdateRecord, AssignRecord, ChangeStatus,
-        StopWorkflow, CustomActivity, StartChildWorkflow
+        StopWorkflow, CustomActivity, StartChildWorkflow, SendEmail
     ];
 
     /// <summary>Step-id prefix per kind. The numeric suffix runs across all kinds.</summary>
@@ -92,16 +98,32 @@ public sealed record WorkflowStep
 
     // ---- condition / wait ----
 
-    /// <summary>Comparisons of a condition or wait step. Combined via <see cref="LogicalOperator"/>.</summary>
+    /// <summary>
+    /// Comparisons of a condition or wait step. Combined via <see cref="LogicalOperator"/>. Short form
+    /// for a single branch — mutually exclusive with <see cref="Branches"/>.
+    /// </summary>
     public List<WorkflowCondition>? Conditions { get; init; }
 
     /// <summary>"And" (default) or "Or". Only relevant with more than one condition.</summary>
     public string? LogicalOperator { get; init; }
 
-    /// <summary>Steps executed when the condition is true.</summary>
+    /// <summary>Steps executed when the condition is true. Goes with <see cref="Conditions"/>.</summary>
     public List<WorkflowStep>? Then { get; init; }
 
-    /// <summary>Steps of the default branch ("otherwise").</summary>
+    /// <summary>
+    /// An if / else-if chain: each branch has its own comparisons and is tested in order; the first
+    /// one that holds runs and the rest are skipped. Use instead of
+    /// <see cref="Conditions"/>/<see cref="Then"/> when there is more than one case.
+    /// </summary>
+    /// <remarks>
+    /// The designer models this as one condition step with several branches, which is why it cannot be
+    /// expressed as nested conditions without changing the shape of the XAML.
+    /// </remarks>
+    public List<WorkflowConditionBranch>? Branches { get; init; }
+
+    /// <summary>
+    /// Steps of the default branch ("otherwise"), taken when no branch holds. Works with both forms.
+    /// </summary>
     public List<WorkflowStep>? Else { get; init; }
 
     // ---- stage ----
@@ -169,6 +191,26 @@ public sealed record WorkflowStep
     public string? Outcome { get; init; }
 }
 
+/// <summary>One case of an if / else-if chain.</summary>
+public sealed record WorkflowConditionBranch
+{
+    /// <summary>Comparisons of this case, combined via <see cref="LogicalOperator"/>.</summary>
+    public List<WorkflowCondition> Conditions { get; init; } = [];
+
+    /// <summary>"And" (default) or "Or". Only relevant with more than one condition.</summary>
+    public string? LogicalOperator { get; init; }
+
+    /// <summary>Steps executed when this case holds.</summary>
+    public List<WorkflowStep>? Steps { get; init; }
+
+    /// <summary>
+    /// Branch id. Ignored on input — the builder assigns it and writes it back; populated when
+    /// parsing. The helper variables of a branch are named after it, which is how the comparisons of
+    /// a chain can be assigned back to their case.
+    /// </summary>
+    public string? BranchId { get; set; }
+}
+
 /// <summary>A single comparison inside a condition.</summary>
 public sealed record WorkflowCondition
 {
@@ -183,6 +225,18 @@ public sealed record WorkflowCondition
 
     /// <summary>Logical name of the attribute being compared.</summary>
     public string Attribute { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Compare a field of a record an earlier <c>createRecord</c> step made, instead of the triggering
+    /// record. See <see cref="WorkflowValue.FromStep"/>.
+    /// </summary>
+    public string? FromStep { get; init; }
+
+    /// <summary>
+    /// Compare a field of the record behind an earlier code activity's output. See
+    /// <see cref="WorkflowValue.FromStepOutput"/>.
+    /// </summary>
+    public string? FromStepOutput { get; init; }
 
     /// <summary>
     /// Instead of <see cref="Attribute"/>: compare the output of an earlier custom activity step,
@@ -224,7 +278,19 @@ public static class WorkflowValueKind
     /// <summary>An output parameter of an earlier custom activity step.</summary>
     public const string StepOutput = "stepOutput";
 
-    public static readonly string[] All = [Literal, Field, StepOutput];
+    /// <summary>
+    /// The current date and time, evaluated when the workflow runs. Emitted as
+    /// EvaluateExpression/RetrieveCurrentTime.
+    /// </summary>
+    public const string Now = "now";
+
+    /// <summary>
+    /// Several values joined into one string, in order — the designer's "Add" expression. Use
+    /// <see cref="WorkflowValue.Parts"/>; a part may be of any kind, including another concat.
+    /// </summary>
+    public const string Concat = "concat";
+
+    public static readonly string[] All = [Literal, Field, StepOutput, Now, Concat];
 }
 
 public sealed record WorkflowValue
@@ -234,12 +300,27 @@ public sealed record WorkflowValue
 
     /// <summary>
     /// CRM data type of the value: String, Integer, Boolean, DateTime, Decimal, Double, Money,
-    /// OptionSetValue, EntityReference, Guid. Defaults to String.
+    /// OptionSetValue, EntityReference, Guid, PartyList. Defaults to String.
     /// </summary>
+    /// <remarks>
+    /// <c>PartyList</c> is what the recipient fields of an e-mail take (<c>from</c>, <c>to</c>,
+    /// <c>cc</c>, <c>bcc</c>): a collection, not a single reference. A fixed recipient is written as
+    /// <c>"systemuser:&lt;guid&gt;"</c> like any record reference; the server wraps it into the
+    /// collection. A field value needs no wrapping.
+    /// </remarks>
     public string? DataType { get; init; }
 
     /// <summary>The constant, for <c>literal</c>.</summary>
     public string? Literal { get; init; }
+
+    /// <summary>
+    /// Several constants, for the <c>In</c> and <c>NotIn</c> operators — e.g. the option values a
+    /// status may have. Use instead of <see cref="Literal"/>, which holds a single one.
+    /// </summary>
+    public List<string>? Literals { get; init; }
+
+    /// <summary>The values to join, for <c>concat</c>, in order.</summary>
+    public List<WorkflowValue>? Parts { get; init; }
 
     /// <summary>
     /// Field references for <c>field</c>, each as "entity.attribute" (e.g. "lead.companyname").
@@ -253,6 +334,24 @@ public sealed record WorkflowValue
     /// Via="opportunityid". One level of traversal only.
     /// </summary>
     public string? Via { get; init; }
+
+    /// <summary>
+    /// Read from a record an earlier <c>createRecord</c> step created, instead of from the triggering
+    /// record. Give the step id ("CreateStep17") or, since ids are only known after building, the
+    /// created entity ("email").
+    /// </summary>
+    public string? FromStep { get; init; }
+
+    /// <summary>
+    /// Read from the record behind an earlier code activity's output — the output is a reference, and
+    /// the full record is loaded to get at its fields. Given as "&lt;stepId&gt;.&lt;ParameterName&gt;"
+    /// or just the parameter name, e.g. "InitiatingUser" for the executing user.
+    /// </summary>
+    /// <remarks>
+    /// The builder emits the load itself (an <c>If</c> around <c>RetrieveEntity</c>) right after the
+    /// activity, the way the designer does when a field of that record is used.
+    /// </remarks>
+    public string? FromStepOutput { get; init; }
 
     /// <summary>Optional fallback constant used when all <see cref="Fields"/> are empty.</summary>
     public string? Fallback { get; init; }

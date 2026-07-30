@@ -40,6 +40,10 @@ caught by validation before anything is written.
 | Activate / deactivate | `workflow_set_state` |
 | Raw XAML for backup or diffing | `workflow_export_xaml` |
 | Undo a change | `workflow_restore_xaml` |
+| Delete a workflow (and its activation copies) | `workflow_delete` |
+| Find out why a definition will not activate | `workflow_diagnose_activation` |
+| Change the owner | `workflow_assign` |
+| Check an existing workflow (not a definition) | `workflow_validate` |
 | Available code activities | `workflow_list_activities` |
 | Parameters of a code activity | `workflow_get_activity_parameters` |
 
@@ -130,7 +134,7 @@ Blocking an operation additionally requires a real-time workflow (`{"mode": 1}`)
 
 | `kind` | Purpose | Required fields |
 |---|---|---|
-| `condition` | If/then/otherwise | `conditions`, and `then` and/or `else` |
+| `condition` | If/then/otherwise, or an if/else-if chain | `conditions` + `then`, or `branches`; plus optional `else` |
 | `wait` | Wait until a condition holds (background workflows only) | like `condition` |
 | `stage` | Grouping. If one step is in a stage, all must be | `children` |
 | `createRecord` | Create a record of any table | `entity`, `attributes` |
@@ -140,17 +144,102 @@ Blocking an operation additionally requires a real-time workflow (`{"mode": 1}`)
 | `customActivity` | Run a code activity | `assemblyQualifiedName`, optional `inputs`/`outputs` |
 | `startChildWorkflow` | Start another workflow | `childWorkflowId` |
 | `stopWorkflow` | End the workflow | optional `outcome`, `reason` |
+| `sendEmail` | Compose and send an e-mail | `attributes` (at least `to` and `subject`) |
 
-`sendEmail` and `performAction` are **read-only**: they are reported by `workflow_explain` but
-cannot be generated. Configure them in the designer.
+`performAction` is **read-only**: it is reported by `workflow_explain` but cannot be generated —
+configure it in the designer.
+
+#### Sending an e-mail
+
+A `sendEmail` step composes an `email` record and sends it; the attributes are those of `email`.
+The recipient fields (`from`, `to`, `cc`, `bcc`) are **party lists**, so they take
+`dataType: "PartyList"` — a fixed recipient as `"systemuser:<guid>"`, a dynamic one as a field:
+
+```json
+{
+  "kind": "sendEmail",
+  "description": "Zuweisung melden",
+  "attributes": [
+    { "attribute": "from", "value": { "dataType": "PartyList", "literal": "systemuser:<guid>" } },
+    { "attribute": "to",   "value": { "kind": "field", "dataType": "PartyList", "fields": ["lead.ownerid"] } },
+    { "attribute": "subject", "value": { "literal": "Neuer Lead zugewiesen" } },
+    { "attribute": "description", "value": { "kind": "concat", "parts": [
+        { "literal": "Lead: " }, { "kind": "field", "fields": ["lead.companyname"] } ] } },
+    { "attribute": "regardingobjectid",
+      "value": { "kind": "field", "dataType": "EntityReference", "fields": ["lead.leadid"] } }
+  ]
+}
+```
+
+`regardingobjectid` verknüpft die E-Mail mit dem auslösenden Datensatz — ohne sie steht sie nirgends
+in der Zeitachse. Für einen HTML-Text ist `description` ein `concat` aus Textbausteinen und Feldern.
+
+Eine E-Mail an ein **Team** kann der Standardschritt nicht auflösen; dafür gibt es
+`msdyncrmWorkflowTools.Class.EmailToTeam` (siehe `workflow-tools.md`).
+
+The definition also carries `realtime`, but you do not set it: the server takes it from the workflow
+record, because a real-time process must not contain persistence points and the generated XAML
+therefore differs by mode.
+
+### Several cases in one condition
+
+The designer allows an **if / else-if chain**: one condition step with several branches, each with its
+own comparisons, tested in order — the first that holds runs, the rest are skipped. Use `branches`
+instead of `conditions`/`then`; `else` is the default case either way:
+
+```json
+{
+  "kind": "condition",
+  "description": "Voraussetzungen prüfen",
+  "branches": [
+    { "conditions": [ { "attribute": "dc_invoicenumber", "operator": "Null" } ],
+      "steps": [ { "kind": "stopWorkflow", "outcome": "cancelled" } ] },
+    { "conditions": [ { "attribute": "dc_reminderdate", "operator": "NotNull" } ],
+      "steps": [ { "kind": "stopWorkflow", "outcome": "cancelled" } ] }
+  ],
+  "else": [ { "kind": "updateRecord", "attributes": [ … ] } ]
+}
+```
+
+This is not the same as nesting conditions inside `else`: it produces the shape the designer
+produces, one condition step with N branches. The typical use is a guard clause per precondition, each
+with its own exit — that is how `Zahlungserinnerung-Email verschicken` is built (six cases).
+
+Mixing `branches` with `conditions`/`then` in the same step is rejected as `WF140`.
+
+Several comparisons in one case are combined with `logicalOperator`: `"And"` (default) or `"Or"`.
+It sits next to the `conditions` list — in the short form on the step, in a chain on the branch.
+
+### Comparison operators
+
+| Group | Operators |
+|---|---|
+| Equality | `Equal`, `NotEqual` |
+| Emptiness (take **no** value) | `Null`, `NotNull` |
+| Text | `Contains`, `DoesNotContain`, `BeginsWith`, `DoesNotBeginWith`, `EndsWith`, `DoesNotEndWith` |
+| Numbers | `GreaterThan`, `GreaterEqual`, `LessThan`, `LessEqual` |
+| Sets | `In`, `NotIn` — use `literals` for the values |
+| Ranges | `Between`, `NotBetween` |
+| Dates, with a value | `On`, `OnOrAfter`, `OnOrBefore` — often against `{"kind":"now"}` |
+| Dates, without a value | `Today`, `Yesterday`, `Tomorrow`, `Last7Days`, `Next7Days`, `LastWeek`, `ThisWeek`, `NextWeek`, `LastMonth`, `ThisMonth`, `NextMonth`, `LastYear`, `ThisYear`, `NextYear` |
+
+Anything else is rejected as `WF072`. An operator that takes no value gets `WF074` if you supply one
+anyway; one that needs a value gets `WF073` if you leave it out.
 
 ### Value kinds
 
 | `kind` | Meaning | Example |
 |---|---|---|
 | `literal` | Constant | `{"kind":"literal","literal":"Aktiv","dataType":"String"}` |
+| `literal` with `literals` | A set of constants, for `In`/`NotIn` | `{"kind":"literal","dataType":"OptionSetValue","literals":["1","2","3"]}` |
 | `field` | One or more fields, first non-empty wins, optional fallback | `{"kind":"field","fields":["lead.websiteurl","lead.emailaddress1"],"fallback":"unbekannt"}` |
-| `stepOutput` | Output of an earlier code activity | `{"kind":"stepOutput","stepOutput":"CustomActivityStep4.Domain"}` |
+| `stepOutput` | Output of an earlier code activity | `{"kind":"stepOutput","stepOutput":"Domain"}` |
+| `now` | Current date and time, evaluated at run time | `{"kind":"now","dataType":"DateTime"}` |
+| `concat` | Several values joined into one string | `{"kind":"concat","dataType":"String","parts":[{"literal":"Nr. "},{"kind":"field","fields":["invoice.dc_invoicenumber"]}]}` |
+
+`concat` is what an e-mail body is made of: constants and field values in order, nested as deep as
+needed. `now` works both as a written value and as the right-hand side of a date comparison
+(`OnOrAfter`, `OnOrBefore`, …).
 
 `dataType` defaults to `String`. Others: `Integer`, `Boolean`, `DateTime`, `Decimal`, `Double`,
 `Money`, `OptionSetValue`, `EntityReference`, `Guid`. Set it whenever the target field is not text —
@@ -160,11 +249,19 @@ for a plain field a wrong type produces a runtime failure; on a code activity's 
 An `EntityReference` literal is written as `"<entity>:<guid>"`, e.g.
 `"team:a0000001-0000-4000-8000-000000000001"`.
 
-Field references are always `entity.attribute` with logical names. Fields of the primary record need
-nothing extra; fields of a **directly linked** record need `via` with the lookup attribute leading
-there — `{"kind":"field","fields":["opportunity.sample_salesma"],"via":"opportunityid"}`. One level only;
-deeper paths need a child workflow or `msdyncrmWorkflowTools.QueryValues` (see `workflow-tools.md`).
-The same applies to `conditions[]`, which take `entity` + `via` + `attribute`.
+Field references are always `entity.attribute` with logical names. Which record they are read from
+depends on one of three keys — without any of them, only the triggering record is readable:
+
+| Read from | Key | Example |
+|---|---|---|
+| A directly linked record (one level) | `via` = the lookup attribute leading there | `{"fields":["opportunity.sample_salesma"],"via":"opportunityid"}` |
+| A record an earlier `createRecord` step made | `fromStep` = its step id or the created entity | `{"fields":["email.activityid"],"fromStep":"email"}` |
+| The record behind a code activity's output | `fromStepOutput` = the parameter name | `{"fields":["systemuser.fullname"],"fromStepOutput":"InitiatingUser"}` |
+
+`via` reaches one level only; deeper paths need a child workflow or
+`msdyncrmWorkflowTools.QueryValues` (see `workflow-tools.md`). With `fromStepOutput` the server emits
+the record load itself, so the output being a mere reference is not a problem. All three work in
+`conditions[]` as well.
 
 ### Code activities
 
@@ -189,9 +286,12 @@ parameter name**, which is usually what you want: step ids are assigned by the b
 know them when writing the definition. They come back in `stepIds` and are assigned in document
 order, so a step can only use outputs of steps declared before it.
 
-Reading back is asymmetric: `workflow_get_definition` cannot reconstruct the *inputs* of a code
-activity (it reports them as raw expressions and sets `fullyUnderstood: false`). Such a workflow must
-be changed in the designer, not rewritten.
+Reading back works too: `workflow_get_definition` reduces an input argument to the value it was built
+from, even though the XAML stores only a reference into a chain of preparation activities
+(`[DirectCast(Step1_1_converted, …)]`). Fixed record references come back as `"entity:guid"`, field
+reads with their `via`, and an earlier activity's output as `stepOutput`. If a chain cannot be
+reduced, that input is listed in `unrecognised` and `fullyUnderstood` is false — then change the step
+in the designer rather than rewriting it.
 
 ## Validation
 
@@ -208,22 +308,27 @@ Nothing is written unless all three pass. Each issue carries `code`, `path`, `pr
 
 | Code | Meaning |
 |---|---|
-| `WF000` | `definitionJson` is not valid JSON |
+| `WF000` / `WF001` | `definitionJson` is not valid JSON, or the definition is null |
 | `WF002` / `WF003` | primary entity or steps missing |
 | `WF010`–`WF012` | step kind missing, unknown, or not generatable |
 | `WF013` / `WF014` | stage nested, or empty |
+| `WF015` | stage without a description (warning — stages are the outline in the designer) |
 | `WF020` / `WF021` | create without entity; update targeting a different table |
 | `WF030`–`WF032` | assign step: owner missing or malformed |
 | `WF040` | change-status without state/status |
 | `WF050` / `WF051` | child workflow id missing or malformed |
+| `WF060` | stop step with an unknown `outcome` (use `"succeeded"` or `"cancelled"`) |
 | `WF070`–`WF076` | condition: no comparisons, missing attribute/operator/value, no branches |
+| `WF079` | comparison reads another table without `via`, `fromStep` or `fromStepOutput` |
 | `WF077` / `WF078` | condition on a step output: no parameter named, or no earlier step declares it |
 | `WF080`–`WF084` | code activity: AssemblyQualifiedName missing/malformed, `PublicKeyToken=null`, empty parameter name |
 | `WF085`–`WF089` | code activity checked against its real signature: unknown input (`WF085`), `dataType` not matching the parameter (`WF086`), required input missing (`WF087`), lookup pointing at a table the parameter does not accept (`WF088`), unknown output (`WF089`) |
 | `WF090`–`WF092` | attribute assignments: none, unnamed, duplicated |
 | `WF100`–`WF102` | value missing, unknown kind, unknown data type |
+| `WF110`–`WF114` | literal null, ignored fields, null entry in `literals`, ignored fields on `now`, `concat` without `parts` |
 | `WF120`–`WF122` | field value: no fields, bad reference format, non-primary entity |
 | `WF130`–`WF132` | stepOutput: missing, malformed, or no matching earlier output |
+| `WF140` | `branches` and `conditions` used in the same condition step |
 | `WF200`–`WF202` | generated XAML failed self-check (**internal defect — report it**) |
 | `WF210` | workflow is activated; deactivate or pass `reactivate=true` |
 | `WF300` / `WF301` | table or attribute does not exist (includes name suggestions) |
@@ -235,6 +340,10 @@ Nothing is written unless all three pass. Each issue carries `code`, `path`, `pr
   assume it is active again.
 - **Keep the backup.** `workflow_set_definition` returns the previous XAML in `backup`. On any
   surprise, `workflow_restore_xaml` puts it back.
+- **Activating leaves a second row behind.** Dataverse stores an activation copy (`type=2`) that
+  neither deactivating nor deleting the definition removes — an environment used for testing fills up
+  with them. `workflow_delete` takes them along; it refuses an activated workflow unless
+  `deactivateFirst=true`.
 - **Don't create workflows with `record_upsert`.** A create without valid `xaml` is rejected with
   `0x80045040`. `workflow_create` supplies a valid skeleton, so use it.
 - **`0x80045040` on a write means "XAML not accepted"**, not "wrong access path" — even though the
@@ -246,6 +355,16 @@ Nothing is written unless all three pass. Each issue carries `code`, `path`, `pr
 - **`updateRecord` writes to the triggering record only.** It uses a temporary entity internally and
   writes the result back.
 - **`wait` steps require background mode** (`mode=0`). In a real-time workflow they will not work.
+- **Set `mode` before writing the logic.** A real-time workflow must not contain persistence points,
+  so the generated XAML differs by mode. Switching a workflow to real-time after writing leaves stale
+  `Persist` elements behind; write the logic again afterwards.
+- **Activation errors say nothing useful.** `0x80040216` is literally "an unexpected error occurred",
+  and `0x80048455` names the composite but not the reason. Do not guess: call
+  `workflow_diagnose_activation` with the same definition — it writes subsets into throwaway
+  workflows until the culprit step (and case) is isolated, then deletes them again.
+- **On a workflow you did not author, start with `dryRun=true`.** `workflow_set_definition` then
+  validates and reports in `diff` what would change — including a warning if the current logic
+  contains constructs that would be dropped.
 - **Environment write policy:** `contoso-dev` is the safe write target. Confirm with the user before
   writing to `xv` (production).
 

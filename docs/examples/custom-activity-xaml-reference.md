@@ -105,6 +105,35 @@ dann die Quelle (`_1` = Referenz, `_2` = Guid), nicht umgekehrt.
 > nur „ist jede referenzierte Variable deklariert?" prüft, fängt das nicht — hier war die
 > *unbenutzte* Basisvariable das Problem, nicht eine fehlende Referenz.
 
+## Weitere Stellen, an denen der Marker bzw. der Typname zählt
+
+Dieselbe Klasse von Fehlern — das XAML sieht plausibel aus und wird mit `0x80045040` schon beim
+Schreiben abgelehnt:
+
+| Konstrukt | Falsch | Richtig |
+|---|---|---|
+| `CreateCrmType` für ein Optionsset | Marker `"OptionSetValue"` | Marker **`"Picklist"`** |
+| `CreateCrmType` für eine Guid | Marker `"Guid"` | Marker **`"UniqueIdentifier"`** |
+| `CreateCrmType` für eine Referenz | Marker `"EntityReference"` | Marker **`"Lookup"`** (5-teilig) |
+| Datums-Typargument | `x:DateTime` | **`s:DateTime`** — der XAML-2006-Namespace hat kein DateTime |
+| `RetrieveCurrentTime` | `TargetType` = Zieltyp | **`x:Null`**, Parameter `[New Object() {  }]` mit `xml:space="preserve"` |
+| `Add` (Verkettung) | `TargetType` = Zieltyp | **`x:Null`** — die Teile bestimmen den Typ |
+
+Der Marker ist also der **CRM-Attributtyp**, nicht der Name des `WorkflowPropertyType`. Belegt durch
+`ValueKindWriteProbeTests`, das jede Wertform einzeln schreibt.
+
+Dazu zwei Dinge, die erst die Aktivierung des ganzen Workflows zeigte — beide `0x80040216`:
+
+| Konstrukt | Falsch | Richtig |
+|---|---|---|
+| Komma in einer Konstante | `"1,2,3"` | **`"1&#44;2&#44;3"`** — das Parameter-Array wird vor den String-Literalen auf Kommas zerlegt |
+| Persistenzpunkt in einem Realtime-Workflow | `<Persist />` | **entfällt** — nur Hintergrund-Workflows dürfen persistieren |
+| `fromStep`-Verweis nach dem Zurücklesen | die alte Schritt-Id | über die **Entität** auflösen — Neunummerierung macht die Id ungültig, der Verweis zeigt dann auf einen nie erzeugten Datensatz |
+
+Der letzte Punkt war der zäheste: das XAML war wohlgeformt, der Selbsttest zufrieden, die Validierung
+still. Gefunden durch Halbieren — `PaymentReminderBisectTests` schreibt Teilmengen des Workflows und
+aktiviert jede einzeln, bis nur noch die drei Codeaktivitäten mit dem `fromStep`-Verweis übrig waren.
+
 ## Umgesetzte Validierung
 
 Der Parametertyp wird aus `plugintype.customworkflowactivityinfo` gelesen

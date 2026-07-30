@@ -131,9 +131,17 @@ Dazu kam, was die Aktivierung eigentlich blockierte: Argumenttypen aus
 `plugintype.customworkflowactivityinfo` statt hart `x:String`, und das Namensschema der konvertierten
 Hilfsvariablen — Details in `custom-activity-xaml-reference.md`.
 
-## Beim Zurücklesen beachten
+## Zurücklesen
 
-`workflow_get_definition` rekonstruiert die **Eingaben** dieses `customActivity`-Schritts nicht und
-meldet `fullyUnderstood: false`. Der Workflow ist danach also nicht mehr über
-`workflow_set_definition` änderbar — entweder die Definition hier im Repo als Quelle behalten oder im
-Designer weiterarbeiten.
+`workflow_get_definition` rekonstruiert auch die **Eingaben** des `customActivity`-Schritts: das feste
+Team kommt als `"team:<guid>"` zurück, der Firmenbesitzer als Feldverweis mit `via`. Der Workflow
+bleibt damit über `workflow_set_definition` änderbar.
+
+Belegt gegen echtes Designer-XAML, nicht nur gegen selbst erzeugtes:
+`DesignerXamlReadingTests` liest die Fixture `designer-custom-activity.xaml` — einen im Designer von
+Hand konfigurierten Schritt — und baut daraus dasselbe XAML wieder auf.
+
+Der härtere Beleg ist `PaymentReminderRebuildTests`: es liest den 133 KB grossen Workflow
+"Zahlungserinnerung-Email verschicken" aus `contoso-dev`, baut ihn aus der Lesung neu und **aktiviert** die
+Rekonstruktion als eigenen Workflow. Damit ist der Weg lesen -> aendern -> schreiben fuer einen
+gewachsenen Workflow durchgehend belegt.

@@ -8,13 +8,17 @@ using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging;
 
 /// <param name="Applied">True when the XAML was written.</param>
+/// <param name="Diff">
+/// On a dry run: what the write would change, as a readable summary. Null otherwise.
+/// </param>
 public sealed record WorkflowSaveResult(
     bool Applied,
     Guid WorkflowId,
     IReadOnlyList<string> StepIds,
     WorkflowValidationResult Validation,
     string? Backup,
-    string? Message);
+    string? Message,
+    string? Diff = null);
 
 /// <summary>
 /// Authoring operations for Classic Workflows: read the logic as a definition, validate it against
@@ -87,6 +91,9 @@ public sealed class WorkflowAuthoringService(
                 Collect(step.Then);
                 Collect(step.Else);
                 Collect(step.Children);
+
+                foreach (var branch in step.Branches ?? [])
+                    Collect(branch.Steps);
             }
         }
 
@@ -100,11 +107,16 @@ public sealed class WorkflowAuthoringService(
     /// Writes the definition as XAML. Refuses to write when validation reports an error or when the
     /// workflow is activated.
     /// </summary>
+    /// <param name="dryRun">
+    /// Validate and build, then report what would change — without writing. The safe first step on a
+    /// workflow one did not author.
+    /// </param>
     public async Task<WorkflowSaveResult> SetDefinitionAsync(
         string orgUrl,
         Guid workflowId,
         WorkflowDefinition definition,
         bool reactivate = false,
+        bool dryRun = false,
         CancellationToken ct = default)
     {
         var detail = await workflows.GetAsync(orgUrl, workflowId, ct)
@@ -113,6 +125,13 @@ public sealed class WorkflowAuthoringService(
         // Fill in the primary entity from the record when the caller omitted it.
         if (string.IsNullOrWhiteSpace(definition.PrimaryEntity))
             definition = definition with { PrimaryEntity = detail.PrimaryEntity ?? string.Empty };
+
+        // The mode belongs to the record, not to the definition, and it decides whether persistence
+        // points are allowed — a real-time process must not contain any.
+        definition = definition with
+        {
+            Realtime = string.Equals(detail.Mode, "Realtime", StringComparison.OrdinalIgnoreCase)
+        };
 
         // One read of the activity metadata, used for validating and for typing the arguments.
         var activities = await LoadActivityCatalogAsync(orgUrl, definition, ct);
@@ -145,6 +164,12 @@ public sealed class WorkflowAuthoringService(
 
         var backup = detail.Xaml;
 
+        if (dryRun)
+            return new WorkflowSaveResult(false, workflowId, build.StepIds,
+                new WorkflowValidationResult(true, validation.Issues.Concat(xamlCheck.Issues).ToList()),
+                backup, "Dry run — nothing was written.",
+                DescribeChange(detail.Xaml, build.Xaml, definition));
+
         if (wasActive)
             await workflows.SetStateAsync(orgUrl, workflowId, activate: false, ct);
 
@@ -173,6 +198,82 @@ public sealed class WorkflowAuthoringService(
         var allIssues = validation.Issues.Concat(xamlCheck.Issues).ToList();
         return new WorkflowSaveResult(true, workflowId, build.StepIds,
             new WorkflowValidationResult(true, allIssues), backup, message);
+    }
+
+    /// <summary>
+    /// A readable summary of what writing this definition would change.
+    /// </summary>
+    /// <remarks>
+    /// Comparing XAML line by line is useless here — the whole document is one line, and step
+    /// renumbering shifts everything. What a caller needs to know is which steps and which activities
+    /// come and go, so that is what this reports.
+    /// </remarks>
+    private static string DescribeChange(string? before, string after, WorkflowDefinition definition)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        if (string.IsNullOrWhiteSpace(before))
+        {
+            sb.AppendLine("The workflow has no logic yet; this would be the first write.");
+        }
+        else
+        {
+            var wasParsed = WorkflowXamlParser.Parse(before, definition.PrimaryEntity);
+            sb.AppendLine($"Steps now: {Describe(wasParsed.Definition.Steps)}");
+            sb.AppendLine($"Steps after: {Describe(definition.Steps)}");
+
+            if (!wasParsed.FullyUnderstood)
+                sb.AppendLine($"WARNING: the current logic has {wasParsed.Unrecognised.Count} construct(s) "
+                    + "this server does not understand. Writing would drop them: "
+                    + string.Join("; ", wasParsed.Unrecognised));
+
+            sb.AppendLine($"XAML size: {before!.Length} -> {after.Length} characters");
+        }
+
+        var activities = CountActivities(after);
+        var activitiesBefore = string.IsNullOrWhiteSpace(before) ? [] : CountActivities(before!);
+
+        var changed = activities.Keys.Union(activitiesBefore.Keys)
+            .Where(k => activitiesBefore.GetValueOrDefault(k) != activities.GetValueOrDefault(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .Select(k => $"  {k}: {activitiesBefore.GetValueOrDefault(k)} -> {activities.GetValueOrDefault(k)}")
+            .ToList();
+
+        if (changed.Count > 0)
+        {
+            sb.AppendLine("Activities that change in number:");
+            foreach (var line in changed)
+                sb.AppendLine(line);
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string Describe(List<WorkflowStep> steps) =>
+        steps.Count == 0
+            ? "(none)"
+            : string.Join(", ", steps.Select(s => s.Kind + (s.Description is null ? "" : $" \"{s.Description}\"")));
+
+    private static Dictionary<string, int> CountActivities(string xaml)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var m in System.Text.RegularExpressions.Regex
+                     .Matches(xaml, @"AssemblyQualifiedName=""([^,""]+)").Cast<System.Text.RegularExpressions.Match>())
+        {
+            var name = m.Groups[1].Value.Split('.').Last();
+            counts[name] = counts.GetValueOrDefault(name) + 1;
+        }
+
+        foreach (var m in System.Text.RegularExpressions.Regex
+                     .Matches(xaml, @"<mxswa:(\w+)[ />]").Cast<System.Text.RegularExpressions.Match>())
+        {
+            var name = m.Groups[1].Value;
+            if (name is "ActivityReference" or "ReferenceLiteral") continue;
+            counts[name] = counts.GetValueOrDefault(name) + 1;
+        }
+
+        return counts;
     }
 
     /// <summary>Restores a previously exported XAML verbatim (used to undo a bad write).</summary>
@@ -258,7 +359,11 @@ public sealed class WorkflowAuthoringService(
             {
                 var step = steps[i];
                 var stepPath = $"{path}[{i}]";
-                var entity = step.Entity ?? definition.PrimaryEntity;
+
+                // A send-email step always writes an 'email' record, whatever the primary entity is.
+                var entity = step.Kind == WorkflowStepKind.SendEmail
+                    ? "email"
+                    : step.Entity ?? definition.PrimaryEntity;
 
                 foreach (var (assignment, index) in (step.Attributes ?? []).Select((a, n) => (a, n)))
                 {
@@ -266,16 +371,31 @@ public sealed class WorkflowAuthoringService(
                     await CheckValueFields(assignment.Value, $"{stepPath}.attributes[{index}].value");
                 }
 
-                foreach (var (condition, index) in (step.Conditions ?? []).Select((c, n) => (c, n)))
+                async Task WalkConditions(List<WorkflowCondition> conditions, string basePath)
                 {
-                    await CheckAttribute(condition.Entity ?? definition.PrimaryEntity, condition.Attribute,
-                        $"{stepPath}.conditions[{index}].attribute");
-                    if (condition.Value is not null)
-                        await CheckValueFields(condition.Value, $"{stepPath}.conditions[{index}].value");
+                    foreach (var (condition, index) in conditions.Select((c, n) => (c, n)))
+                    {
+                        // A comparison on a step output has no attribute of its own.
+                        if (string.IsNullOrWhiteSpace(condition.StepOutput))
+                            await CheckAttribute(condition.Entity ?? definition.PrimaryEntity, condition.Attribute,
+                                $"{basePath}.conditions[{index}].attribute");
+                        if (condition.Value is not null)
+                            await CheckValueFields(condition.Value, $"{basePath}.conditions[{index}].value");
+                    }
                 }
+
+                await WalkConditions(step.Conditions ?? [], stepPath);
 
                 foreach (var (key, value) in step.Inputs ?? [])
                     await CheckValueFields(value, $"{stepPath}.inputs['{key}']");
+
+                // Every case of an if/else-if chain, including its own comparisons.
+                foreach (var (branch, index) in (step.Branches ?? []).Select((b, n) => (b, n)))
+                {
+                    await WalkConditions(branch.Conditions, $"{stepPath}.branches[{index}]");
+                    if (branch.Steps is { } branchSteps)
+                        await WalkSteps(branchSteps, $"{stepPath}.branches[{index}].steps");
+                }
 
                 if (step.Then is { } then) await WalkSteps(then, $"{stepPath}.then");
                 if (step.Else is { } @else) await WalkSteps(@else, $"{stepPath}.else");

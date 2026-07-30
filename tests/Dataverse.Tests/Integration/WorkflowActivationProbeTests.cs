@@ -276,6 +276,195 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
             ]
         });
 
+        // An if / else-if chain: one condition step with three cases plus a default one, the shape
+        // the designer produces for "check several preconditions, each with its own exit".
+        yield return ("L condition chain with three cases", "salesorder", new WorkflowDefinition
+        {
+            PrimaryEntity = "salesorder",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    Description = "Voraussetzungen",
+                    Branches =
+                    [
+                        new WorkflowConditionBranch
+                        {
+                            Conditions = [new WorkflowCondition { Attribute = "opportunityid", Operator = "Null" }],
+                            Steps =
+                            [
+                                new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }
+                            ]
+                        },
+                        new WorkflowConditionBranch
+                        {
+                            LogicalOperator = "Or",
+                            Conditions =
+                            [
+                                new WorkflowCondition { Attribute = "accountid", Operator = "Null" },
+                                new WorkflowCondition { Attribute = "sample_projektbeteiligter1", Operator = "NotNull" }
+                            ],
+                            Steps =
+                            [
+                                new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }
+                            ]
+                        },
+                        new WorkflowConditionBranch
+                        {
+                            Conditions =
+                            [
+                                new WorkflowCondition
+                                {
+                                    Entity = "opportunity", Via = "opportunityid",
+                                    Attribute = "sample_salesma", Operator = "Null"
+                                }
+                            ],
+                            Steps = [Update("description", new WorkflowValue { Literal = "kein Salesma" })]
+                        }
+                    ],
+                    Else = [Update("description", new WorkflowValue { Literal = "alles da" })]
+                }
+            ]
+        });
+
+        // The value shapes a real workflow needs: a set of constants for In, "now" as a comparison
+        // value, "now" as a written value, and a concatenation of constant and field.
+        yield return ("M now, concat and a value set", "salesorder", new WorkflowDefinition
+        {
+            PrimaryEntity = "salesorder",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    LogicalOperator = "Or",
+                    Conditions =
+                    [
+                        new WorkflowCondition
+                        {
+                            Attribute = "statuscode",
+                            Operator = "In",
+                            Value = new WorkflowValue
+                            {
+                                DataType = "OptionSetValue",
+                                Literals = ["1", "2", "3"]
+                            }
+                        },
+                        new WorkflowCondition
+                        {
+                            Attribute = "createdon",
+                            Operator = "OnOrBefore",
+                            Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
+                        }
+                    ],
+                    Then =
+                    [
+                        new WorkflowStep
+                        {
+                            Kind = WorkflowStepKind.UpdateRecord,
+                            Attributes =
+                            [
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "description",
+                                    Value = new WorkflowValue
+                                    {
+                                        Kind = WorkflowValueKind.Concat,
+                                        DataType = "String",
+                                        Parts =
+                                        [
+                                            new WorkflowValue { Literal = "Auftrag " },
+                                            new WorkflowValue
+                                            {
+                                                Kind = WorkflowValueKind.Field,
+                                                Fields = ["salesorder.ordernumber"]
+                                            }
+                                        ]
+                                    }
+                                },
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "requestdeliveryby",
+                                    Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        // The platform's own send-email step: a fixed sender, the owner as recipient, and a body
+        // concatenated from text and fields.
+        yield return ("N send email", "lead", new WorkflowDefinition
+        {
+            PrimaryEntity = "lead",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.SendEmail,
+                    Description = "Zuweisung melden",
+                    Attributes =
+                    [
+                        new WorkflowAttributeAssignment
+                        {
+                            Attribute = "from",
+                            Value = new WorkflowValue
+                            {
+                                DataType = "PartyList",
+                                Literal = "systemuser:a0000002-0000-4000-8000-000000000002"
+                            }
+                        },
+                        new WorkflowAttributeAssignment
+                        {
+                            Attribute = "to",
+                            Value = new WorkflowValue
+                            {
+                                Kind = WorkflowValueKind.Field,
+                                DataType = "PartyList",
+                                Fields = ["lead.ownerid"]
+                            }
+                        },
+                        new WorkflowAttributeAssignment
+                        {
+                            Attribute = "subject",
+                            Value = new WorkflowValue { DataType = "String", Literal = "Neuer Lead zugewiesen" }
+                        },
+                        new WorkflowAttributeAssignment
+                        {
+                            Attribute = "description",
+                            Value = new WorkflowValue
+                            {
+                                Kind = WorkflowValueKind.Concat,
+                                DataType = "String",
+                                Parts =
+                                [
+                                    new WorkflowValue { Literal = "Lead: " },
+                                    new WorkflowValue
+                                    {
+                                        Kind = WorkflowValueKind.Field,
+                                        Fields = ["lead.companyname"]
+                                    }
+                                ]
+                            }
+                        },
+                        new WorkflowAttributeAssignment
+                        {
+                            Attribute = "regardingobjectid",
+                            Value = new WorkflowValue
+                            {
+                                Kind = WorkflowValueKind.Field,
+                                DataType = "EntityReference",
+                                Fields = ["lead.leadid"]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
         // Stage on root level (also a Composite) — is that accepted?
         yield return ("J stage on root", "salesorder", new WorkflowDefinition
         {

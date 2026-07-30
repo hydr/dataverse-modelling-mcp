@@ -321,7 +321,38 @@ Das minimale, vom Server selbst erzeugte Grundgerüst:
 | `[InputEntities("primaryEntity")]` | Der auslösende Datensatz. |
 | `[InputEntities("primaryEntity").Id]` | Dessen Primärschlüssel. |
 | `[CreatedEntities("<StepId>_localParameter")]` | Der von einem Erstellungsschritt angelegte Datensatz. |
+| `[CreatedEntities("<StepId><ParameterName>_entity")]` | Der zu einer Lookup-**Ausgabe** einer Codeaktivität geladene Datensatz (siehe unten). |
+| `[InputEntities("related_<lookupAttribut>#<zielEntität>")]` | Ein direkt verknüpfter Datensatz, eine Ebene tief. |
 | `[CreatedEntities("<name>#Temp")]` | Temporäre Instanz für Datenänderungen (siehe unten). |
+
+#### Datensatz zu einer Aktivitäts-Ausgabe laden
+
+Die Ausgabe einer Codeaktivität ist nur eine Referenz. Um deren Felder zu lesen, lädt der Designer
+den Datensatz direkt nach der Aktivität — abgesichert durch ein `If`, weil eine leere Referenz sonst
+zur Laufzeit scheitert:
+
+```xml
+<If Condition="[Microsoft.VisualBasic.IsNothing(CustomActivityStep6InitiatingUser_localParameter)]">
+  <If.Then>
+    <Assign x:TypeArguments="mxs:Entity" To='[CreatedEntities("CustomActivityStep6InitiatingUser_entity")]' Value="[New Entity()]" />
+  </If.Then>
+  <If.Else>
+    <mxswa:RetrieveEntity Attributes="{x:Null}" Entity='[CreatedEntities("CustomActivityStep6InitiatingUser_entity")]'
+                          EntityId="[DirectCast(CustomActivityStep6InitiatingUser_localParameter.Id, System.Guid)]"
+                          EntityName="systemuser" ThrowIfNotExists="False" />
+  </If.Else>
+</If>
+```
+
+Danach lesen `GetEntityProperty`-Aktivitäten mit `Entity='[CreatedEntities("…_entity")]"` und
+`EntityName="systemuser"` beliebige Felder dieses Datensatzes. Das ist der Weg, mit dem sich z. B.
+`msdyncrmWorkflowTools.Class.GetInitiatingUser` nutzbar machen lässt.
+
+> [!WARNING]
+> Verweise dieser Art hängen an der **Schritt-Id**. Wird ein Workflow neu erzeugt und dabei neu
+> durchnummeriert, zeigt ein übernommener Schlüssel auf einen Datensatz, den es nicht gibt — die
+> Aktivierung antwortet dann mit `0x80040216` ohne weitere Angabe. Beim Umbau muss der Schlüssel also
+> aus dem *neuen* Schritt abgeleitet werden, nicht aus dem alten.
 
 ### Änderungsmuster mit temporärer Entität
 
@@ -373,7 +404,24 @@ StopWorkflowStep11, WaitStep12, WaitBranchStep13
 | `<StepId>_<n>` | `x:Object` | Zwischenwerte. `_1` ist der Ergebnisslot, `_2` … `_n` die Quellen in Auswertungsreihenfolge. |
 | `<StepId>_condition` | `x:Boolean`, `Default="False"` | Ergebnis einer Bedingungsauswertung. |
 | `<StepId>_<n>_converted` | `x:Object` | Nach Typkonvertierung für Argumente von Codeaktivitäten. |
-| `<StepId><ParameterName>_localParameter` | Parametertyp, `Default="[Nothing]"` | Ein-/Ausgabeparameter einer Codeaktivität. **Auf Workflowebene** in `<mxswa:Workflow.Variables>` deklariert, nicht in der Sequenz. |
+| `<StepId><ParameterName>_localParameter` | Parametertyp | Ein-/Ausgabeparameter einer Codeaktivität. **Auf Workflowebene** in `<mxswa:Workflow.Variables>` deklariert, nicht in der Sequenz. |
+
+Beim `Default` der `_localParameter`-Variable zählt der Parametertyp: `[Nothing]` gilt nur für
+Referenztypen. Ein `x:Boolean` bekommt `Default="False"`, eine `mxs:EntityReference`
+`Default="[New EntityReference()]"`; ein `[Nothing]` auf einem Wertetyp ist ein Typfehler.
+
+> [!IMPORTANT]
+> **Der Index in `_<n>_converted` muss auf eine deklarierte Variable verweisen.** Die konvertierte
+> Variable heißt nach ihrer Quelle — aus `_1` wird `_1_converted` —, sie verbraucht also **keine**
+> neue Nummer. Ein `_3_converted` ohne deklariertes `_3` lehnt die Aktivierung als
+> `InvalidPropertyBag` ab, obwohl das XAML wohlgeformt ist und jede *referenzierte* Variable
+> deklariert wurde. Die Prüfung „ist jede Referenz deklariert?" fängt das nicht: hier ist die
+> *unbenutzte* Basisvariable das Problem.
+
+**In Bedingungen heißen die Hilfsvariablen nach dem Zweig, nicht nach dem Schritt** —
+`ConditionBranchStep9_2`, nicht `ConditionStep1_2`. Nur dadurch lässt sich später zuordnen, welcher
+Vergleich zu welchem Zweig einer if/else-if-Kette gehört. Alle Zweige einer `ConditionSequence`
+deklarieren ihre Variablen in **einer** gemeinsamen `Variables`-Collection.
 
 ### Beschreibungstexte
 
@@ -474,6 +522,31 @@ Wird ein Zweig mit Schritten gefüllt, ersetzt ein `Composite`-Wrapper das `x:Nu
 Eigenschaft `Then` bzw. `Else`. Der Standardaktionszweig ist ein weiterer `ConditionBranch` mit
 `Condition` = `True`; zusätzlich wechselt `ContainsElseBranch` auf `True`.
 
+#### Mehrere Zweige: die if/else-if-Kette
+
+Eine `ConditionSequence` kann **N** `ConditionBranch`-Knoten tragen, jeder mit eigenen Vergleichen,
+in Reihenfolge geprüft — der erste zutreffende gewinnt. Das ist das Muster für „mehrere
+Voraussetzungen, jede mit eigenem Abbruch"; ein realer Workflow dieser Umgebung hat sechs Zweige.
+
+Der Aufbau der Aktivitätenliste ist dabei streng sequenziell:
+
+```
+Vergleiche von Zweig 1 … → ConditionBranch (Zweig 1)
+Vergleiche von Zweig 2 … → ConditionBranch (Zweig 2)
+…
+ConditionBranch mit Condition="True"   ← der Standardzweig, falls vorhanden
+```
+
+Genau diese Reihenfolge erlaubt es, beim Lesen jeden Vergleich seinem Zweig zuzuordnen — zusammen
+mit der Variablenbenennung nach dem Zweig (siehe *Namenskonventionen → Variablen*). Die Nummern der
+Zweig-Ids müssen **nicht** aufsteigend sein: wer im Designer nachträglich einen Zweig einfügt,
+bekommt eine hohe Nummer an früher Position.
+
+> [!CAUTION]
+> Ein Modell, das nur „dann/sonst" kennt, kann eine solche Kette nicht abbilden. Wer sie trotzdem
+> darauf abbildet, verliert Zweige — und mischt zusätzlich die Vergleiche aller Zweige zu einer
+> einzigen Kette, was die Logik still verändert.
+
 > [!IMPORTANT]
 > **Wertlose Operatoren** (`Null`, `NotNull` — in der Oberfläche „enthält keine Daten" bzw. „enthält
 > Daten") haben keinen Vergleichswert. `Parameters` muss dann als **explizites Null-Element**
@@ -527,8 +600,63 @@ Hilfsaktivität in eine Variable aufbereitet und von dort referenziert.
 <OutArgument x:Key="Result">[UpdateStep3_4]</OutArgument>
 ```
 
-Der erste Parameter ist der `WorkflowPropertyType`, der zweite der Wert, der dritte dessen
-Typname.
+Der erste Parameter ist der `WorkflowPropertyType`, der zweite der Wert, der dritte der
+**CRM-Attributtyp** — und der ist nicht immer der Name des `WorkflowPropertyType`:
+
+| Typ | `WorkflowPropertyType` | Marker (3. Parameter) |
+|---|---|---|
+| Text | `String` | `String` |
+| Ja/Nein | `Boolean` | `Boolean` (der Designer lässt ihn hier auch weg) |
+| Optionsset | `OptionSetValue` | **`Picklist`** |
+| Id | `Guid` | **`UniqueIdentifier`** |
+| Datensatzverweis | `EntityReference` | **`Lookup`** (fünfteilig, siehe unten) |
+
+> [!IMPORTANT]
+> Ein falscher Marker lässt Dataverse das gesamte Dokument beim Schreiben mit `0x80045040` ablehnen.
+> Ebenso ein `x:DateTime` als Typargument: der XAML-2006-Namespace hat kein DateTime, der Typ muss
+> aus `System` kommen — **`s:DateTime`**.
+
+> [!WARNING]
+> **Kommas im Wert müssen als `&#44;` kodiert werden.** Das Parameterarray wird auf Kommas zerlegt,
+> bevor die Stringliterale ausgewertet werden; ein Komma im Text zerreißt also die Argumentliste. Bei
+> deutschen Sätzen ist das der Normalfall — der Designer kodiert konsequent.
+
+#### Mengen von Werten (`In` / `NotIn`)
+
+Für einen Vergleich gegen mehrere Werte wird pro Wert ein `CreateCrmType` erzeugt; das
+`Parameters`-Array der `EvaluateCondition` nennt dann alle Ergebnisvariablen:
+
+```xml
+<InArgument x:Key="Parameters">[New Object() { ConditionBranchStep2_3, ConditionBranchStep2_4, ConditionBranchStep2_5 }]</InArgument>
+```
+
+#### Aktuelle Zeit
+
+`ExpressionOperator` = `RetrieveCurrentTime`, **ohne** Parameter und **ohne** Zieltyp:
+
+```xml
+<InArgument x:Key="ExpressionOperator">RetrieveCurrentTime</InArgument>
+<InArgument x:Key="Parameters" xml:space="preserve">[New Object() {  }]</InArgument>
+<InArgument x:Key="TargetType"><mxswa:ReferenceLiteral x:TypeArguments="s:Type"><x:Null /></mxswa:ReferenceLiteral></InArgument>
+```
+
+In einer Bedingung geht das Ergebnis direkt in das `Parameters`-Array (Operatoren `OnOrAfter`,
+`OnOrBefore`, …); als geschriebener Wert läuft es wie jede Quelle durch `SelectFirstNonNull`.
+
+#### Verkettung
+
+`ExpressionOperator` = `Add` verbindet mehrere Werte zu einem Text — so entstehen Betreffzeilen und
+Mailtexte. Der Zieltyp ist **`x:Null`**, weil die Teile ihn bestimmen. Der Ergebnisslot wird zuerst
+reserviert, dann die Teile in Reihenfolge:
+
+```xml
+<InArgument x:Key="ExpressionOperator">Add</InArgument>
+<InArgument x:Key="Parameters">[New Object() { CreateStep17_6, CreateStep17_7 }]</InArgument>
+<InArgument x:Key="TargetType"><mxswa:ReferenceLiteral x:TypeArguments="s:Type"><x:Null /></mxswa:ReferenceLiteral></InArgument>
+<OutArgument x:Key="Result">[CreateStep17_5]</OutArgument>
+```
+
+Teile dürfen selbst Feldverweise sein; ein echter Mailtext besteht aus einem Dutzend und mehr.
 
 ### Feldverweise mit Standardwert
 
@@ -744,6 +872,12 @@ weiterarbeitet.
 - Der Designer erzeugt auch **unvollständige Zwischenstände** im XAML (etwa `CreateEntity` mit
   leerem `EntityName`). Ein Entwurf muss nicht ausführbar sein.
 - Änderungen an aktivierten Prozessen sind nicht möglich; vorher deaktivieren.
+- **`<Persist />` darf nur in Hintergrund-Workflows stehen.** Ein Echtzeitprozess (`mode=1`) kennt
+  keine Persistenzpunkte; das erzeugte XAML unterscheidet sich also je nach Modus, und der Modus
+  gehört deshalb festgelegt, *bevor* die Logik geschrieben wird.
+- **Aktivieren legt eine zweite Zeile an** (`type=2`, Verweis über `parentworkflowid`). Weder das
+  Deaktivieren noch das Löschen der Definition entfernt sie — in einer Testumgebung sammeln sich
+  diese Kopien deshalb an.
 - Beim Wechsel der Zielentität eines Schritts verwirft der Designer die Konfiguration dieses
   Schritts (Rückfrage im Browser).
 

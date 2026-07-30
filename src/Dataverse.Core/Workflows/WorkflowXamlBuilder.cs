@@ -42,8 +42,15 @@ public static class WorkflowXamlBuilder
     {
         ArgumentNullException.ThrowIfNull(definition);
 
-        var state = new BuildState(definition.PrimaryEntity, activities ?? WorkflowActivityCatalog.Empty);
+        var state = new BuildState(definition.PrimaryEntity, activities ?? WorkflowActivityCatalog.Empty)
+        {
+            Realtime = definition.Realtime
+        };
         AssignStepIds(definition.Steps, state);
+
+        // Which activity outputs are read as records? Those need a RetrieveEntity next to the
+        // activity, and that has to be known before the activity itself is emitted.
+        CollectOutputsToLoad(definition.Steps, state);
 
         var body = new StringBuilder();
         foreach (var step in definition.Steps)
@@ -67,13 +74,17 @@ public static class WorkflowXamlBuilder
 
             if (step.Kind is WorkflowStepKind.Condition or WorkflowStepKind.Wait)
             {
-                // A condition owns a branch node; the "then" steps live inside that branch.
-                state.AssignBranchId(step, isElse: false);
-                AssignStepIds(step.Then, state);
+                // Each case owns a branch node, and its steps live inside it. Ids run in document
+                // order — branch, its contents, next branch — matching the designer's numbering.
+                foreach (var branch in EffectiveBranches(step, state))
+                {
+                    state.AssignBranchId(branch);
+                    AssignStepIds(branch.Steps, state);
+                }
 
                 if (step.Else is { Count: > 0 })
                 {
-                    state.AssignBranchId(step, isElse: true);
+                    state.AssignElseBranchId(step);
                     AssignStepIds(step.Else, state);
                 }
             }
@@ -82,6 +93,79 @@ public static class WorkflowXamlBuilder
                 AssignStepIds(step.Children, state);
             }
         }
+    }
+
+    /// <summary>
+    /// Walks the whole definition for values that read fields of a record behind an activity output,
+    /// and notes the parameter names. Emission then knows which outputs to load.
+    /// </summary>
+    private static void CollectOutputsToLoad(List<WorkflowStep>? steps, BuildState state)
+    {
+        if (steps is null)
+            return;
+
+        void Note(string? reference)
+        {
+            if (string.IsNullOrWhiteSpace(reference))
+                return;
+            state.OutputsToLoad.Add(reference.Contains('.') ? reference.Split('.', 2)[1] : reference);
+        }
+
+        void FromValue(WorkflowValue? value)
+        {
+            if (value is null)
+                return;
+            Note(value.FromStepOutput);
+            foreach (var part in value.Parts ?? [])
+                FromValue(part);
+        }
+
+        foreach (var step in steps)
+        {
+            foreach (var condition in step.Conditions ?? [])
+            {
+                Note(condition.FromStepOutput);
+                FromValue(condition.Value);
+            }
+
+            foreach (var branch in step.Branches ?? [])
+            {
+                foreach (var condition in branch.Conditions)
+                {
+                    Note(condition.FromStepOutput);
+                    FromValue(condition.Value);
+                }
+                CollectOutputsToLoad(branch.Steps, state);
+            }
+
+            foreach (var assignment in step.Attributes ?? [])
+                FromValue(assignment.Value);
+
+            foreach (var (_, input) in step.Inputs ?? [])
+                FromValue(input);
+
+            FromValue(step.Reason);
+
+            CollectOutputsToLoad(step.Then, state);
+            CollectOutputsToLoad(step.Else, state);
+            CollectOutputsToLoad(step.Children, state);
+        }
+    }
+
+    /// <summary>
+    /// The cases of a condition step, whichever form the caller used: <c>branches</c> as given, or the
+    /// short form <c>conditions</c> + <c>then</c> folded into a single case.
+    /// </summary>
+    /// <remarks>
+    /// The result is cached per step: the short form is wrapped in a branch object that the id
+    /// assignment writes into, and a second call must hand back that same object.
+    /// </remarks>
+    private static List<WorkflowConditionBranch> EffectiveBranches(WorkflowStep step, BuildState state)
+    {
+        if (step.Branches is { Count: > 0 })
+            return step.Branches;
+
+        return state.ShortFormBranchOf(step);
     }
 
     // ---------------------------------------------------------------- envelope
@@ -172,6 +256,9 @@ public static class WorkflowXamlBuilder
             case WorkflowStepKind.StartChildWorkflow:
                 EmitChildWorkflow(step, state, sb);
                 break;
+            case WorkflowStepKind.SendEmail:
+                EmitSendEmail(step, state, sb);
+                break;
             default:
                 throw new NotSupportedException(
                     $"Step kind '{step.Kind}' cannot be generated. Writable kinds: " +
@@ -184,11 +271,65 @@ public static class WorkflowXamlBuilder
             ? step.StepId!
             : $"{step.StepId}: {Xml(step.Description!)}";
 
+    /// <remarks>
+    /// One <c>ConditionSequence</c> carries every case of the chain: the comparisons of all branches
+    /// followed by their <c>ConditionBranch</c> nodes, with the variables of all branches declared in
+    /// a single collection. Helper variables are named after the branch
+    /// (<c>ConditionBranchStep9_2</c>), not the step — that naming is what makes it possible to tell
+    /// afterwards which comparison belongs to which case.
+    /// </remarks>
     private static void EmitCondition(WorkflowStep step, BuildState state, StringBuilder sb)
     {
         state.UsesQueryTypes = true;
-        var ctx = new StepScope(step.StepId!);
-        var branchId = state.BranchIdOf(step, isElse: false)!;
+
+        var branches = EffectiveBranches(step, state);
+        var scopes = new List<StepScope>();
+        var activities = new StringBuilder();
+
+        foreach (var branch in branches)
+            activities.Append(EmitBranch(branch, state, scopes));
+
+        var hasElse = step.Else is { Count: > 0 };
+        if (hasElse)
+        {
+            var elseBranchId = state.ElseBranchIdOf(step)!;
+            activities.Append(Branch(elseBranchId, "True", step.Else, state));
+        }
+
+        var wait = step.Kind == WorkflowStepKind.Wait ? "True" : "False";
+        var containsElse = step.Kind == WorkflowStepKind.Wait
+            ? "<x:Null x:Key=\"ContainsElseBranch\" />"
+            : $"<x:Boolean x:Key=\"ContainsElseBranch\">{(hasElse ? "True" : "False")}</x:Boolean>";
+
+        sb.Append(
+            $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("ConditionSequence")}\" DisplayName=\"{DisplayName(step)}\">"
+            + "<mxswa:ActivityReference.Arguments>"
+            + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Wait\">{wait}</InArgument>"
+            + "</mxswa:ActivityReference.Arguments>"
+            + "<mxswa:ActivityReference.Properties>"
+            + RenderSharedVariables(scopes)
+            + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{activities}</sco:Collection>"
+            + containsElse
+            + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>");
+    }
+
+    /// <summary>The variables of every case in one collection, self-closing when there are none.</summary>
+    private static string RenderSharedVariables(List<StepScope> scopes)
+    {
+        var declarations = string.Concat(scopes.Select(s => s.RenderDeclarations()));
+        return declarations.Length == 0
+            ? "<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\" />"
+            : $"<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\">{declarations}</sco:Collection>";
+    }
+
+    /// <summary>Comparisons of one case plus its branch node.</summary>
+    private static string EmitBranch(
+        WorkflowConditionBranch branch, BuildState state, List<StepScope> scopes)
+    {
+        var branchId = branch.BranchId!;
+        var ctx = new StepScope(branchId);
+        scopes.Add(ctx);
+
         var conditionVar = $"{branchId}_condition";
         ctx.DeclareVariable(conditionVar, "x:Boolean", defaultFalse: true);
 
@@ -196,7 +337,7 @@ public static class WorkflowXamlBuilder
         var boolVars = new List<string>();
         var activities = new StringBuilder();
 
-        foreach (var condition in step.Conditions ?? [])
+        foreach (var condition in branch.Conditions)
         {
             string left;
             if (!string.IsNullOrWhiteSpace(condition.StepOutput))
@@ -210,28 +351,45 @@ public static class WorkflowXamlBuilder
                 left = ctx.NextVariable("x:Object");
                 activities.Append(GetEntityProperty(
                     condition.Attribute,
-                    EntityExpression(condition.Entity, state, condition.Via),
+                    EntityExpression(condition.Entity, state, condition.Via,
+                        condition.FromStep, condition.FromStepOutput),
                     condition.Entity ?? state.PrimaryEntity,
                     left,
                     targetType: null));
             }
 
-            string? rightVar = null;
+            // In / NotIn compare against a set, so the parameter array can hold several values.
+            var rightVars = new List<string>();
             if (condition.Value is { } value)
-                rightVar = EmitValue(value, ctx, activities, state, convertForCodeActivity: false,
-                    // In a comparison the designer reads a single field straight into the operand
-                    // variable, without the SelectFirstNonNull indirection used for field values.
-                    simplifyFieldRead: true);
+            {
+                if (value.Kind == WorkflowValueKind.Literal && value.Literals is { Count: > 0 })
+                {
+                    foreach (var literal in value.Literals)
+                    {
+                        var target = ctx.NextVariable("x:Object");
+                        activities.Append(CreateCrmType(literal, value.DataType,
+                            XamlTypeFor(value.DataType) ?? "x:String", target));
+                        rightVars.Add(target);
+                    }
+                }
+                else
+                {
+                    rightVars.Add(EmitValue(value, ctx, activities, state, convertForCodeActivity: false,
+                        // In a comparison the designer reads a single field straight into the operand
+                        // variable, without the SelectFirstNonNull indirection used for field values.
+                        simplifyFieldRead: true));
+                }
+            }
 
-            var resultVar = (step.Conditions!.Count == 1) ? conditionVar : ctx.NextVariable("x:Boolean", defaultFalse: true);
-            if (step.Conditions.Count > 1)
+            var resultVar = branch.Conditions.Count == 1 ? conditionVar : ctx.NextVariable("x:Boolean", defaultFalse: true);
+            if (branch.Conditions.Count > 1)
                 boolVars.Add(resultVar);
 
             // Value-less operators (Null / NotNull) must emit an explicit null for Parameters.
             // An empty array initialiser is rejected by the platform with 0x80045040.
-            var parameters = rightVar is null
+            var parameters = rightVars.Count == 0
                 ? "<x:Null x:Key=\"Parameters\" />"
-                : $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">[New Object() {{ {rightVar} }}]</InArgument>";
+                : $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">[New Object() {{ {string.Join(", ", rightVars)} }}]</InArgument>";
 
             activities.Append(
                 $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateCondition")}\" DisplayName=\"EvaluateCondition\">"
@@ -246,7 +404,7 @@ public static class WorkflowXamlBuilder
         // Fold multiple comparisons pairwise into the condition variable.
         if (boolVars.Count > 1)
         {
-            var op = string.Equals(step.LogicalOperator, "Or", StringComparison.OrdinalIgnoreCase) ? "Or" : "And";
+            var op = string.Equals(branch.LogicalOperator, "Or", StringComparison.OrdinalIgnoreCase) ? "Or" : "And";
             var current = boolVars[0];
             for (var i = 1; i < boolVars.Count; i++)
             {
@@ -264,31 +422,9 @@ public static class WorkflowXamlBuilder
             }
         }
 
-        // The branch itself, carrying then/else.
-        activities.Append(Branch(branchId, $"[{conditionVar}]", step.Then, state));
-
-        var hasElse = step.Else is { Count: > 0 };
-        if (hasElse)
-        {
-            var elseBranchId = state.BranchIdOf(step, isElse: true)!;
-            activities.Append(Branch(elseBranchId, "True", step.Else, state));
-        }
-
-        var wait = step.Kind == WorkflowStepKind.Wait ? "True" : "False";
-        var containsElse = step.Kind == WorkflowStepKind.Wait
-            ? "<x:Null x:Key=\"ContainsElseBranch\" />"
-            : $"<x:Boolean x:Key=\"ContainsElseBranch\">{(hasElse ? "True" : "False")}</x:Boolean>";
-
-        sb.Append(
-            $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("ConditionSequence")}\" DisplayName=\"{DisplayName(step)}\">"
-            + "<mxswa:ActivityReference.Arguments>"
-            + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Wait\">{wait}</InArgument>"
-            + "</mxswa:ActivityReference.Arguments>"
-            + "<mxswa:ActivityReference.Properties>"
-            + ctx.RenderVariableCollection()
-            + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{activities}</sco:Collection>"
-            + containsElse
-            + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>");
+        // The branch node itself, carrying the steps of this case.
+        activities.Append(Branch(branchId, $"[{conditionVar}]", branch.Steps, state));
+        return activities.ToString();
     }
 
     private static string Branch(string branchId, string conditionExpression, List<WorkflowStep>? steps, BuildState state)
@@ -322,7 +458,7 @@ public static class WorkflowXamlBuilder
         var inner = new StringBuilder();
         foreach (var child in step.Children ?? [])
             EmitStep(child, state, inner, 0);
-        inner.Append("<Persist />");
+        inner.Append(state.Persist);
 
         sb.Append(
             $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("Composite")}\" DisplayName=\"{DisplayName(step)}\">"
@@ -351,7 +487,7 @@ public static class WorkflowXamlBuilder
 
         activities.Append($"<mxswa:UpdateEntity DisplayName=\"{step.StepId}\" Entity=\"[CreatedEntities(&quot;{temp}&quot;)]\" EntityName=\"{entity}\" />");
         activities.Append($"<Assign x:TypeArguments=\"mxs:Entity\" To=\"[InputEntities(&quot;primaryEntity&quot;)]\" Value=\"[CreatedEntities(&quot;{temp}&quot;)]\" />");
-        activities.Append("<Persist />");
+        activities.Append(state.Persist);
 
         sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">{ctx.RenderSequenceVariables()}{activities}</Sequence>");
     }
@@ -359,6 +495,8 @@ public static class WorkflowXamlBuilder
     private static void EmitCreate(WorkflowStep step, BuildState state, StringBuilder sb)
     {
         var entity = step.Entity!;
+        state.RegisterCreatedRecord(step);
+
         var ctx = new StepScope(step.StepId!);
         var activities = new StringBuilder();
         var localParam = $"{step.StepId}_localParameter";
@@ -375,9 +513,43 @@ public static class WorkflowXamlBuilder
 
         activities.Append($"<mxswa:CreateEntity EntityId=\"{{x:Null}}\" DisplayName=\"{step.StepId}\" Entity=\"[CreatedEntities(&quot;{temp}&quot;)]\" EntityName=\"{entity}\" />");
         activities.Append($"<Assign x:TypeArguments=\"mxs:Entity\" To=\"[CreatedEntities(&quot;{localParam}&quot;)]\" Value=\"[CreatedEntities(&quot;{temp}&quot;)]\" />");
-        activities.Append("<Persist />");
+        activities.Append(state.Persist);
 
         sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">{ctx.RenderSequenceVariables()}{activities}</Sequence>");
+    }
+
+    /// <summary>
+    /// The platform's own "send e-mail" step: an <c>email</c> record is assembled like any create
+    /// step, but closed with <c>SendEmail</c> instead of <c>CreateEntity</c> — so it is sent, not just
+    /// stored.
+    /// </summary>
+    /// <remarks>
+    /// The recipient fields (<c>from</c>, <c>to</c>, <c>cc</c>, <c>bcc</c>) are party lists, so their
+    /// values carry <c>dataType: "PartyList"</c> and land in the XAML as <c>mxs:EntityCollection</c>.
+    /// Unlike a create step the record is not written back into <c>CreatedEntities</c> under its own
+    /// name; the temporary instance is all there is.
+    /// </remarks>
+    private static void EmitSendEmail(WorkflowStep step, BuildState state, StringBuilder sb)
+    {
+        var ctx = new StepScope(step.StepId!);
+        var activities = new StringBuilder();
+        var temp = $"{step.StepId}_localParameter#Temp";
+
+        activities.Append($"<Assign x:TypeArguments=\"mxs:Entity\" To=\"[CreatedEntities(&quot;{temp}&quot;)]\" Value=\"[New Entity(&quot;email&quot;)]\" />");
+
+        foreach (var assignment in step.Attributes ?? [])
+        {
+            var v = EmitValue(assignment.Value, ctx, activities, state, convertForCodeActivity: false);
+            activities.Append(SetEntityProperty(assignment.Attribute, $"[CreatedEntities(&quot;{temp}&quot;)]", "email", v,
+                XamlTypeFor(assignment.Value.DataType)));
+        }
+
+        activities.Append($"<mxswa:SendEmail EntityId=\"{{x:Null}}\" DisplayName=\"{step.StepId}\" Entity=\"[CreatedEntities(&quot;{temp}&quot;)]\" />");
+        activities.Append(state.Persist);
+
+        sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">"
+            + ctx.RenderSequenceVariables(StepLabel(step))
+            + $"{activities}</Sequence>");
     }
 
     private static void EmitAssign(WorkflowStep step, BuildState state, StringBuilder sb)
@@ -392,7 +564,7 @@ public static class WorkflowXamlBuilder
             + $"<mxswa:AssignEntity Owner=\"{owner}\" DisplayName=\"{step.StepId}\" "
             + "Entity=\"[InputEntities(&quot;primaryEntity&quot;)]\" EntityId=\"[InputEntities(&quot;primaryEntity&quot;).Id]\" "
             + $"EntityName=\"{entity}\" />"
-            + "<Persist /></Sequence>");
+            + state.Persist + "</Sequence>");
     }
 
     private static void EmitChangeStatus(WorkflowStep step, BuildState state, StringBuilder sb)
@@ -403,7 +575,7 @@ public static class WorkflowXamlBuilder
             + $"EntityName=\"{entity}\">"
             + OptionSetArgument("State", step.State ?? 0)
             + OptionSetArgument("Status", step.Status ?? 1)
-            + "</mxswa:SetState><Persist />");
+            + "</mxswa:SetState>" + state.Persist);
     }
 
     private static string OptionSetArgument(string property, int value) =>
@@ -427,7 +599,36 @@ public static class WorkflowXamlBuilder
             + $"Exception=\"[New Microsoft.Xrm.Sdk.InvalidPluginExecutionException(Microsoft.Xrm.Sdk.OperationStatus.{status})]\" "
             + $"Reason=\"[DirectCast({reasonVar}, System.String)]\" />");
 
-        sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">{ctx.RenderSequenceVariables()}{activities}</Sequence>");
+        sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">"
+            + ctx.RenderSequenceVariables(StepLabel(step))
+            + $"{activities}</Sequence>");
+    }
+
+    /// <summary>
+    /// The designer's step label: three variables carrying the localised caption of the step.
+    /// </summary>
+    /// <remarks>
+    /// Nothing references them — they exist so the designer can show the step's own wording. The label
+    /// id is derived from the step so a rebuild stays stable instead of inventing a new id each time.
+    /// Language 1031 (German) matches the environment this is authored in.
+    /// </remarks>
+    private static string StepLabel(WorkflowStep step)
+    {
+        if (string.IsNullOrWhiteSpace(step.Description))
+            return string.Empty;
+
+        var id = DeterministicGuid($"{step.StepId}|{step.Description}");
+
+        return $"<Variable x:TypeArguments=\"x:String\" Default=\"{id}\" Name=\"stepLabelLabelId\" />"
+             + $"<Variable x:TypeArguments=\"x:String\" Default=\"{Xml(step.Description!)}\" Name=\"stepLabelDescription\" />"
+             + "<Variable x:TypeArguments=\"x:Int32\" Default=\"1031\" Name=\"stepLabelLanguageCode\" />";
+    }
+
+    /// <summary>A stable id for a piece of text — the builder must stay deterministic.</summary>
+    private static Guid DeterministicGuid(string source)
+    {
+        var hash = System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(source));
+        return new Guid(hash);
     }
 
     private static void EmitCustomActivity(WorkflowStep step, BuildState state, StringBuilder sb)
@@ -468,13 +669,53 @@ public static class WorkflowXamlBuilder
                   + (arguments.Length > 0 ? $"<mxswa:ActivityReference.Arguments>{arguments}</mxswa:ActivityReference.Arguments>" : string.Empty)
                   + "</mxswa:ActivityReference>";
 
+        // Outputs whose record is read from later are loaded right here, as the designer does.
+        var loads = new StringBuilder();
+        foreach (var output in step.Outputs ?? [])
+        {
+            if (!state.OutputsToLoad.Contains(output))
+                continue;
+
+            var parameter = state.Activities.Parameter(step.AssemblyQualifiedName, output, "Output");
+            var entity = parameter?.EntityNames is { Count: > 0 } targets ? targets[0] : null;
+
+            loads.Append(LoadRecordOfOutput(step.StepId!, output, entity, state));
+        }
+
         // The value-preparation activities live in this composite, so their variables must be
         // declared here — not in a Sequence.Variables block that does not exist at this level.
         sb.Append($"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("Composite")}\" DisplayName=\"{step.StepId}\">"
             + "<mxswa:ActivityReference.Properties>"
             + ctx.RenderVariableCollection()
-            + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{prep}{inner}</sco:Collection>"
+            + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{prep}{inner}{loads}</sco:Collection>"
             + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>");
+    }
+
+    /// <summary>
+    /// Loads the record a code activity's output points at, so its fields become readable.
+    /// </summary>
+    /// <remarks>
+    /// The output is only a reference. The designer guards the load with an <c>If</c>: when the
+    /// reference is nothing, an empty entity is put in place, otherwise <c>RetrieveEntity</c> fetches
+    /// the record. Without the guard a missing reference would fail at run time.
+    /// </remarks>
+    private static string LoadRecordOfOutput(string stepId, string output, string? entity, BuildState state)
+    {
+        state.RegisterLoadedRecord(stepId, output);
+
+        var variable = $"{stepId}{output}_localParameter";
+        var key = $"{stepId}{output}_entity";
+        var entityName = entity ?? string.Empty;
+
+        return $"<If Condition=\"[Microsoft.VisualBasic.IsNothing({variable})]\">"
+             + "<If.Then>"
+             + $"<Assign x:TypeArguments=\"mxs:Entity\" To=\"[CreatedEntities(&quot;{Xml(key)}&quot;)]\" Value=\"[New Entity()]\" />"
+             + "</If.Then>"
+             + "<If.Else>"
+             + $"<mxswa:RetrieveEntity Attributes=\"{{x:Null}}\" Entity=\"[CreatedEntities(&quot;{Xml(key)}&quot;)]\" "
+             + $"EntityId=\"[DirectCast({variable}.Id, System.Guid)]\" EntityName=\"{Xml(entityName)}\" "
+             + "ThrowIfNotExists=\"False\" />"
+             + "</If.Else></If>";
     }
 
     private static void EmitChildWorkflow(WorkflowStep step, BuildState state, StringBuilder sb)
@@ -491,7 +732,7 @@ public static class WorkflowXamlBuilder
             + $"<mxswa:StartChildWorkflow DisplayName=\"{step.StepId}\" "
             + "EntityId=\"[InputEntities(&quot;primaryEntity&quot;).Id]\" "
             + $"EntityName=\"{entity}\" InputParameters=\"[{paramsVar}]\" WorkflowId=\"{childId}\" />"
-            + "</Sequence><Persist />");
+            + "</Sequence>" + state.Persist);
     }
 
     // ---------------------------------------------------------------- values
@@ -516,7 +757,7 @@ public static class WorkflowXamlBuilder
                 SplitFieldReference(value.Fields[0], state.PrimaryEntity);
             var operand = ctx.NextVariable("x:Object");
             sb.Append(GetEntityProperty(fieldAttribute,
-                EntityExpression(fieldEntity, state, value.Via),
+                EntityExpression(fieldEntity, state, value.Via, value.FromStep, value.FromStepOutput),
                 fieldEntity, operand, targetType: null));
             return operand;
         }
@@ -525,6 +766,17 @@ public static class WorkflowXamlBuilder
         {
             case WorkflowValueKind.Literal:
             {
+                // A fixed recipient is a record reference wrapped into a party list.
+                if (string.Equals(CrmPropertyType(value.DataType), "PartyList", StringComparison.Ordinal))
+                {
+                    var party = ctx.NextVariable("x:Object");
+                    var recipient = CreateEntityReferenceLiteral(value.Literal ?? string.Empty, ctx, sb);
+                    sb.Append(EvaluateExpression("CreateCrmType",
+                        $"[New Object() {{ Microsoft.Xrm.Sdk.Workflow.WorkflowPropertyType.PartyList, {recipient} }}]",
+                        "mxs:EntityCollection", party));
+                    return convertForCodeActivity ? Convert(party, typeArgument, ctx, sb) : party;
+                }
+
                 // A fixed record reference needs the two-stage form, not a plain CreateCrmType.
                 if (string.Equals(CrmPropertyType(value.DataType), "EntityReference", StringComparison.Ordinal))
                 {
@@ -549,7 +801,7 @@ public static class WorkflowXamlBuilder
                     var (entity, attribute) = SplitFieldReference(reference, state.PrimaryEntity);
                     var sourceVar = ctx.NextVariable("x:Object");
                     sb.Append(GetEntityProperty(attribute,
-                        EntityExpression(entity, state, value.Via),
+                        EntityExpression(entity, state, value.Via, value.FromStep, value.FromStepOutput),
                         entity, sourceVar, typeArgument));
                     sources.Add(sourceVar);
                 }
@@ -573,6 +825,41 @@ public static class WorkflowXamlBuilder
                 var result = ctx.NextVariable("x:Object");
                 sb.Append(EvaluateExpression("SelectFirstNonNull",
                     $"[New Object() {{ {variable} }}]", typeArgument, result));
+                return convertForCodeActivity ? Convert(result, typeArgument, ctx, sb) : result;
+            }
+
+            case WorkflowValueKind.Now:
+            {
+                // In a comparison the designer feeds RetrieveCurrentTime straight into the operand;
+                // as a value it goes through SelectFirstNonNull like any other source.
+                if (simplifyFieldRead)
+                {
+                    var operandVar = ctx.NextVariable("x:Object");
+                    sb.Append(RetrieveCurrentTime(operandVar));
+                    return operandVar;
+                }
+
+                var result = ctx.NextVariable("x:Object");
+                var now = ctx.NextVariable("x:Object");
+                sb.Append(RetrieveCurrentTime(now));
+                sb.Append(EvaluateExpression("SelectFirstNonNull",
+                    $"[New Object() {{ {now} }}]", typeArgument, result));
+                return convertForCodeActivity ? Convert(result, typeArgument, ctx, sb) : result;
+            }
+
+            case WorkflowValueKind.Concat:
+            {
+                // The result slot first, then one variable per part, joined with Add.
+                var result = ctx.NextVariable("x:Object");
+                var parts = new List<string>();
+
+                foreach (var part in value.Parts ?? [])
+                    parts.Add(EmitValue(part, ctx, sb, state, convertForCodeActivity: false));
+
+                // Add declares no target type — the parts determine it.
+                sb.Append(EvaluateExpression("Add",
+                    $"[New Object() {{ {string.Join(", ", parts)} }}]", typeArgument: null, result));
+
                 return convertForCodeActivity ? Convert(result, typeArgument, ctx, sb) : result;
             }
 
@@ -623,9 +910,36 @@ public static class WorkflowXamlBuilder
     private static string CreateCrmType(string literal, string? dataType, string typeArgument, string target)
     {
         var crmType = CrmPropertyType(dataType);
-        var parameters = $"[New Object() {{ Microsoft.Xrm.Sdk.Workflow.WorkflowPropertyType.{crmType}, &quot;{Xml(literal)}&quot;, &quot;{crmType}&quot; }}]";
+        var parameters = $"[New Object() {{ Microsoft.Xrm.Sdk.Workflow.WorkflowPropertyType.{crmType}, &quot;{Xml(MaskCommas(literal))}&quot;, &quot;{CrmTypeMarker(dataType)}&quot; }}]";
         return EvaluateExpression("CreateCrmType", parameters, typeArgument, target);
     }
+
+    /// <summary>
+    /// Escapes commas inside a constant as <c>&amp;#44;</c>, the way the designer does.
+    /// </summary>
+    /// <remarks>
+    /// The parameter array is split on commas before the string literals are honoured, so a plain
+    /// comma in a text — very common in German sentences — would break the argument list apart. The
+    /// parser reverses this, so a value survives a round trip unchanged.
+    /// </remarks>
+    internal static string MaskCommas(string literal) => literal.Replace(",", "&#44;");
+
+    /// <summary>
+    /// The third parameter of a CreateCrmType call — the CRM attribute type, which is not always the
+    /// name of the WorkflowPropertyType.
+    /// </summary>
+    /// <remarks>
+    /// An option set is marked <c>Picklist</c>, an id <c>UniqueIdentifier</c> and a record reference
+    /// <c>Lookup</c>. Getting this wrong makes Dataverse refuse the XAML outright with
+    /// <c>0x80045040</c> — it is not a cosmetic difference.
+    /// </remarks>
+    internal static string CrmTypeMarker(string? dataType) => (dataType ?? "String") switch
+    {
+        "OptionSetValue" or "OptionSet" or "Picklist" => "Picklist",
+        "Guid" or "UniqueIdentifier" => "UniqueIdentifier",
+        "EntityReference" or "Lookup" => "Lookup",
+        _ => CrmPropertyType(dataType)
+    };
 
     /// <summary>
     /// Emits a fixed record reference, written as "entity:guid" (optionally "entity:guid:label").
@@ -665,14 +979,38 @@ public static class WorkflowXamlBuilder
         return refVar;
     }
 
-    private static string EvaluateExpression(string op, string parameters, string typeArgument, string target) =>
+    /// <param name="typeArgument">
+    /// The target type, or null to write an explicit null — which is what the designer does for
+    /// <c>Add</c>, where the result type follows from the parts.
+    /// </param>
+    /// <summary>
+    /// "Now". Takes no parameters and declares no target type — both exactly as the designer writes
+    /// them; a declared type here is rejected with <c>0x80045040</c>. The empty array keeps its
+    /// whitespace, hence xml:space.
+    /// </summary>
+    private static string RetrieveCurrentTime(string target) =>
         $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateExpression")}\" DisplayName=\"EvaluateExpression\">"
         + "<mxswa:ActivityReference.Arguments>"
-        + $"<InArgument x:TypeArguments=\"x:String\" x:Key=\"ExpressionOperator\">{op}</InArgument>"
-        + $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">{parameters}</InArgument>"
-        + $"<InArgument x:TypeArguments=\"s:Type\" x:Key=\"TargetType\"><mxswa:ReferenceLiteral x:TypeArguments=\"s:Type\" Value=\"{typeArgument}\" /></InArgument>"
+        + "<InArgument x:TypeArguments=\"x:String\" x:Key=\"ExpressionOperator\">RetrieveCurrentTime</InArgument>"
+        + "<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\" xml:space=\"preserve\">[New Object() {  }]</InArgument>"
+        + "<InArgument x:TypeArguments=\"s:Type\" x:Key=\"TargetType\"><mxswa:ReferenceLiteral x:TypeArguments=\"s:Type\"><x:Null /></mxswa:ReferenceLiteral></InArgument>"
         + $"<OutArgument x:TypeArguments=\"x:Object\" x:Key=\"Result\">[{target}]</OutArgument>"
         + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>";
+
+    private static string EvaluateExpression(string op, string parameters, string? typeArgument, string target)
+    {
+        var targetType = typeArgument is null
+            ? "<mxswa:ReferenceLiteral x:TypeArguments=\"s:Type\"><x:Null /></mxswa:ReferenceLiteral>"
+            : $"<mxswa:ReferenceLiteral x:TypeArguments=\"s:Type\" Value=\"{typeArgument}\" />";
+
+        return $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateExpression")}\" DisplayName=\"EvaluateExpression\">"
+            + "<mxswa:ActivityReference.Arguments>"
+            + $"<InArgument x:TypeArguments=\"x:String\" x:Key=\"ExpressionOperator\">{op}</InArgument>"
+            + $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">{parameters}</InArgument>"
+            + $"<InArgument x:TypeArguments=\"s:Type\" x:Key=\"TargetType\">{targetType}</InArgument>"
+            + $"<OutArgument x:TypeArguments=\"x:Object\" x:Key=\"Result\">[{target}]</OutArgument>"
+            + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>";
+    }
 
     private static string GetEntityProperty(
         string attribute, string entityExpression, string entityName, string target, string? targetType)
@@ -703,8 +1041,18 @@ public static class WorkflowXamlBuilder
     /// <c>primaryEntity</c>; fields of a related record use the platform-provided key
     /// <c>related_&lt;lookupAttribute&gt;#&lt;entity&gt;</c> (one level only).
     /// </summary>
-    private static string EntityExpression(string? entity, BuildState state, string? via = null)
+    private static string EntityExpression(
+        string? entity, BuildState state, string? via = null,
+        string? fromStep = null, string? fromStepOutput = null)
     {
+        // A record this workflow created or loaded lives in CreatedEntities under a key derived from
+        // the step that produced it.
+        if (!string.IsNullOrWhiteSpace(fromStep))
+            return $"[CreatedEntities(&quot;{Xml(state.CreatedRecordKey(fromStep!, entity))}&quot;)]";
+
+        if (!string.IsNullOrWhiteSpace(fromStepOutput))
+            return $"[CreatedEntities(&quot;{Xml(state.LoadedRecordKey(fromStepOutput!))}&quot;)]";
+
         var isPrimary = entity is null
             || string.Equals(entity, state.PrimaryEntity, StringComparison.OrdinalIgnoreCase);
 
@@ -734,21 +1082,29 @@ public static class WorkflowXamlBuilder
         "OptionSetValue" or "OptionSet" or "Picklist" => "OptionSetValue",
         "EntityReference" or "Lookup" => "EntityReference",
         "Guid" or "UniqueIdentifier" => "Guid",
+        "PartyList" => "PartyList",
         _ => "String"
     };
 
+    /// <remarks>
+    /// <c>DateTime</c> maps to <c>s:DateTime</c>, not <c>x:DateTime</c>: the XAML 2006 namespace has no
+    /// DateTime primitive, so the type has to come from <c>System</c> — as the designer writes it.
+    /// A <c>x:DateTime</c> makes Dataverse reject the whole document with <c>0x80045040</c>.
+    /// </remarks>
     internal static string? XamlTypeFor(string? dataType) => (dataType ?? "String") switch
     {
         "String" => "x:String",
         "Integer" or "Int32" => "x:Int32",
         "Boolean" or "Bool" => "x:Boolean",
-        "DateTime" => "x:DateTime",
+        "DateTime" => "s:DateTime",
         "Decimal" => "x:Decimal",
         "Double" or "Float" => "x:Double",
         "Money" => "mxs:Money",
         "OptionSetValue" or "OptionSet" or "Picklist" => "mxs:OptionSetValue",
         "EntityReference" or "Lookup" => "mxs:EntityReference",
         "Guid" or "UniqueIdentifier" => "s:Guid",
+        // Recipient fields of an e-mail are collections, not single references.
+        "PartyList" => "mxs:EntityCollection",
         _ => "x:String"
     };
 
@@ -764,6 +1120,7 @@ public static class WorkflowXamlBuilder
         "OptionSetValue" or "OptionSet" or "Picklist" => "Microsoft.Xrm.Sdk.OptionSetValue",
         "EntityReference" or "Lookup" => "Microsoft.Xrm.Sdk.EntityReference",
         "Guid" or "UniqueIdentifier" => "System.Guid",
+        "PartyList" => "Microsoft.Xrm.Sdk.EntityCollection",
         _ => "System.String"
     };
 
@@ -779,8 +1136,9 @@ public static class WorkflowXamlBuilder
     internal static string? DefaultFor(string typeArgument) => typeArgument switch
     {
         "x:Boolean" => "False",
+        "mxs:EntityReference" => "[New EntityReference()]",
         "x:Int32" or "x:Int64" or "x:Decimal" or "x:Double" => "0",
-        "x:DateTime" or "s:Guid" => null,
+        "s:DateTime" or "s:Guid" => null,
         _ => "[Nothing]"
     };
 
@@ -819,12 +1177,78 @@ public static class WorkflowXamlBuilder
 
         public string PrimaryEntity { get; } = primaryEntity;
         public WorkflowActivityCatalog Activities { get; } = activities;
+
+        /// <summary>A real-time workflow gets no Persist — the platform rejects persistence points there.</summary>
+        public bool Realtime { get; init; }
+
+        public string Persist => Realtime ? string.Empty : "<Persist />";
         public bool UsesCrmActivities { get; set; }
         public bool UsesQueryTypes { get; set; }
         public List<(string Name, string TypeArgument, string? Default)> WorkflowVariables { get; } = [];
 
         /// <summary>Output parameter name -> variable holding it, filled while emitting.</summary>
         public Dictionary<string, string> OutputVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Step id and created entity of every createRecord step, for FromStep references.</summary>
+        private readonly Dictionary<string, string> _createdRecords = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Records that have to be loaded from a code activity's output, by "stepId.param".</summary>
+        private readonly Dictionary<string, string> _loadedRecords = new(StringComparer.OrdinalIgnoreCase);
+
+        public void RegisterCreatedRecord(WorkflowStep step)
+        {
+            // Addressable by step id and, because callers cannot know that id, by entity name.
+            _createdRecords[step.StepId!] = step.StepId!;
+            if (!string.IsNullOrWhiteSpace(step.Entity))
+                _createdRecords.TryAdd(step.Entity!, step.StepId!);
+        }
+
+        /// <summary>The CreatedEntities key of a record created earlier in this workflow.</summary>
+        /// <remarks>
+        /// A definition read from an existing workflow carries the step id it had there, and rebuilding
+        /// renumbers the steps — so that id usually no longer exists. The entity being read is the
+        /// reliable fallback: it identifies the create step regardless of numbering. Without it the key
+        /// would point at a record that was never created, which activation rejects with
+        /// <c>0x80040216</c>.
+        /// </remarks>
+        public string CreatedRecordKey(string reference, string? entity = null)
+        {
+            if (_createdRecords.TryGetValue(reference, out var stepId))
+                return $"{stepId}_localParameter";
+
+            if (!string.IsNullOrWhiteSpace(entity) && _createdRecords.TryGetValue(entity!, out var byEntity))
+                return $"{byEntity}_localParameter";
+
+            return $"{reference}_localParameter";
+        }
+
+        /// <summary>True when a 'fromStep' reference cannot be resolved to a create step.</summary>
+        public bool CanResolveCreatedRecord(string reference, string? entity) =>
+            _createdRecords.ContainsKey(reference)
+            || (!string.IsNullOrWhiteSpace(entity) && _createdRecords.ContainsKey(entity!));
+
+        /// <summary>
+        /// The CreatedEntities key of a record loaded for an activity output, and a note that it has
+        /// to be loaded. Accepts "stepId.param" as well as the bare parameter name.
+        /// </summary>
+        public string LoadedRecordKey(string reference)
+        {
+            var parameter = reference.Contains('.') ? reference.Split('.', 2)[1] : reference;
+
+            if (_loadedRecords.TryGetValue(parameter, out var key))
+                return key;
+
+            // Not emitted yet: derive from the reference so the name is stable either way.
+            var stepId = reference.Contains('.') ? reference.Split('.', 2)[0] : string.Empty;
+            return $"{stepId}{parameter}_entity";
+        }
+
+        /// <summary>Registers the record a code activity output is loaded into.</summary>
+        public void RegisterLoadedRecord(string stepId, string parameter) =>
+            _loadedRecords[parameter] = $"{stepId}{parameter}_entity";
+
+        /// <summary>Outputs that some value reads fields from, so they need a RetrieveEntity.</summary>
+        public HashSet<string> OutputsToLoad { get; } = new(StringComparer.OrdinalIgnoreCase);
         public IReadOnlyList<string> AssignedStepIds => _assigned;
 
         public void AssignId(WorkflowStep step)
@@ -833,17 +1257,43 @@ public static class WorkflowXamlBuilder
             _assigned.Add(step.StepId);
         }
 
-        public void AssignBranchId(WorkflowStep step, bool isElse)
+        private readonly Dictionary<WorkflowStep, List<WorkflowConditionBranch>> _shortForm = [];
+
+        /// <summary>The single branch standing in for 'conditions' + 'then', created once per step.</summary>
+        public List<WorkflowConditionBranch> ShortFormBranchOf(WorkflowStep step)
+        {
+            if (_shortForm.TryGetValue(step, out var cached))
+                return cached;
+
+            var branches = new List<WorkflowConditionBranch>
+            {
+                new()
+                {
+                    Conditions = step.Conditions ?? [],
+                    LogicalOperator = step.LogicalOperator,
+                    Steps = step.Then
+                }
+            };
+
+            _shortForm[step] = branches;
+            return branches;
+        }
+
+        public void AssignBranchId(WorkflowConditionBranch branch)
+        {
+            branch.BranchId = $"ConditionBranchStep{++_counter}";
+            _assigned.Add(branch.BranchId);
+        }
+
+        public void AssignElseBranchId(WorkflowStep step)
         {
             var id = $"ConditionBranchStep{++_counter}";
-            if (isElse) _elseBranchIds[step] = id; else _branchIds[step] = id;
+            _elseBranchIds[step] = id;
             _assigned.Add(id);
         }
 
-        public string? BranchIdOf(WorkflowStep step, bool isElse) =>
-            isElse
-                ? _elseBranchIds.TryGetValue(step, out var e) ? e : null
-                : _branchIds.TryGetValue(step, out var b) ? b : null;
+        public string? ElseBranchIdOf(WorkflowStep step) =>
+            _elseBranchIds.TryGetValue(step, out var e) ? e : null;
 
         public void DeclareWorkflowVariable(string name, string typeArgument)
         {
@@ -881,11 +1331,18 @@ public static class WorkflowXamlBuilder
             _declarations.Add($"<Variable x:TypeArguments=\"{typeArgument}\"{defaultAttr} Name=\"{name}\" />");
         }
 
-        public string RenderSequenceVariables() =>
-            _declarations.Count == 0 ? string.Empty
-                : $"<Sequence.Variables>{string.Concat(_declarations)}</Sequence.Variables>";
+        /// <param name="extra">Further declarations to append, e.g. the designer's step label.</param>
+        public string RenderSequenceVariables(string extra = "") =>
+            _declarations.Count == 0 && extra.Length == 0
+                ? string.Empty
+                : $"<Sequence.Variables>{string.Concat(_declarations)}{extra}</Sequence.Variables>";
 
         public string RenderVariableCollection() =>
-            $"<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\">{string.Concat(_declarations)}</sco:Collection>";
+            _declarations.Count == 0
+                ? "<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\" />"
+                : $"<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\">{string.Concat(_declarations)}</sco:Collection>";
+
+        /// <summary>Just the declarations, for a collection shared by several scopes.</summary>
+        public string RenderDeclarations() => string.Concat(_declarations);
     }
 }

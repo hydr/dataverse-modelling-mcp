@@ -149,7 +149,35 @@ Der Typ der Variablen ist der **Parametertyp**, nicht `x:String` — bei `CheckU
 `x:Boolean` mit `Default="False"`. Der Builder liest ihn aus den Metadaten; ein hart gesetztes
 `x:String` lehnt die Aktivierung als `InvalidPropertyBag` ab.
 
-## 4. CRM-Typen der Workflow-Tools-Parameter
+## 4. Felder des Datensatzes lesen, den eine Aktivität zurückgibt
+
+Aktivitäten wie `Class.GetInitiatingUser`, `RetrieveUserBUDefaultTeam` oder `Class.PickFromQueue`
+liefern eine **Referenz**, keinen Datensatz. Um an dessen Felder zu kommen, wird der Datensatz
+geladen — im Definitionsmodell genügt dafür `fromStepOutput` am Wert:
+
+```json
+{ "kind": "field", "dataType": "String",
+  "fields": ["systemuser.internalemailaddress"],
+  "fromStepOutput": "InitiatingUser" }
+```
+
+Der Server erzeugt das Laden selbst (ein `If` um `RetrieveEntity`, wie der Designer) und legt den
+Datensatz unter `CreatedEntities("<StepId><Parameter>_entity")` ab. Man braucht also **keine** zweite
+Aktivität und keinen untergeordneten Workflow, um z. B. Name, Telefon und E-Mail des ausführenden
+Benutzers zu verwenden.
+
+Dasselbe Feld funktioniert in Bedingungen — typisch als Wächter davor:
+
+```json
+{ "fromStepOutput": "InitiatingUser", "entity": "systemuser",
+  "attribute": "internalemailaddress", "operator": "Null" }
+```
+
+Für einen Datensatz, den der Workflow selbst **anlegt** (`createRecord`), heißt das Gegenstück
+`fromStep` — mit der Entität als Angabe, z. B. `"fromStep": "email"`, um die `activityid` der eben
+erzeugten E-Mail an eine Aktivität wie `Class.SendEmail` zu übergeben.
+
+## 5. CRM-Typen der Workflow-Tools-Parameter
 
 Die Aktivitäten verwenden CRM-eigene Parametertypen, nicht die .NET-Typen:
 

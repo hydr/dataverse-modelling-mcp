@@ -146,6 +146,213 @@ public sealed class WorkflowXamlParserTests
     }
 
     [Test]
+    public void Roundtrip_ConditionChain_KeepsEachCaseWithItsOwnComparisons()
+    {
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "invoice",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    Description = "Voraussetzungen",
+                    Branches =
+                    [
+                        new WorkflowConditionBranch
+                        {
+                            Conditions = [new WorkflowCondition { Attribute = "dc_invoicenumber", Operator = "Null" }],
+                            Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
+                        },
+                        new WorkflowConditionBranch
+                        {
+                            LogicalOperator = "Or",
+                            Conditions =
+                            [
+                                new WorkflowCondition { Attribute = "dc_reminderdate", Operator = "NotNull" },
+                                new WorkflowCondition { Attribute = "emailaddress", Operator = "Null" }
+                            ],
+                            Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
+                        }
+                    ],
+                    Else =
+                    [
+                        new WorkflowStep
+                        {
+                            Kind = WorkflowStepKind.UpdateRecord,
+                            Attributes =
+                            [
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "description",
+                                    Value = new WorkflowValue { Literal = "ok" }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var xaml = WorkflowXamlBuilder.Build(definition).Xaml;
+        var parsed = WorkflowXamlParser.Parse(xaml, "invoice");
+        var step = parsed.Definition.Steps[0];
+
+        Assert.That(parsed.FullyUnderstood, Is.True,
+            "unrecognised: " + string.Join(", ", parsed.Unrecognised));
+        Assert.That(step.Branches, Has.Count.EqualTo(2));
+
+        // Each case must keep exactly its own comparisons — mixing them up was the old defect.
+        Assert.That(step.Branches![0].Conditions.Select(c => c.Attribute),
+            Is.EqualTo(new[] { "dc_invoicenumber" }));
+        Assert.That(step.Branches[1].Conditions.Select(c => c.Attribute),
+            Is.EqualTo(new[] { "dc_reminderdate", "emailaddress" }));
+        Assert.That(step.Branches[1].LogicalOperator, Is.EqualTo("Or"));
+        Assert.That(step.Branches[0].BranchId, Is.EqualTo("ConditionBranchStep2"));
+        Assert.That(step.Else, Has.Count.EqualTo(1));
+
+        // And the whole chain must rebuild byte for byte.
+        var rebuilt = WorkflowXamlBuilder.Build(
+            parsed.Definition with { PrimaryEntity = "invoice" }).Xaml;
+        Assert.That(rebuilt, Is.EqualTo(xaml));
+    }
+
+    /// <summary>
+    /// The value shapes a real workflow needs beyond a plain constant: "now", a concatenation, and a
+    /// set of constants for In/NotIn.
+    /// </summary>
+    [Test]
+    public void Roundtrip_NowConcatAndValueSet_SurviveTheReading()
+    {
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "invoice",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    Conditions =
+                    [
+                        new WorkflowCondition
+                        {
+                            Attribute = "dc_invoicestatus",
+                            Operator = "In",
+                            Value = new WorkflowValue
+                            {
+                                DataType = "OptionSetValue",
+                                Literals = ["772600012", "805230003"]
+                            }
+                        },
+                        new WorkflowCondition
+                        {
+                            Attribute = "dc_payduedate",
+                            Operator = "OnOrAfter",
+                            Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
+                        }
+                    ],
+                    Then =
+                    [
+                        new WorkflowStep
+                        {
+                            Kind = WorkflowStepKind.UpdateRecord,
+                            Attributes =
+                            [
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "description",
+                                    Value = new WorkflowValue
+                                    {
+                                        Kind = WorkflowValueKind.Concat,
+                                        DataType = "String",
+                                        Parts =
+                                        [
+                                            new WorkflowValue { Literal = "Zahlungserinnerung " },
+                                            new WorkflowValue
+                                            {
+                                                Kind = WorkflowValueKind.Field,
+                                                Fields = ["invoice.dc_invoicenumber"]
+                                            }
+                                        ]
+                                    }
+                                },
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "dc_reminderdate",
+                                    Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var xaml = WorkflowXamlBuilder.Build(definition).Xaml;
+        var parsed = WorkflowXamlParser.Parse(xaml, "invoice");
+        var step = parsed.Definition.Steps[0];
+
+        Assert.That(parsed.FullyUnderstood, Is.True,
+            "unrecognised: " + string.Join(", ", parsed.Unrecognised));
+
+        // All constants of the set, not just the first one.
+        Assert.That(step.Conditions![0].Value!.Literals,
+            Is.EqualTo(new[] { "772600012", "805230003" }));
+        Assert.That(step.Conditions[1].Value!.Kind, Is.EqualTo(WorkflowValueKind.Now));
+
+        var assignments = step.Then![0].Attributes!;
+        var concat = assignments[0].Value;
+        Assert.That(concat.Kind, Is.EqualTo(WorkflowValueKind.Concat));
+        Assert.That(concat.Parts, Has.Count.EqualTo(2));
+        Assert.That(concat.Parts![0].Literal, Is.EqualTo("Zahlungserinnerung "));
+        Assert.That(concat.Parts[1].Fields, Is.EqualTo(new[] { "invoice.dc_invoicenumber" }));
+        Assert.That(assignments[1].Value.Kind, Is.EqualTo(WorkflowValueKind.Now));
+
+        var rebuilt = WorkflowXamlBuilder.Build(parsed.Definition with { PrimaryEntity = "invoice" }).Xaml;
+        Assert.That(rebuilt, Is.EqualTo(xaml));
+    }
+
+    [Test]
+    public void Roundtrip_SingleCase_StaysInTheShortForm()
+    {
+        // One case must keep reading as conditions/then, so simple definitions are unaffected.
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "lead",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.Condition,
+                    Conditions = [new WorkflowCondition { Attribute = "lastname", Operator = "NotNull" }],
+                    Then =
+                    [
+                        new WorkflowStep
+                        {
+                            Kind = WorkflowStepKind.UpdateRecord,
+                            Attributes =
+                            [
+                                new WorkflowAttributeAssignment
+                                {
+                                    Attribute = "jobtitle",
+                                    Value = new WorkflowValue { Literal = "Chef" }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var parsed = WorkflowXamlParser.Parse(WorkflowXamlBuilder.Build(definition).Xaml, "lead");
+        var step = parsed.Definition.Steps[0];
+
+        Assert.That(step.Branches, Is.Null);
+        Assert.That(step.Conditions, Has.Count.EqualTo(1));
+        Assert.That(step.Then, Has.Count.EqualTo(1));
+    }
+
+    [Test]
     public void Roundtrip_RelatedReadAndStepOutputCondition_SurviveTheReading()
     {
         // Both were invisible to the parser before: a related read came back without its 'via', and a
@@ -224,16 +431,133 @@ public sealed class WorkflowXamlParserTests
         Assert.That(value.Fields, Is.EqualTo(new[] { "opportunity.sample_salesma" }));
         Assert.That(value.Via, Is.EqualTo("opportunityid"));
 
-        // The inputs of the code activity are NOT reconstructed, and the reading says so — otherwise
-        // a rewrite would turn "[DirectCast(…)]" into a string literal.
-        Assert.That(parsed.FullyUnderstood, Is.False);
-        Assert.That(string.Join(" ", parsed.Unrecognised), Does.Contain("Team"));
+        // The fixed record reference of the code activity comes back as "entity:guid", not as the
+        // raw "[DirectCast(…)]" expression it is in the XAML.
+        var activity = parsed.Definition.Steps[0];
+        Assert.That(activity.Inputs!["Team"].Kind, Is.EqualTo(WorkflowValueKind.Literal));
+        Assert.That(activity.Inputs["Team"].DataType, Is.EqualTo("EntityReference"));
+        Assert.That(activity.Inputs["Team"].Literal,
+            Is.EqualTo("team:a0000001-0000-4000-8000-000000000001"));
+        Assert.That(activity.Outputs, Is.EqualTo(new[] { "isUserInTeam" }));
 
-        // Belt and braces: even if that warning were ignored, validation refuses the rewrite.
+        Assert.That(parsed.FullyUnderstood, Is.True,
+            "unrecognised: " + string.Join(", ", parsed.Unrecognised));
+
+        // The reading is now good enough to write back unchanged.
         var again = WorkflowDefinitionValidator.Validate(
             parsed.Definition with { PrimaryEntity = "salesorder" }, CustomActivityFixture.Catalog());
-        Assert.That(again.CanSave, Is.False);
-        Assert.That(again.Issues.Select(i => i.Code), Does.Contain("WF088"));
+        Assert.That(again.CanSave, Is.True,
+            "actual: " + string.Join(", ", again.Issues.Select(i => $"{i.Code} @ {i.Path}: {i.Problem}")));
+    }
+
+    /// <summary>
+    /// Every shape a code activity's input can take must survive the round trip, because the XAML
+    /// stores none of them as a value — only a reference into a chain of preparation activities.
+    /// </summary>
+    [Test]
+    public void Roundtrip_CustomActivityInputs_AreReducedBackToValues()
+    {
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "salesorder",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.CustomActivity,
+                    AssemblyQualifiedName = CustomActivityFixture.CheckUserInTeam,
+                    Inputs = new Dictionary<string, WorkflowValue>
+                    {
+                        ["Team"] = new()
+                        {
+                            DataType = "EntityReference",
+                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                        },
+                        ["User"] = new()
+                        {
+                            Kind = WorkflowValueKind.Field,
+                            DataType = "EntityReference",
+                            Fields = ["account.ownerid"],
+                            Via = "accountid"
+                        }
+                    },
+                    Outputs = ["isUserInTeam"]
+                }
+            ]
+        };
+
+        var xaml = WorkflowXamlBuilder.Build(definition, null, CustomActivityFixture.Catalog()).Xaml;
+        var parsed = WorkflowXamlParser.Parse(xaml, "salesorder");
+        var inputs = parsed.Definition.Steps[0].Inputs!;
+
+        Assert.That(inputs["Team"].Literal, Is.EqualTo("team:a0000001-0000-4000-8000-000000000001"));
+
+        // The related read keeps both its field reference and the lookup it travels through.
+        Assert.That(inputs["User"].Kind, Is.EqualTo(WorkflowValueKind.Field));
+        Assert.That(inputs["User"].Fields, Is.EqualTo(new[] { "account.ownerid" }));
+        Assert.That(inputs["User"].Via, Is.EqualTo("accountid"));
+        Assert.That(inputs["User"].DataType, Is.EqualTo("EntityReference"));
+
+        Assert.That(parsed.FullyUnderstood, Is.True,
+            "unrecognised: " + string.Join(", ", parsed.Unrecognised));
+
+        // Rebuilding from the reading must produce the same XAML — the real test of a lossless read.
+        var rebuilt = WorkflowXamlBuilder.Build(
+            parsed.Definition with { PrimaryEntity = "salesorder" }, null,
+            CustomActivityFixture.Catalog()).Xaml;
+        Assert.That(rebuilt, Is.EqualTo(xaml));
+    }
+
+    [Test]
+    public void Roundtrip_StringLiteralAndStepOutputAsInput_AreReducedBackToValues()
+    {
+        var definition = new WorkflowDefinition
+        {
+            PrimaryEntity = "salesorder",
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.CustomActivity,
+                    AssemblyQualifiedName = CustomActivityFixture.CheckUserInTeam,
+                    Inputs = new Dictionary<string, WorkflowValue>
+                    {
+                        ["Team"] = new()
+                        {
+                            DataType = "EntityReference",
+                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                        }
+                    },
+                    Outputs = ["isUserInTeam"]
+                },
+                // A second activity fed by the first one's output and by a plain constant.
+                new WorkflowStep
+                {
+                    Kind = WorkflowStepKind.CustomActivity,
+                    AssemblyQualifiedName = "A.B, A, Version=1.0.0.0, Culture=neutral, PublicKeyToken=abc",
+                    Inputs = new Dictionary<string, WorkflowValue>
+                    {
+                        ["Flag"] = new()
+                        {
+                            Kind = WorkflowValueKind.StepOutput,
+                            DataType = "Boolean",
+                            StepOutput = "isUserInTeam"
+                        },
+                        ["Text"] = new() { DataType = "String", Literal = "Salesteam, München" }
+                    }
+                }
+            ]
+        };
+
+        var xaml = WorkflowXamlBuilder.Build(definition, null, CustomActivityFixture.Catalog()).Xaml;
+        var inputs = WorkflowXamlParser.Parse(xaml, "salesorder").Definition.Steps[1].Inputs!;
+
+        Assert.That(inputs["Flag"].Kind, Is.EqualTo(WorkflowValueKind.StepOutput));
+        Assert.That(inputs["Flag"].StepOutput, Is.EqualTo("CustomActivityStep1.isUserInTeam"));
+
+        // A comma inside the constant must not be mistaken for an argument separator.
+        Assert.That(inputs["Text"].Kind, Is.EqualTo(WorkflowValueKind.Literal));
+        Assert.That(inputs["Text"].Literal, Is.EqualTo("Salesteam, München"));
     }
 
     [Test]

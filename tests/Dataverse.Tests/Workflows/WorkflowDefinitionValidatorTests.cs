@@ -65,7 +65,8 @@ public sealed class WorkflowDefinitionValidatorTests
     [Test]
     public void Validate_ReadOnlyStepKind_ReportsWF012()
     {
-        var result = Validate(new WorkflowStep { Kind = WorkflowStepKind.SendEmail });
+        // performAction stays read-only; sendEmail became writable once its format was verified.
+        var result = Validate(new WorkflowStep { Kind = WorkflowStepKind.PerformAction });
 
         Assert.That(result.CanSave, Is.False);
         AssertHasCode(result, "WF012");

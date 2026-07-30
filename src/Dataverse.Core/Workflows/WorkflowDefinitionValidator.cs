@@ -41,20 +41,39 @@ public sealed record WorkflowValidationResult(
 /// </remarks>
 public static class WorkflowDefinitionValidator
 {
+    /// <remarks>
+    /// The date operators matter as much as the comparison ones: a real workflow uses <c>OnOrAfter</c>
+    /// against "now" for a due date, and rejecting those would block workflows the designer accepts.
+    /// Names are the members of <c>Microsoft.Xrm.Sdk.Query.ConditionOperator</c>.
+    /// </remarks>
     private static readonly string[] KnownOperators =
     [
         "Equal", "NotEqual", "Contains", "DoesNotContain", "BeginsWith", "DoesNotBeginWith",
         "EndsWith", "DoesNotEndWith", "NotNull", "Null", "GreaterThan", "GreaterEqual",
-        "LessThan", "LessEqual", "In", "NotIn"
+        "LessThan", "LessEqual", "In", "NotIn",
+        // Date and range operators.
+        "On", "OnOrAfter", "OnOrBefore", "Between", "NotBetween",
+        "Yesterday", "Today", "Tomorrow",
+        "Last7Days", "Next7Days", "LastWeek", "ThisWeek", "NextWeek",
+        "LastMonth", "ThisMonth", "NextMonth", "LastYear", "ThisYear", "NextYear"
     ];
 
-    private static readonly string[] ValuelessOperators = ["Null", "NotNull"];
+    /// <summary>Operators that compare against nothing, so a value would be ignored.</summary>
+    private static readonly string[] ValuelessOperators =
+    [
+        "Null", "NotNull",
+        "Yesterday", "Today", "Tomorrow",
+        "Last7Days", "Next7Days", "LastWeek", "ThisWeek", "NextWeek",
+        "LastMonth", "ThisMonth", "NextMonth", "LastYear", "ThisYear", "NextYear"
+    ];
 
     private static readonly string[] KnownDataTypes =
     [
         "String", "Integer", "Int32", "Boolean", "Bool", "DateTime", "Decimal", "Double", "Float",
         "Money", "OptionSetValue", "OptionSet", "Picklist", "EntityReference", "Lookup", "Guid",
-        "UniqueIdentifier"
+        "UniqueIdentifier",
+        // The recipient fields of an e-mail; a collection rather than a single reference.
+        "PartyList"
     ];
 
     /// <param name="activities">
@@ -258,7 +277,54 @@ public static class WorkflowDefinitionValidator
         List<WorkflowValidationIssue> issues, List<string> availableOutputs, bool insideStage,
         WorkflowActivityCatalog activities)
     {
-        if (step.Conditions is null || step.Conditions.Count == 0)
+        if (step.Branches is { Count: > 0 } && step.Conditions is { Count: > 0 })
+            issues.Add(new WorkflowValidationIssue("error", "WF140", path,
+                "The step uses both 'branches' and 'conditions'; those are two ways to say the same " +
+                "thing and cannot be combined.",
+                "Keep 'branches' for an if/else-if chain and move the 'conditions'/'then' pair into it " +
+                "as its first branch, or drop 'branches'."));
+
+        // Both forms are validated through the same path: the short form is one branch.
+        var branches = step.Branches is { Count: > 0 }
+            ? step.Branches
+            :
+            [
+                new WorkflowConditionBranch
+                {
+                    Conditions = step.Conditions ?? [],
+                    LogicalOperator = step.LogicalOperator,
+                    Steps = step.Then
+                }
+            ];
+
+        for (var b = 0; b < branches.Count; b++)
+        {
+            var branch = branches[b];
+            var isChain = step.Branches is { Count: > 0 };
+            var branchPath = isChain ? $"{path}.branches[{b}]" : path;
+            ValidateBranch(branch, branchPath, isChain ? "steps" : "then", definition, issues,
+                availableOutputs, insideStage, activities);
+        }
+
+        var hasAnyBranchSteps = branches.Any(br => br.Steps is { Count: > 0 });
+        var hasElse = step.Else is { Count: > 0 };
+
+        if (!hasAnyBranchSteps && !hasElse)
+            issues.Add(new WorkflowValidationIssue("error", "WF075", path,
+                "The condition has neither a 'then' nor an 'else' branch, so it does nothing.",
+                "Add steps to 'then' (executed when the condition holds) or to 'else'."));
+
+        if (hasElse)
+            ValidateSteps(step.Else!, $"{path}.else", definition, issues, availableOutputs, insideStage,
+                activities);
+    }
+
+    private static void ValidateBranch(
+        WorkflowConditionBranch branch, string path, string stepsProperty, WorkflowDefinition definition,
+        List<WorkflowValidationIssue> issues, List<string> availableOutputs, bool insideStage,
+        WorkflowActivityCatalog activities)
+    {
+        if (branch.Conditions.Count == 0)
         {
             issues.Add(new WorkflowValidationIssue("error", "WF070", $"{path}.conditions",
                 "The condition has no comparisons.",
@@ -266,9 +332,9 @@ public static class WorkflowDefinitionValidator
         }
         else
         {
-            for (var i = 0; i < step.Conditions.Count; i++)
+            for (var i = 0; i < branch.Conditions.Count; i++)
             {
-                var condition = step.Conditions[i];
+                var condition = branch.Conditions[i];
                 var conditionPath = $"{path}.conditions[{i}]";
 
                 var comparesOutput = !string.IsNullOrWhiteSpace(condition.StepOutput);
@@ -293,15 +359,20 @@ public static class WorkflowDefinitionValidator
                             "Add it to that step's 'outputs' list and place the step before this condition."));
                 }
 
-                // Reading a related record needs the lookup attribute that leads there.
+                // Reading another record needs a stated way to get there: a lookup of the primary
+                // record, a record an earlier step created, or one loaded for an activity output.
                 if (condition.Entity is { } conditionEntity
                     && !string.Equals(conditionEntity, definition.PrimaryEntity, StringComparison.OrdinalIgnoreCase)
-                    && string.IsNullOrWhiteSpace(condition.Via))
+                    && string.IsNullOrWhiteSpace(condition.Via)
+                    && string.IsNullOrWhiteSpace(condition.FromStep)
+                    && string.IsNullOrWhiteSpace(condition.FromStepOutput))
                     issues.Add(new WorkflowValidationIssue("error", "WF079", $"{conditionPath}.via",
                         $"The comparison reads '{conditionEntity}', which is not the primary entity, " +
                         "but does not say how to get there.",
                         $"Add 'via' with the lookup attribute of {definition.PrimaryEntity} that points " +
-                        $"to {conditionEntity}, e.g. \"opportunityid\"."));
+                        $"to {conditionEntity} (e.g. \"opportunityid\"), or name where the record comes " +
+                        "from with 'fromStep' (a createRecord step) or 'fromStepOutput' (a code " +
+                        "activity's output)."));
 
                 var op = WorkflowXamlBuilder.MapOperator(condition.Operator ?? string.Empty);
                 if (!KnownOperators.Contains(op))
@@ -324,23 +395,12 @@ public static class WorkflowDefinitionValidator
             }
         }
 
-        var hasThen = step.Then is { Count: > 0 };
-        var hasElse = step.Else is { Count: > 0 };
+        if (branch.Steps is { Count: > 0 })
+            ValidateSteps(branch.Steps, $"{path}.{stepsProperty}", definition, issues, availableOutputs,
+                insideStage, activities);
 
-        if (!hasThen && !hasElse)
-            issues.Add(new WorkflowValidationIssue("error", "WF075", path,
-                "The condition has neither a 'then' nor an 'else' branch, so it does nothing.",
-                "Add steps to 'then' (executed when the condition holds) or to 'else'."));
-
-        if (hasThen)
-            ValidateSteps(step.Then!, $"{path}.then", definition, issues, availableOutputs, insideStage,
-                activities);
-        if (hasElse)
-            ValidateSteps(step.Else!, $"{path}.else", definition, issues, availableOutputs, insideStage,
-                activities);
-
-        if (step.Conditions is { Count: > 1 }
-            && step.LogicalOperator is { } logical
+        if (branch.Conditions.Count > 1
+            && branch.LogicalOperator is { } logical
             && logical is not ("And" or "Or" or "and" or "or"))
             issues.Add(new WorkflowValidationIssue("error", "WF076", $"{path}.logicalOperator",
                 $"Unknown logical operator '{logical}'.",
@@ -571,14 +631,47 @@ public static class WorkflowDefinitionValidator
         switch (value.Kind)
         {
             case WorkflowValueKind.Literal:
-                if (value.Literal is null)
+                if (value.Literals is { Count: > 0 })
+                {
+                    // A set of constants, as In / NotIn / Between compare against.
+                    for (var i = 0; i < value.Literals.Count; i++)
+                        if (value.Literals[i] is null)
+                            issues.Add(new WorkflowValidationIssue("error", "WF112", $"{path}.literals[{i}]",
+                                "A constant of the set is null.",
+                                "Remove the entry or give it a value."));
+                }
+                else if (value.Literal is null)
+                {
                     issues.Add(new WorkflowValidationIssue("warning", "WF110", $"{path}.literal",
                         "The literal is null and will be written as an empty string.",
                         "Set 'literal' explicitly, or use a field value instead."));
+                }
+
                 if (value.Fields is { Count: > 0 })
                     issues.Add(new WorkflowValidationIssue("warning", "WF111", $"{path}.fields",
                         "'fields' is ignored because kind is 'literal'.",
                         "Set kind to \"field\" if you meant to read from a field."));
+                break;
+
+            case WorkflowValueKind.Now:
+                if (value.Literal is not null || value.Fields is { Count: > 0 })
+                    issues.Add(new WorkflowValidationIssue("warning", "WF113", path,
+                        "'literal' and 'fields' are ignored because kind is 'now'.",
+                        "Remove them; 'now' is evaluated when the workflow runs."));
+                break;
+
+            case WorkflowValueKind.Concat:
+                if (value.Parts is null || value.Parts.Count == 0)
+                {
+                    issues.Add(new WorkflowValidationIssue("error", "WF114", $"{path}.parts",
+                        "A concat value needs the parts to join.",
+                        "Add entries to 'parts'; each may be a literal, a field, 'now' or a stepOutput."));
+                }
+                else
+                {
+                    for (var i = 0; i < value.Parts.Count; i++)
+                        ValidateValue(value.Parts[i], $"{path}.parts[{i}]", definition, issues, availableOutputs);
+                }
                 break;
 
             case WorkflowValueKind.Field:
@@ -605,13 +698,17 @@ public static class WorkflowDefinitionValidator
                             // Related records are readable one level deep, but only when 'via' names
                             // the lookup attribute leading there.
                             if (!string.Equals(entity, definition.PrimaryEntity, StringComparison.OrdinalIgnoreCase)
-                                && string.IsNullOrWhiteSpace(value.Via))
+                                && string.IsNullOrWhiteSpace(value.Via)
+                                && string.IsNullOrWhiteSpace(value.FromStep)
+                                && string.IsNullOrWhiteSpace(value.FromStepOutput))
                                 issues.Add(new WorkflowValidationIssue("error", "WF122", $"{path}.fields[{i}]",
                                     $"'{reference}' points at '{entity}', which is not the primary entity " +
-                                    $"('{definition.PrimaryEntity}'), but 'via' is missing.",
+                                    $"('{definition.PrimaryEntity}'), and neither 'via', 'fromStep' nor " +
+                                    "'fromStepOutput' says where that record comes from.",
                                     $"Add 'via' with the lookup attribute of {definition.PrimaryEntity} that " +
-                                    $"points to {entity} (e.g. \"opportunityid\"). Only one level of " +
-                                    "traversal is possible; for deeper paths use a child workflow."));
+                                    $"points to {entity} (e.g. \"opportunityid\") — one level only. For a " +
+                                    "record this workflow created use 'fromStep', for one behind a code " +
+                                    "activity's output 'fromStepOutput'."));
                         }
                     }
                 }

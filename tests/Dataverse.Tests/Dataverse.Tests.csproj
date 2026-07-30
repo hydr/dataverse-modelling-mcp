@@ -21,4 +21,9 @@
     <ProjectReference Include="..\..\src\Dataverse.Core\Dataverse.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Designer-authored XAML, read by DesignerXamlReadingTests. -->
+    <Content Include="Workflows\Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

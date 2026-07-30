@@ -1003,11 +1003,14 @@ public static class WorkflowXamlParser
         if (string.IsNullOrWhiteSpace(parameters))
             return null;
 
-        var match = Regex.Match(parameters, "WorkflowPropertyType\\.\\w+\\s*,\\s*\"([^\"]*)\"");
+        // A doubled quote is an escaped one inside the literal, so it must not end the match.
+        var match = Regex.Match(parameters, "WorkflowPropertyType\\.\\w+\\s*,\\s*\"((?:[^\"]|\"\")*)\"");
+        if (!match.Success)
+            return null;
 
-        // Commas are escaped inside the parameter array (see WorkflowXamlBuilder.MaskCommas);
-        // undo that so the caller gets the plain text and a round trip stays stable.
-        return match.Success ? match.Groups[1].Value.Replace("&#44;", ",") : null;
+        // Undo both escapes (see WorkflowXamlBuilder.MaskCommas) so the caller gets the plain text
+        // and a round trip stays stable.
+        return match.Groups[1].Value.Replace("&#44;", ",").Replace("\"\"", "\"");
     }
 
     private static string? FindLiteral(XElement scope) =>

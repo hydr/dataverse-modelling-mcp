@@ -29,7 +29,13 @@ public sealed class DesignerXamlFixtureTests : IntegrationTestBase
         ("lead-mail-owner.xaml", "fd408bb0-4eb0-49f0-9100-a62058fd84b0",
             "lead assignment: e-mail built from createRecord plus EmailToTeam and Class.SendEmail"),
         ("lead-mail-project-participant.xaml", "0d70b681-4a33-4343-ac9b-328b520dd3ec",
-            "the platform's own SendEmail step — the construct this server cannot write yet")
+            "the platform's own SendEmail step, with party lists"),
+        ("dunning-1.xaml", "cba97c10-3a03-4f52-9b64-cb58e4d99f2b",
+            "EXAMPLE-1: first dunning letter, sibling of the payment reminder"),
+        ("dunning-2.xaml", "a0000003-0000-4000-8000-000000000003",
+            "EXAMPLE-1: second dunning letter — a draft, not activated"),
+        ("dunning-1-manual.xaml", "5c98979e-dd64-f111-ab0d-7ced8d4550b3",
+            "EXAMPLE-1: manual variant of the first dunning letter, activated but not named in the ticket")
     ];
 
     [Test]

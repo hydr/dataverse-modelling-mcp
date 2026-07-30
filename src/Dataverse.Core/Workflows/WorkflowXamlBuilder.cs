@@ -915,14 +915,20 @@ public static class WorkflowXamlBuilder
     }
 
     /// <summary>
-    /// Escapes commas inside a constant as <c>&amp;#44;</c>, the way the designer does.
+    /// Escapes a constant so it survives inside the VB expression of a parameter array.
     /// </summary>
     /// <remarks>
-    /// The parameter array is split on commas before the string literals are honoured, so a plain
-    /// comma in a text — very common in German sentences — would break the argument list apart. The
-    /// parser reverses this, so a value survives a round trip unchanged.
+    /// Two characters need care, and both are common in an HTML e-mail body:
+    /// <list type="bullet">
+    /// <item>A <b>comma</b> becomes <c>&amp;#44;</c> — the array is split on commas before the string
+    /// literals are honoured, so a plain comma would break the argument list apart.</item>
+    /// <item>A <b>double quote</b> is doubled, the VB way of escaping it inside a string literal.
+    /// Left alone it would end the literal early and the document would be rejected.</item>
+    /// </list>
+    /// The parser reverses both, so a value survives a round trip unchanged.
     /// </remarks>
-    internal static string MaskCommas(string literal) => literal.Replace(",", "&#44;");
+    internal static string MaskCommas(string literal) =>
+        literal.Replace("\"", "\"\"").Replace(",", "&#44;");
 
     /// <summary>
     /// The third parameter of a CreateCrmType call — the CRM attribute type, which is not always the

@@ -17,6 +17,7 @@ public abstract class IntegrationTestBase
     protected SecurityRoleService SecurityRoleService = null!;
     protected EnvironmentVariableService EnvironmentVariableService = null!;
     protected WorkflowService WorkflowService = null!;
+    protected WorkflowAuthoringService WorkflowAuthoringService = null!;
     protected CloudFlowService CloudFlowService = null!;
     protected FlowVersionService FlowVersionService = null!;
     protected WebResourceService WebResourceService = null!;
@@ -48,6 +49,8 @@ public abstract class IntegrationTestBase
         SecurityRoleService = new SecurityRoleService(dvHttpClient, NullLogger<SecurityRoleService>.Instance);
         EnvironmentVariableService = new EnvironmentVariableService(dvHttpClient, NullLogger<EnvironmentVariableService>.Instance);
         WorkflowService = new WorkflowService(dvHttpClient, NullLogger<WorkflowService>.Instance);
+        WorkflowAuthoringService = new WorkflowAuthoringService(
+            dvHttpClient, WorkflowService, NullLogger<WorkflowAuthoringService>.Instance);
         CloudFlowService = new CloudFlowService(paHttpClient, NullLogger<CloudFlowService>.Instance);
         FlowVersionService = new FlowVersionService(dvHttpClient, NullLogger<FlowVersionService>.Instance);
         WebResourceService = new WebResourceService(dvHttpClient, NullLogger<WebResourceService>.Instance);

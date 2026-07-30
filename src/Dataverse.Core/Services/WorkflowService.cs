@@ -4,6 +4,7 @@ using System.Text.Json;
 using Dataverse.Core.Clients;
 using Dataverse.Core.Json;
 using Dataverse.Core.Models;
+using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging;
 
 public sealed class WorkflowService
@@ -133,28 +134,57 @@ public sealed class WorkflowService
         return item.GetStringOrNull("xaml");
     }
 
+    /// <summary>
+    /// Creates a Classic Workflow (draft) with a valid, empty XAML skeleton.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Web API rejects a create that has no <c>xaml</c> with <c>0x80045040</c> ("created outside
+    /// of the Microsoft Dynamics 365 web application"). That error is about the missing XAML, not
+    /// about OData: supplying a valid skeleton makes the create succeed. Verified against Dataverse
+    /// 9.2 — see docs/classic-workflows-reference.md.
+    /// </para>
+    /// <para>
+    /// The designer's internal <c>Workflow.asmx</c> is deliberately not used: it requires the legacy
+    /// web client's WRPC anti-forgery token and answers <c>INVALID_WRPC_TOKEN</c> for API callers.
+    /// </para>
+    /// <para>
+    /// The class name inside the skeleton carries a null GUID; the platform substitutes the real
+    /// workflow id when the workflow is activated.
+    /// </para>
+    /// </remarks>
     public async Task<Guid> CreateAsync(
         string orgUrl,
         string name,
         string primaryEntity,
         string? description = null,
+        bool isRealtime = false,
         CancellationToken ct = default)
     {
+        var skeleton = WorkflowXamlBuilder
+            .Build(new WorkflowDefinition { PrimaryEntity = primaryEntity })
+            .Xaml;
+
         var body = new Dictionary<string, object?>
         {
             ["name"] = name,
-            ["category"] = 0,
+            ["category"] = 0,   // 0 = Workflow
+            ["type"] = 1,       // 1 = definition (2 would be an activation copy)
             ["primaryentity"] = primaryEntity,
-            ["description"] = description,
             ["statecode"] = 0,
-            ["statuscode"] = 1
+            ["statuscode"] = 1,
+            ["mode"] = isRealtime ? 1 : 0,
+            ["description"] = description,
+            ["xaml"] = skeleton
         };
 
-        var raw = await _client.PostAsync<JsonElement?>(orgUrl, "api/data/v9.2/workflows", body, ct);
-        // The created ID comes from OData-EntityId response header; fall back to re-querying by name
-        // For simplicity we do a follow-up list to get the ID
-        var created = await ListAsync(orgUrl, $"name eq '{name}'", 1, ct);
-        return created.Count > 0 ? created[0].WorkflowId : Guid.Empty;
+        var id = await _client.PostForIdAsync(orgUrl, "api/data/v9.2/workflows", body, "workflowid", ct);
+        if (id == Guid.Empty)
+            throw new InvalidOperationException(
+                "The workflow was created but Dataverse did not report its id.");
+
+        _logger.LogInformation("Created classic workflow {Name} ({Id}) on {Entity}", name, id, primaryEntity);
+        return id;
     }
 
     public async Task UpdateAsync(
@@ -166,12 +196,46 @@ public sealed class WorkflowService
         await _client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", properties, ct);
     }
 
+    /// <summary>
+    /// Deletes a Classic Workflow. The workflow must be a draft — Dataverse refuses to delete an
+    /// activated one.
+    /// </summary>
+    public async Task DeleteAsync(string orgUrl, Guid workflowId, CancellationToken ct = default)
+    {
+        await _client.DeleteAsync(orgUrl, $"api/data/v9.2/workflows({workflowId})", ct);
+        _logger.LogInformation("Deleted classic workflow {Id}", workflowId);
+    }
+
     public async Task SetStateAsync(
         string orgUrl,
         Guid workflowId,
         bool activate,
         CancellationToken ct = default)
     {
+        // An automatic workflow without any trigger cannot be activated. Dataverse answers with
+        // 0x80045018 ("no activation parameters have been specified"), which does not say what to
+        // do — so check first and explain.
+        if (activate)
+        {
+            var detail = await GetAsync(orgUrl, workflowId, ct);
+            if (detail is not null
+                && !detail.OnDemand
+                && !detail.IsOnCreate
+                && !detail.IsOnUpdate
+                && !detail.IsOnDelete)
+            {
+                throw new InvalidOperationException(
+                    "This workflow has no trigger and is not available on demand, so Dataverse " +
+                    "refuses to activate it (0x80045018). Set at least one of these with " +
+                    "workflow_update before activating: " +
+                    "{\"triggeroncreate\": true, \"createstage\": 40} (on create), " +
+                    "{\"updatestage\": 40, \"triggeronupdateattributelist\": \"field1,field2\"} (on update), " +
+                    "{\"triggerondelete\": true, \"deletestage\": 20} (on delete), " +
+                    "or {\"ondemand\": true} (started manually). " +
+                    "A workflow meant to be called by another one needs {\"subprocess\": true}.");
+            }
+        }
+
         // statecode 1 = Activated (statuscode 2), statecode 0 = Draft (statuscode 1)
         var body = new
         {
@@ -207,8 +271,9 @@ public sealed class WorkflowService
 
         var url = "api/data/v9.2/plugintypes" +
                   $"?$filter={Uri.EscapeDataString(filter)}" +
-                  "&$select=plugintypeid,name,assemblyname,version,description,workflowactivitygroupname,typename" +
-                  "&$expand=pluginassemblyid($select=name,version)" +
+                  "&$select=plugintypeid,name,assemblyname,version,description," +
+                  "workflowactivitygroupname,typename,customworkflowactivityinfo" +
+                  "&$expand=pluginassemblyid($select=name,version,publickeytoken,culture)" +
                   "&$orderby=assemblyname,name";
 
         var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
@@ -224,30 +289,46 @@ public sealed class WorkflowService
             var asmName = item.GetStringOrEmpty("assemblyname");
             var version = item.GetStringOrEmpty("version");
 
-            // Build AssemblyQualifiedName from pluginassemblyid expand if available
-            string assemblyQualifiedName;
-            if (item.TryGetProperty("pluginassemblyid", out var asmEl) && asmEl.ValueKind == JsonValueKind.Object)
-            {
-                var fullAsmName = asmEl.GetStringOrNull("name") ?? asmName;
-                var asmVersion = asmEl.GetStringOrNull("version") ?? version;
-                assemblyQualifiedName = $"{typeName}, {fullAsmName}, Version={asmVersion}, Culture=neutral, PublicKeyToken=null";
-            }
-            else
-            {
-                assemblyQualifiedName = $"{typeName}, {asmName}";
-            }
-
             results.Add(new WorkflowActivitySummary(
                 PluginTypeId: item.TryGetGuid("plugintypeid"),
                 Name: item.GetStringOrEmpty("name"),
-                AssemblyQualifiedName: assemblyQualifiedName,
+                AssemblyQualifiedName: BuildAssemblyQualifiedName(item, typeName, asmName, version),
                 AssemblyName: asmName,
                 Version: version,
                 Description: item.GetStringOrNull("description"),
-                WorkflowActivityGroupName: item.GetInt32OrZero("workflowactivitygroupname")));
+                // This column is a string ("Sample.CrmPlugins (1.0.0.0)"), not a number.
+                WorkflowActivityGroupName: item.GetStringOrNull("workflowactivitygroupname")));
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Determines the AssemblyQualifiedName for a custom workflow activity.
+    /// </summary>
+    /// <remarks>
+    /// Priority: (1) the ready-made value from <c>customworkflowactivityinfo</c>, (2) assembled
+    /// from the <c>pluginassemblyid</c> expand including the real <c>publickeytoken</c>,
+    /// (3) a bare "type, assembly" fallback. Never hardcode <c>PublicKeyToken=null</c> — signed
+    /// assemblies carry a real token and XAML referencing the wrong one will not load.
+    /// </remarks>
+    private static string BuildAssemblyQualifiedName(
+        JsonElement item, string typeName, string asmName, string version)
+    {
+        var info = CustomActivityInfoParser.Parse(item.GetStringOrNull("customworkflowactivityinfo"));
+        if (!string.IsNullOrWhiteSpace(info?.AssemblyQualifiedName))
+            return info!.AssemblyQualifiedName!;
+
+        if (item.TryGetProperty("pluginassemblyid", out var asmEl) && asmEl.ValueKind == JsonValueKind.Object)
+        {
+            var fullAsmName = asmEl.GetStringOrNull("name") ?? asmName;
+            var asmVersion = asmEl.GetStringOrNull("version") ?? version;
+            var culture = asmEl.GetStringOrNull("culture") ?? "neutral";
+            var token = asmEl.GetStringOrNull("publickeytoken") ?? "null";
+            return $"{typeName}, {fullAsmName}, Version={asmVersion}, Culture={culture}, PublicKeyToken={token}";
+        }
+
+        return $"{typeName}, {asmName}";
     }
 
     public async Task<WorkflowActivityDetail?> GetActivityParametersAsync(
@@ -255,10 +336,12 @@ public sealed class WorkflowService
         Guid pluginTypeId,
         CancellationToken ct = default)
     {
+        // Parameters come from customworkflowactivityinfo. The plugintypeattributes table this
+        // used to query does not exist in current Dataverse (0x80060888).
         var url = $"api/data/v9.2/plugintypes({pluginTypeId})" +
-                  "?$select=plugintypeid,name,assemblyname,version,description,typename" +
-                  "&$expand=pluginassemblyid($select=name,version)," +
-                  "plugintype_plugintypestatistic($select=plugintypestatisticid)";
+                  "?$select=plugintypeid,name,assemblyname,version,description,typename," +
+                  "workflowactivitygroupname,customworkflowactivityinfo" +
+                  "&$expand=pluginassemblyid($select=name,version,publickeytoken,culture)";
 
         var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var item = JsonDocument.Parse(raw).RootElement;
@@ -267,50 +350,87 @@ public sealed class WorkflowService
         var asmName = item.GetStringOrEmpty("assemblyname");
         var version = item.GetStringOrEmpty("version");
 
-        string assemblyQualifiedName;
-        if (item.TryGetProperty("pluginassemblyid", out var asmEl) && asmEl.ValueKind == JsonValueKind.Object)
-        {
-            var fullAsmName = asmEl.GetStringOrNull("name") ?? asmName;
-            var asmVersion = asmEl.GetStringOrNull("version") ?? version;
-            assemblyQualifiedName = $"{typeName}, {fullAsmName}, Version={asmVersion}, Culture=neutral, PublicKeyToken=null";
-        }
-        else
-        {
-            assemblyQualifiedName = $"{typeName}, {asmName}";
-        }
+        var info = CustomActivityInfoParser.Parse(item.GetStringOrNull("customworkflowactivityinfo"));
 
-        // Fetch parameters separately via plugintypeattributes
-        var paramUrl = $"api/data/v9.2/plugintypeattributes" +
-                       $"?$filter=_plugintypeid_value eq {pluginTypeId}" +
-                       "&$select=name,parametertype,direction,isrequired,description" +
-                       "&$orderby=direction,name";
-
-        var paramRaw = await _client.GetRawAsync(orgUrl, paramUrl, ct: ct);
-        var paramDoc = JsonDocument.Parse(paramRaw);
-        var parameters = new List<WorkflowActivityParameter>();
-
-        if (paramDoc.RootElement.TryGetProperty("value", out var paramItems))
-        {
-            foreach (var p in paramItems.EnumerateArray())
-            {
-                var direction = p.GetInt32OrZero("direction") == 1 ? "Output" : "Input";
-                parameters.Add(new WorkflowActivityParameter(
-                    Name: p.GetStringOrEmpty("name"),
-                    ParameterType: p.GetStringOrNull("parametertype") ?? "String",
-                    Direction: direction,
-                    IsRequired: p.TryGetProperty("isrequired", out var req) && req.ValueKind == JsonValueKind.True,
-                    Description: p.GetStringOrNull("description")));
-            }
-        }
+        if (info?.ValidationError is { } validationError)
+            _logger.LogWarning("Custom activity {TypeName} reports a validation error: {Error}",
+                typeName, validationError);
 
         return new WorkflowActivityDetail(
             PluginTypeId: item.TryGetGuid("plugintypeid"),
             Name: item.GetStringOrEmpty("name"),
-            AssemblyQualifiedName: assemblyQualifiedName,
-            AssemblyName: asmName,
-            Version: version,
+            AssemblyQualifiedName: BuildAssemblyQualifiedName(item, typeName, asmName, version),
+            AssemblyName: info?.AssemblyName ?? asmName,
+            Version: info?.AssemblyVersion ?? version,
+            PublicKeyToken: info?.PublicKeyToken,
+            Culture: info?.Culture,
+            GroupName: info?.GroupName ?? item.GetStringOrNull("workflowactivitygroupname"),
             Description: item.GetStringOrNull("description"),
-            Parameters: parameters);
+            Parameters: info?.Parameters ?? []);
+    }
+
+    /// <summary>
+    /// Reads the parameter metadata of several code activities at once, addressed by
+    /// AssemblyQualifiedName as it appears in a definition.
+    /// </summary>
+    /// <remarks>
+    /// Only the type part is used for matching, because a definition may name a different assembly
+    /// version than the one installed. Activities that are not found are simply absent from the
+    /// catalog; the validator then reports what it can and skips the parameter checks.
+    /// </remarks>
+    public async Task<WorkflowActivityCatalog> GetActivityCatalogAsync(
+        string orgUrl,
+        IEnumerable<string> assemblyQualifiedNames,
+        CancellationToken ct = default)
+    {
+        var typeNames = assemblyQualifiedNames
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(WorkflowActivityCatalog.TypePart)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (typeNames.Count == 0)
+            return WorkflowActivityCatalog.Empty;
+
+        var entries = new List<KeyValuePair<string, IReadOnlyList<WorkflowActivityParameter>>>();
+
+        // typename is the reliable column here; plugintype.name equals it for workflow activities,
+        // but only typename is guaranteed to be the CLR type.
+        var filter = string.Join(" or ", typeNames.Select(n =>
+            $"typename eq '{n.Replace("'", "''")}' or name eq '{n.Replace("'", "''")}'"));
+
+        var url = "api/data/v9.2/plugintypes" +
+                  $"?$filter={Uri.EscapeDataString(filter)}" +
+                  "&$select=plugintypeid,name,typename,customworkflowactivityinfo";
+
+        try
+        {
+            var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
+            var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("value", out var items))
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    var info = CustomActivityInfoParser.Parse(item.GetStringOrNull("customworkflowactivityinfo"));
+                    if (info is null)
+                        continue;
+
+                    var key = item.GetStringOrNull("typename") ?? item.GetStringOrEmpty("name");
+                    if (!string.IsNullOrWhiteSpace(key))
+                        entries.Add(new(key, info.Parameters));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Not being able to read the metadata must not block authoring — it only means the
+            // parameter checks are skipped and a wrong argument surfaces on activation instead.
+            _logger.LogWarning(ex, "Could not read parameter metadata for {Count} code activit(y|ies)",
+                typeNames.Count);
+            return WorkflowActivityCatalog.Empty;
+        }
+
+        return new WorkflowActivityCatalog(entries);
     }
 
     public async Task<WorkflowValidationReport> ValidateAsync(

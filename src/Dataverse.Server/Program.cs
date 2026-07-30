@@ -25,6 +25,7 @@ builder.Services.AddHttpClient<PowerAutomateHttpClient>();
 
 // Domain services
 builder.Services.AddSingleton<WorkflowService>();
+builder.Services.AddSingleton<WorkflowAuthoringService>();
 builder.Services.AddSingleton<CloudFlowService>();
 builder.Services.AddSingleton<FlowVersionService>();
 builder.Services.AddSingleton<TableService>();

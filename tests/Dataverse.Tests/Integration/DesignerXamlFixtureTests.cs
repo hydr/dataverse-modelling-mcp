@@ -35,7 +35,13 @@ public sealed class DesignerXamlFixtureTests : IntegrationTestBase
         ("dunning-2.xaml", "a0000003-0000-4000-8000-000000000003",
             "EXAMPLE-1: second dunning letter — a draft, not activated"),
         ("dunning-1-manual.xaml", "5c98979e-dd64-f111-ab0d-7ced8d4550b3",
-            "EXAMPLE-1: manual variant of the first dunning letter, activated but not named in the ticket")
+            "EXAMPLE-1: manual variant of the first dunning letter, activated but not named in the ticket"),
+        ("assign-owner-from-lead.xaml", "f22f6dc7-0608-44aa-8617-7f2f8e625292",
+            "assignRecord — changing the owner, on account, real-time"),
+        ("quote-as-won.xaml", "a5c68a65-2db9-4cae-bdc3-a3e2754ee435",
+            "changeStatus via SetState, on quote"),
+        ("marketing-list-master.xaml", "2d274dc4-4b86-4ec1-8c97-ea7cf10821cd",
+            "startChildWorkflow — a master workflow driving child processes")
     ];
 
     [Test]

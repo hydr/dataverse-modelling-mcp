@@ -386,9 +386,11 @@ public static class WorkflowXamlParser
         var rightVars = VariablesIn(parameters);
 
         // In / NotIn compare against a set, so every constant in the array belongs to the comparison.
+        // A record reference is excluded here: it is built in two stages, and its first string is the
+        // entity name rather than the value — only the chain can put those back together.
         var constants = rightVars
             .Select(v => literals.TryGetValue(v, out var l) ? l : default)
-            .Where(l => l.Literal is not null)
+            .Where(l => l.Literal is not null && l.DataType is not ("EntityReference" or "PartyList"))
             .ToList();
 
         // The declared type comes from the CreateCrmType marker, not from the caller.

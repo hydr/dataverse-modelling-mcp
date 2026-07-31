@@ -607,6 +607,7 @@ Der erste Parameter ist der `WorkflowPropertyType`, der zweite der Wert, der dri
 |---|---|---|
 | Text | `String` | `String` |
 | Ja/Nein | `Boolean` | `Boolean` (der Designer lässt ihn hier auch weg) |
+| Ganzzahl | **`Integer`** (nicht `Int`) | `Integer` |
 | Optionsset | `OptionSetValue` | **`Picklist`** |
 | Id | `Guid` | **`UniqueIdentifier`** |
 | Datensatzverweis | `EntityReference` | **`Lookup`** (fünfteilig, siehe unten) |
@@ -615,6 +616,72 @@ Der erste Parameter ist der `WorkflowPropertyType`, der zweite der Wert, der dri
 > Ein falscher Marker lässt Dataverse das gesamte Dokument beim Schreiben mit `0x80045040` ablehnen.
 > Ebenso ein `x:DateTime` als Typargument: der XAML-2006-Namespace hat kein DateTime, der Typ muss
 > aus `System` kommen — **`s:DateTime`**.
+
+> [!IMPORTANT]
+> Auch der **erste** Parameter muss stimmen, und zwar buchstäblich: es ist ein Enum-Mitglied, das im
+> VB-Ausdruck aufgelöst wird. Eine Ganzzahl heißt dort `Integer`, nicht `Int` — obwohl der Typ überall
+> sonst „Int" genannt wird. Steht ein Name da, den das Enum nicht kennt, lässt sich der Ausdruck nicht
+> übersetzen, und die Antwort ist wieder `0x80045040` mit der irreführenden Meldung „außerhalb der
+> Webanwendung erstellt". Der Fehler zeigt also nicht auf den Ausdruck, sondern auf das ganze Dokument.
+>
+> Gefunden wurde das an einer Ganzzahl-Eingabe für `msdyncrmWorkflowTools.StringFunctions`.
+> Text- und Ja/Nein-Eingaben waren zufällig richtig benannt und haben die Lücke verdeckt; in keinem der
+> zehn Designer-Fixtures kommt eine skalare Eingabe an eine Codeaktivität vor.
+
+> [!NOTE]
+> Konstanten für Eingaben einer Codeaktivität brauchen die volle Kette
+> `CreateCrmType` → `ConvertCrmXrmTypes` → `[DirectCast(…)]`. Das Literal **direkt** in das
+> `InArgument` zu schreiben — in reinem WF4 zulässig — lehnt die Plattform mit `0x80045040` ab,
+> und zwar für jeden Typ, auch für Text.
+
+#### Ein Feld leeren
+
+Ein leerer Wert wird **nicht** als `CreateCrmType` mit leerer Zeichenkette geschrieben. Der Designer
+deklariert stattdessen eine Variable, die er **nie zuweist**, und zeigt mit der Zuweisung darauf — zur
+Laufzeit ist das `Nothing`:
+
+```xml
+<Variable x:TypeArguments="x:Object" Name="UpdateStep13_4" />
+...
+<mxswa:SetEntityProperty Attribute="dc_dunning2" Value="[UpdateStep13_4]" ... />
+```
+
+> [!IMPORTANT]
+> Ein `CreateCrmType` mit leerem Wert wird bei einem **Datum** mit `0x80040216` abgelehnt — bei Text
+> geht es durch. Diese Ungleichbehandlung ist die Falle: der Fehler tritt erst bei dem einen Feldtyp auf,
+> lange nachdem das Muster für einen anderen erprobt wurde.
+>
+> Beim **Lesen** ist die Unterscheidung ebenso wichtig: eine Quellvariable, die niemand befüllt, ist ein
+> gewolltes Leeren; eine, die befüllt wird, deren Kette sich aber nicht auflösen lässt, ist eine Lücke
+> im Leser und muss gemeldet werden. Ohne diese Trennung wird entweder ein harmloses „Feld leeren" als
+> unlesbar gemeldet — oder, weit schlimmer, ein **berechneter** Wert beim Zurückschreiben stillschweigend
+> durch einen leeren ersetzt.
+
+#### Eine Frist: Datum plus Dauer
+
+Ein berechnetes Fälligkeitsdatum ist ein `Add` über das Basisdatum und eine Dauer. Die Dauer ist wieder
+eine Variable mit Vorgabewert, diesmal vom Typ `mxsw:XrmTimeSpan` — als **Kindelement**, nicht als
+`Default`-Attribut:
+
+```xml
+<Variable x:TypeArguments="mxsw:XrmTimeSpan" Name="UpdateStep15_5">
+  <Variable.Default>
+    <Literal x:TypeArguments="mxsw:XrmTimeSpan">
+      <mxsw:XrmTimeSpan Days="7" Hours="0" Minutes="0" Months="0" Years="0" />
+    </Literal>
+  </Variable.Default>
+</Variable>
+```
+
+Die Kette lautet dann `RetrieveCurrentTime` → `SelectFirstNonNull` → `Add(Basis, Dauer)`.
+
+> [!NOTE]
+> Anders als bei der Verkettung von Text trägt dieses `Add` **einen** `TargetType`, nämlich
+> `s:DateTime`. Am Zieltyp lässt sich beim Lesen unterscheiden, ob ein `Add` eine Zeichenkette
+> zusammensetzt oder ein Datum verschiebt.
+>
+> Der Namensraum `mxsw` (`Microsoft.Xrm.Sdk.Workflow`) ist **nicht** derselbe wie `mxswa`
+> (`…Workflow.Activities`) und wird nur in Dokumenten deklariert, die eine Dauer enthalten.
 
 > [!WARNING]
 > **Kommas im Wert müssen als `&#44;` kodiert werden.** Das Parameterarray wird auf Kommas zerlegt,
@@ -945,3 +1012,14 @@ ErrorMap Details: {CustomActivityStep9: InvalidPropertyBag ;
 >
 > Beachte auch: Die genannte Workflow-Id ist die der **Aktivierungskopie** (`type=2`), nicht die des
 > bearbeiteten Prozesses.
+
+> [!WARNING]
+> **Aktivierungskopien lassen sich nicht direkt löschen.** Ein `DELETE` auf eine Zeile mit `type=2`
+> antwortet mit `0x80045004` („Cannot delete a workflow activation."). Sie verschwinden nur, wenn die
+> **Definition** gelöscht wird — und zwar bevor die Definition weg ist.
+>
+> Wird die Definition zuerst entfernt, bleibt die Kopie als Waise stehen und ist über die API nicht
+> mehr wegzubekommen. Wer beim Erproben viel aktiviert und löscht, sammelt sie deshalb an: eine
+> Umgebung kann hunderte solcher Zeilen enthalten, die in der Oberfläche nicht auftauchen (Abfragen
+> filtern auf `type eq 1`), aber in `workflows` liegen. Reihenfolge also immer: **deaktivieren, dann
+> die Definition löschen** — nie die Definition löschen, solange eine Aktivierung existiert.

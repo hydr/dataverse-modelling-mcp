@@ -188,6 +188,10 @@ public static class WorkflowXamlBuilder
         if (state.UsesQueryTypes)
             ns.Add("xmlns:mxsq=\"clr-namespace:Microsoft.Xrm.Sdk.Query;assembly=Microsoft.Xrm.Sdk, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35\"");
 
+        // Only when a duration is written: the designer omits the prefix in workflows without one.
+        if (state.UsesTimeSpan)
+            ns.Add("xmlns:mxsw=\"clr-namespace:Microsoft.Xrm.Sdk.Workflow;assembly=Microsoft.Xrm.Sdk.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35\"");
+
         ns.Add("xmlns:mxswa=\"clr-namespace:Microsoft.Xrm.Sdk.Workflow.Activities;assembly=Microsoft.Xrm.Sdk.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35\"");
         ns.Add("xmlns:s=\"clr-namespace:System;assembly=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089\"");
         ns.Add("xmlns:scg=\"clr-namespace:System.Collections.Generic;assembly=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089\"");
@@ -595,12 +599,19 @@ public static class WorkflowXamlBuilder
             ? "Canceled" : "Succeeded";
 
         activities.Append(
-            $"<TerminateWorkflow DisplayName=\"{step.StepId}\" "
+            $"<TerminateWorkflow DisplayName=\"{DisplayName(step)}\" "
             + $"Exception=\"[New Microsoft.Xrm.Sdk.InvalidPluginExecutionException(Microsoft.Xrm.Sdk.OperationStatus.{status})]\" "
             + $"Reason=\"[DirectCast({reasonVar}, System.String)]\" />");
 
+        // The step label must not be declared next to a composed reason. Where it is, the platform
+        // builds the cancellation message out of the label variables instead of the reason: the user
+        // sees "<step description><the field><the label's guid>" and the actual sentence is gone. The
+        // designer omits the label on exactly those steps and keeps it on the ones whose reason is a
+        // plain constant, where it renders fine.
+        var composedReason = reason.Kind == WorkflowValueKind.Concat;
+
         sb.Append($"<Sequence DisplayName=\"{DisplayName(step)}\">"
-            + ctx.RenderSequenceVariables(StepLabel(step))
+            + ctx.RenderSequenceVariables(composedReason ? string.Empty : StepLabel(step))
             + $"{activities}</Sequence>");
     }
 
@@ -644,9 +655,9 @@ public static class WorkflowXamlBuilder
             var dataType = state.Activities.Parameter(step.AssemblyQualifiedName, key, "Input")?.DataType
                            ?? value.DataType;
             var effective = value.DataType == dataType ? value : value with { DataType = dataType };
+            var typeArg = XamlTypeFor(dataType) ?? "x:String";
 
             var v = EmitValue(effective, ctx, prep, state, convertForCodeActivity: true);
-            var typeArg = XamlTypeFor(dataType) ?? "x:String";
             var clrType = ClrTypeFor(dataType);
             arguments.Append($"<InArgument x:TypeArguments=\"{typeArg}\" x:Key=\"{Xml(key)}\">[DirectCast({v}, {clrType})]</InArgument>");
         }
@@ -684,7 +695,11 @@ public static class WorkflowXamlBuilder
 
         // The value-preparation activities live in this composite, so their variables must be
         // declared here — not in a Sequence.Variables block that does not exist at this level.
-        sb.Append($"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("Composite")}\" DisplayName=\"{step.StepId}\">"
+        //
+        // The composite carries the same label as the activity inside it. It is the element the
+        // designer shows as the step, so a bare step id here leaves the step without a description in
+        // the UI even though the inner reference is labelled correctly.
+        sb.Append($"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("Composite")}\" DisplayName=\"{DisplayName(step)}\">"
             + "<mxswa:ActivityReference.Properties>"
             + ctx.RenderVariableCollection()
             + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{prep}{inner}{loads}</sco:Collection>"
@@ -741,7 +756,45 @@ public static class WorkflowXamlBuilder
     /// Emits the activities that materialise <paramref name="value"/> and returns the name of the
     /// variable holding it.
     /// </summary>
+    /// <summary>
+    /// Emits a value and, if it carries one, the duration added to it.
+    /// </summary>
+    /// <remarks>
+    /// The offset is a second <c>Add</c> on top of whatever produced the date — that is how the designer
+    /// builds "Frist berechnen": <c>RetrieveCurrentTime</c>, then <c>Add</c> of the base and an
+    /// <c>XrmTimeSpan</c>, this time with the date as the target type (a plain concatenation declares
+    /// none).
+    /// </remarks>
     private static string EmitValue(
+        WorkflowValue value, StepScope ctx, StringBuilder sb, BuildState state,
+        bool convertForCodeActivity, bool simplifyFieldRead = false)
+    {
+        if (value.Offset is not { IsZero: false } offset)
+            return EmitPlainValue(value, ctx, sb, state, convertForCodeActivity, simplifyFieldRead);
+
+        // The base must not be converted yet: the conversion belongs after the addition.
+        var typeArgumentOfOffset = XamlTypeFor(value.DataType) ?? "s:DateTime";
+        var baseVariable = EmitPlainValue(
+            value with { Offset = null }, ctx, sb, state, convertForCodeActivity: false, simplifyFieldRead);
+
+        state.UsesTimeSpan = true;
+        var span = ctx.NextElementVariable("mxsw:XrmTimeSpan", XrmTimeSpanLiteral(offset));
+        var shifted = ctx.NextVariable("x:Object");
+
+        sb.Append(EvaluateExpression("Add",
+            $"[New Object() {{ {baseVariable}, {span} }}]", typeArgumentOfOffset, shifted));
+
+        return convertForCodeActivity ? Convert(shifted, typeArgumentOfOffset, ctx, sb) : shifted;
+    }
+
+    /// <summary>The <c>Variable.Default</c> of a duration, in the designer's element form.</summary>
+    private static string XrmTimeSpanLiteral(WorkflowTimeOffset offset) =>
+        "<Literal x:TypeArguments=\"mxsw:XrmTimeSpan\">"
+        + $"<mxsw:XrmTimeSpan Days=\"{offset.Days}\" Hours=\"{offset.Hours}\" "
+        + $"Minutes=\"{offset.Minutes}\" Months=\"{offset.Months}\" Years=\"{offset.Years}\" />"
+        + "</Literal>";
+
+    private static string EmitPlainValue(
         WorkflowValue value, StepScope ctx, StringBuilder sb, BuildState state,
         bool convertForCodeActivity, bool simplifyFieldRead = false)
     {
@@ -766,6 +819,13 @@ public static class WorkflowXamlBuilder
         {
             case WorkflowValueKind.Literal:
             {
+                // No value at all means "clear this attribute". The designer expresses that by pointing
+                // at a variable it never assigns — at run time that is Nothing. Building a CreateCrmType
+                // around an empty string instead is what Dataverse rejects with 0x80040216, and only for
+                // some types, which is why an empty text slips through but an empty date does not.
+                if (value.Literal is null && value.Literals is null && value.Parts is null)
+                    return ctx.NextVariable("x:Object");
+
                 // A fixed recipient is a record reference wrapped into a party list.
                 if (string.Equals(CrmPropertyType(value.DataType), "PartyList", StringComparison.Ordinal))
                 {
@@ -937,7 +997,9 @@ public static class WorkflowXamlBuilder
     /// <remarks>
     /// An option set is marked <c>Picklist</c>, an id <c>UniqueIdentifier</c> and a record reference
     /// <c>Lookup</c>. Getting this wrong makes Dataverse refuse the XAML outright with
-    /// <c>0x80045040</c> — it is not a cosmetic difference.
+    /// <c>0x80045040</c> — it is not a cosmetic difference. Everything else shares the name of its
+    /// <see cref="CrmPropertyType">property type</see>; the designer fixtures witness
+    /// <c>Picklist</c>, <c>UniqueIdentifier</c> and <c>String</c>.
     /// </remarks>
     internal static string CrmTypeMarker(string? dataType) => (dataType ?? "String") switch
     {
@@ -1079,7 +1141,10 @@ public static class WorkflowXamlBuilder
     internal static string CrmPropertyType(string? dataType) => (dataType ?? "String") switch
     {
         "String" => "String",
-        "Integer" or "Int32" => "Int",
+        // "Int" is what the type is colloquially called, but the enum member is "Integer". A wrong name
+        // makes the VB expression fail to compile and Dataverse rejects the document with 0x80045040 —
+        // with the generic "created outside the web application" message, which points nowhere.
+        "Integer" or "Int32" => "Integer",
         "Boolean" or "Bool" => "Boolean",
         "DateTime" => "DateTime",
         "Decimal" => "Decimal",
@@ -1190,6 +1255,9 @@ public static class WorkflowXamlBuilder
         public string Persist => Realtime ? string.Empty : "<Persist />";
         public bool UsesCrmActivities { get; set; }
         public bool UsesQueryTypes { get; set; }
+
+        /// <summary>Set when a duration is emitted, so the <c>mxsw</c> prefix gets declared.</summary>
+        public bool UsesTimeSpan { get; set; }
         public List<(string Name, string TypeArgument, string? Default)> WorkflowVariables { get; } = [];
 
         /// <summary>Output parameter name -> variable holding it, filled while emitting.</summary>
@@ -1335,6 +1403,21 @@ public static class WorkflowXamlBuilder
                 : defaultExpression is not null ? $" Default=\"{defaultExpression.Replace("\"", "&quot;")}\""
                 : string.Empty;
             _declarations.Add($"<Variable x:TypeArguments=\"{typeArgument}\"{defaultAttr} Name=\"{name}\" />");
+        }
+
+        /// <summary>
+        /// A variable whose default is markup rather than an expression — the only form a duration has.
+        /// </summary>
+        /// <remarks>
+        /// <c>Default="…"</c> takes an attribute value; an <c>XrmTimeSpan</c> is an element with five
+        /// attributes of its own and has to be nested in <c>Variable.Default</c>.
+        /// </remarks>
+        public string NextElementVariable(string typeArgument, string defaultElement)
+        {
+            var name = $"{stepId}_{++_index}";
+            _declarations.Add($"<Variable x:TypeArguments=\"{typeArgument}\" Name=\"{name}\">"
+                + $"<Variable.Default>{defaultElement}</Variable.Default></Variable>");
+            return name;
         }
 
         /// <param name="extra">Further declarations to append, e.g. the designer's step label.</param>

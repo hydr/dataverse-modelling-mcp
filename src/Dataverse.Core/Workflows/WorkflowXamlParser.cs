@@ -116,7 +116,7 @@ public static class WorkflowXamlParser
                 StepId = stepId,
                 Description = description,
                 Entity = Attr(update, "EntityName"),
-                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes)
+                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes, unrecognised)
             });
         }
         else if (create is not null)
@@ -127,7 +127,7 @@ public static class WorkflowXamlParser
                 StepId = stepId,
                 Description = description,
                 Entity = Attr(create, "EntityName"),
-                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes)
+                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes, unrecognised)
             });
         }
         else if (assign is not null)
@@ -173,7 +173,7 @@ public static class WorkflowXamlParser
                 StepId = stepId,
                 Description = description,
                 Entity = "email",
-                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes)
+                Attributes = ParseAttributeAssignments(sequence, primaryEntity, notes, unrecognised)
             });
         }
         else
@@ -525,7 +525,7 @@ public static class WorkflowXamlParser
     /// wherever it appears.
     /// </remarks>
     private static List<WorkflowAttributeAssignment> ParseAttributeAssignments(
-        XElement scope, string primaryEntity, List<string> notes)
+        XElement scope, string primaryEntity, List<string> notes, List<string> unrecognised)
     {
         var result = new List<WorkflowAttributeAssignment>();
         var chain = ValueChain.Of(scope);
@@ -541,7 +541,24 @@ public static class WorkflowXamlParser
             if (value is null)
             {
                 value = new WorkflowValue { Kind = WorkflowValueKind.Literal, DataType = dataType, Literal = null };
-                notes.Add($"Attribute '{attribute}': value expression could not be resolved.");
+
+                if (sourceVar is null || !chain.Produces(sourceVar))
+                {
+                    // Either no source at all, or one nothing ever assigns: the designer clears the
+                    // attribute. That is a value, not a gap — "Mahnung 2 loeschen" is exactly this.
+                    notes.Add($"Attribute '{attribute}': cleared (no value assigned).");
+                }
+                else
+                {
+                    // There IS a preparation chain and we could not reduce it. Reporting this as a mere
+                    // note would be a trap: the caller is told the reading is complete and rewrites the
+                    // workflow, replacing a computed value with an empty one.
+                    notes.Add($"Attribute '{attribute}': value expression could not be resolved.");
+                    unrecognised.Add(
+                        $"Attribute '{attribute}': the value is computed by an expression this reader "
+                        + "does not know, and would be replaced by an empty value if the workflow were "
+                        + "rewritten. Change this step in the designer.");
+                }
             }
 
             result.Add(new WorkflowAttributeAssignment { Attribute = attribute, Value = value });
@@ -744,9 +761,29 @@ public static class WorkflowXamlParser
         private readonly Dictionary<string, (string? Operator, string? Parameters)> _expressions = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _conversions = new(StringComparer.Ordinal);
 
+        private readonly Dictionary<string, WorkflowTimeOffset> _durations = new(StringComparer.Ordinal);
+
         public static ValueChain Of(XElement scope)
         {
             var chain = new ValueChain();
+
+            // Durations are not produced by an activity — they are variables with an XrmTimeSpan default.
+            foreach (var variable in scope.Descendants().Where(e => e.Name.LocalName == "Variable"))
+            {
+                var span = variable.Descendants().FirstOrDefault(e => e.Name.LocalName == "XrmTimeSpan");
+                var name = Attr(variable, "Name");
+                if (span is null || string.IsNullOrEmpty(name))
+                    continue;
+
+                chain._durations[name] = new WorkflowTimeOffset
+                {
+                    Years = Number(span, "Years"),
+                    Months = Number(span, "Months"),
+                    Days = Number(span, "Days"),
+                    Hours = Number(span, "Hours"),
+                    Minutes = Number(span, "Minutes")
+                };
+            }
 
             foreach (var read in scope.Descendants().Where(e => e.Name.LocalName == "GetEntityProperty"))
             {
@@ -822,9 +859,23 @@ public static class WorkflowXamlParser
         /// <summary>An Add expression: the parts in order, each resolved on its own.</summary>
         private WorkflowValue? ResolveConcat(string? parameters, string? dataType)
         {
+            var sources = VariablesIn(parameters);
+
+            // Add over a date and a duration is not a concatenation but a deadline: "now + 7 days".
+            var durations = sources.Where(_durations.ContainsKey).Select(s => _durations[s]).ToList();
+            if (durations.Count > 0)
+            {
+                var rest = sources.Where(s => !_durations.ContainsKey(s)).ToList();
+                if (rest.Count != 1)
+                    return null;
+
+                var shifted = Resolve(rest[0], dataType);
+                return shifted is null ? null : shifted with { Offset = Combine(durations) };
+            }
+
             var parts = new List<WorkflowValue>();
 
-            foreach (var source in VariablesIn(parameters))
+            foreach (var source in sources)
             {
                 var part = Resolve(source, dataType);
                 if (part is null)
@@ -841,6 +892,32 @@ public static class WorkflowXamlParser
                     Parts = parts
                 };
         }
+
+        /// <summary>
+        /// Whether anything in this scope assigns the variable at all.
+        /// </summary>
+        /// <remarks>
+        /// The designer clears an attribute by pointing at a variable it never writes — at run time that
+        /// is <c>Nothing</c>. So an unknown variable is a deliberate "empty", while a known one whose
+        /// chain cannot be reduced is a gap in this reader. Telling the two apart is what keeps
+        /// "Mahnung 2 löschen" from being reported as unreadable.
+        /// </remarks>
+        public bool Produces(string variable) =>
+            _reads.ContainsKey(variable) || _expressions.ContainsKey(variable)
+            || _conversions.ContainsKey(variable) || _durations.ContainsKey(variable);
+
+        /// <summary>Several durations in one Add add up.</summary>
+        private static WorkflowTimeOffset Combine(List<WorkflowTimeOffset> offsets) => new()
+        {
+            Years = offsets.Sum(o => o.Years),
+            Months = offsets.Sum(o => o.Months),
+            Days = offsets.Sum(o => o.Days),
+            Hours = offsets.Sum(o => o.Hours),
+            Minutes = offsets.Sum(o => o.Minutes)
+        };
+
+        private static int Number(XElement element, string attribute) =>
+            int.TryParse(Attr(element, attribute), out var value) ? value : 0;
 
         /// <summary>Fields in order, plus a trailing constant as the fallback.</summary>
         private WorkflowValue? ResolveSelection(string? parameters, string? dataType)

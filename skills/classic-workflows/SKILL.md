@@ -241,6 +241,23 @@ anyway; one that needs a value gets `WF073` if you leave it out.
 needed. `now` works both as a written value and as the right-hand side of a date comparison
 (`OnOrAfter`, `OnOrBefore`, …).
 
+#### A deadline: `offset`
+
+Any date value may carry an `offset`, which is how the designer computes a due date. The dunning
+workflows use it to set the next dunning level's deadline a week out:
+
+```json
+{"kind":"now","dataType":"DateTime","offset":{"days":7}}
+```
+
+`offset` takes `years`, `months`, `days`, `hours` and `minutes`; anything omitted is zero, and negative
+values move the date backwards. It also applies to a `field`, which then shifts that field's date
+instead of the current time.
+
+> An **empty** date is not an offset and not a special kind — it is a `literal` with no `literal` value.
+> That is how "clear this field" is expressed, and the reader distinguishes it from a value it failed to
+> understand: an unresolvable expression is reported in `unrecognised`, a deliberate clear is not.
+
 `dataType` defaults to `String`. Others: `Integer`, `Boolean`, `DateTime`, `Decimal`, `Double`,
 `Money`, `OptionSetValue`, `EntityReference`, `Guid`. Set it whenever the target field is not text —
 for a plain field a wrong type produces a runtime failure; on a code activity's input it is caught as
@@ -285,6 +302,32 @@ Outputs of a step are referencable by later steps as `<stepId>.<ParameterName>` 
 parameter name**, which is usually what you want: step ids are assigned by the builder, so you cannot
 know them when writing the definition. They come back in `stepIds` and are assigned in document
 order, so a step can only use outputs of steps declared before it.
+
+#### A value that exists only during the run
+
+There is no "set variable" step, so a value that has to be computed in one place and used in another
+looks at first like it needs a helper column. It does not. An activity's output **is** a workflow
+variable, scoped to the single run, and it is empty when the activity did not execute. That gives you
+a conditional text block without persisting anything:
+
+```
+condition (payment method in …)
+└─ then: customActivity StringFunctions
+           inputs.InputText = {"kind":"concat", …}   ← the builder concatenates
+           outputs: ["TrimmedText"]                  ← the same text back out
+…
+createRecord email
+   description = {"kind":"concat","parts":[ …, {"kind":"stepOutput","stepOutput":"TrimmedText"} ]}
+```
+
+`msdyncrmWorkflowTools.StringFunctions` is a pure pass-through here — `InputText` in, `TrimmedText`
+out. Take the concatenation itself from the builder (`concat`), not from the activity: it cannot
+concatenate. Note that the activity computes **all** of its outputs on every run, so give the
+substring, padding and replace inputs values that cannot throw (a substring of length 1, padding to
+length 0, a non-empty `ReplaceOldValue`).
+
+When the branch does not run, the variable is `Nothing`, and the `Add` behind `concat` tolerates that
+— the same way an optional field read without `fallback` does. So the else branch needs no step at all.
 
 Reading back works too: `workflow_get_definition` reduces an input argument to the value it was built
 from, even though the XAML stores only a reference into a chain of preparation activities

@@ -361,4 +361,37 @@ public sealed record WorkflowValue
     /// e.g. "CustomActivityStep4.Domain".
     /// </summary>
     public string? StepOutput { get; init; }
+
+    /// <summary>
+    /// Optional duration added to this value — how the designer expresses a deadline.
+    /// </summary>
+    /// <remarks>
+    /// Only meaningful on a date: <c>{"kind":"now","offset":{"days":7}}</c> is "in a week", which is
+    /// what "Frist berechnen" in the dunning workflows does. Combined with a field read it shifts that
+    /// field's date instead.
+    /// </remarks>
+    public WorkflowTimeOffset? Offset { get; init; }
+}
+
+/// <summary>
+/// A duration, as the designer stores it in an <c>XrmTimeSpan</c>.
+/// </summary>
+/// <remarks>
+/// All five components exist in the platform type and are written even when zero, so the shape matches
+/// what the designer produces. Negative values move the date backwards.
+/// </remarks>
+public sealed record WorkflowTimeOffset
+{
+    public int Years { get; init; }
+
+    public int Months { get; init; }
+
+    public int Days { get; init; }
+
+    public int Hours { get; init; }
+
+    public int Minutes { get; init; }
+
+    /// <summary>Whether anything at all is offset — an all-zero offset is not worth emitting.</summary>
+    public bool IsZero => (Years | Months | Days | Hours | Minutes) == 0;
 }

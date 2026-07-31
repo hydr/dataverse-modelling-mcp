@@ -643,8 +643,9 @@ public static class WorkflowDefinitionValidator
                 else if (value.Literal is null)
                 {
                     issues.Add(new WorkflowValidationIssue("warning", "WF110", $"{path}.literal",
-                        "The literal is null and will be written as an empty string.",
-                        "Set 'literal' explicitly, or use a field value instead."));
+                        "No 'literal' is set, so the attribute will be cleared.",
+                        "That is a valid value — the designer clears a field the same way. Set 'literal' "
+                        + "if you meant to write something."));
                 }
 
                 if (value.Fields is { Count: > 0 })

@@ -54,7 +54,8 @@ public sealed class RibbonServiceTests
             label: "MCP Probe",
             webResourceName: "sample_mcp_ribbon_probe.js",
             functionName: "Sample.Probe.run",
-            parameters: RibbonService.ParseParameterSpec("SelectedControlSelectedItemIds,SelectedControl"));
+            parameters: RibbonService.ParseParameterSpec("SelectedControlSelectedItemIds,SelectedControl"),
+            languageCode: 1031);
 
         var doc = XElement.Parse(xml);
 
@@ -66,9 +67,19 @@ public sealed class RibbonServiceTests
 
         var button = doc.Descendants("Button").Single();
         Assert.That(button.Attribute("Command")!.Value, Is.EqualTo("sample.sample_mcptest.Probe.Command"));
-        // A literal caption — $LocLabels: references render as the raw token.
-        Assert.That(button.Attribute("LabelText")!.Value, Is.EqualTo("MCP Probe"));
+        // The caption lives in a LocLabel; the button only points at it. A literal LabelText is stored
+        // and read back correctly, and the modern command bar still draws nothing.
+        Assert.That(
+            button.Attribute("LabelText")!.Value,
+            Is.EqualTo("$LocLabels:sample.sample_mcptest.Probe.Button.LabelText"));
+        Assert.That(button.Attribute("Alt")!.Value, Is.EqualTo(button.Attribute("LabelText")!.Value));
         Assert.That(button.Attribute("TemplateAlias")!.Value, Is.EqualTo("o1"));
+
+        var caption = doc.Element("LocLabels")!.Elements("LocLabel")
+            .Single(l => l.Attribute("Id")!.Value == "sample.sample_mcptest.Probe.Button.LabelText")
+            .Element("Titles")!.Element("Title")!;
+        Assert.That(caption.Attribute("description")!.Value, Is.EqualTo("MCP Probe"));
+        Assert.That(caption.Attribute("languagecode")!.Value, Is.EqualTo("1031"));
 
         var js = doc.Descendants("JavaScriptFunction").Single();
         Assert.That(js.Attribute("Library")!.Value, Is.EqualTo("$webresource:sample_mcp_ribbon_probe.js"));
@@ -96,17 +107,19 @@ public sealed class RibbonServiceTests
     }
 
     [Test]
-    public void BuildRibbonDiffXml_RejectsAWebResourceModernImage()
+    public void BuildRibbonDiffXml_PassesAWebResourceModernImageThrough()
     {
-        // Verified against a live org: with an existing, published SVG web resource the button silently
-        // stops rendering altogether. Same failure shape as an invalid fonticon on a modern command.
-        var ex = Assert.Throws<ArgumentException>(() => RibbonService.BuildRibbonDiffXml(
+        // This used to throw, on the theory that an SVG ModernImage made the button vanish. It does not:
+        // on invoice, six buttons carry exactly this and all of them render. The disappearance that
+        // produced the rule had a different cause — an empty caption.
+        var xml = RibbonService.BuildRibbonDiffXml(
             "b", "b.CustomAction", "b.Command", "loc", "L", "wr.js", "fn",
             Array.Empty<RibbonParameter>(),
-            modernImage: "$webresource:sample_ResolveEaErDifference.svg"));
+            modernImage: "$webresource:sample_/images/envelope-back-front.svg");
 
-        Assert.That(ex!.Message, Does.Contain("silently"));
-        Assert.That(ex.Message, Does.Contain("imageWebResource"));
+        Assert.That(
+            XElement.Parse(xml).Descendants("Button").Single().Attribute("ModernImage")!.Value,
+            Is.EqualTo("$webresource:sample_/images/envelope-back-front.svg"));
     }
 
     [Test]
@@ -269,7 +282,12 @@ public sealed class RibbonServiceTests
                 "Every child needs a Location attribute — that is exactly what the import checks.");
             Assert.That(
                 doc.Element("LocLabels")!.Elements("LocLabel").Select(e => e.Attribute("Id")!.Value),
-                Is.EqualTo(new[] { "b1.LabelText" }));
+                Is.EquivalentTo(new[]
+                {
+                    "b1.LabelText",
+                    "b2.LabelText", "b2.ToolTipTitle", "b2.ToolTipDescription"
+                }),
+                "The existing button's caption survives, the new one brings its own three.");
         });
     }
 
@@ -299,11 +317,33 @@ public sealed class RibbonServiceTests
             Array.Empty<RibbonParameter>(),
             preserve: ExistingRibbon("b1"));
 
-        var label = XElement.Parse(xml).Element("LocLabels")!.Elements("LocLabel").Single();
+        var label = XElement.Parse(xml).Element("LocLabels")!.Elements("LocLabel")
+            .Single(l => l.Attribute("Id")!.Value == "b1.LabelText");
 
         Assert.That(
             label.Element("Titles")!.Element("Title")!.Attribute("description")!.Value,
             Is.EqualTo("Altes Label"));
+    }
+
+    [Test]
+    public void BuildRibbonDiffXml_ReplacesTheLocLabelsOfAButtonWithTheSameId()
+    {
+        // Re-running with the same buttonId updates the caption; it must not leave the old node behind
+        // next to the new one under the same id.
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b1", "b1.CustomAction", "b1.Command", "loc", "Neues Label", "wr.js", "fn",
+            Array.Empty<RibbonParameter>(),
+            preserve: ExistingRibbon("b1"),
+            languageCode: 1031);
+
+        var captions = XElement.Parse(xml).Element("LocLabels")!.Elements("LocLabel")
+            .Where(l => l.Attribute("Id")!.Value == "b1.LabelText")
+            .ToList();
+
+        Assert.That(captions, Has.Count.EqualTo(1));
+        Assert.That(
+            captions[0].Element("Titles")!.Element("Title")!.Attribute("description")!.Value,
+            Is.EqualTo("Neues Label"));
     }
 
     [Test]
@@ -324,7 +364,10 @@ public sealed class RibbonServiceTests
             Array.Empty<RibbonParameter>(),
             preserve: managed);
 
-        Assert.That(XElement.Parse(xml).Element("LocLabels")!.Elements(), Is.Empty);
+        Assert.That(
+            XElement.Parse(xml).Element("LocLabels")!.Elements().Select(e => e.Attribute("Id")!.Value),
+            Is.EquivalentTo(new[] { "b2.LabelText", "b2.ToolTipTitle", "b2.ToolTipDescription" }),
+            "Only the new button's own labels — the managed one belongs to its owning solution.");
     }
 
     [Test]

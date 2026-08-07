@@ -222,16 +222,29 @@ only symptom anywhere is the Command Designer flagging "Icon is required" in red
 validates against the known-good set unioned with the icons actually in use in the target environment;
 `command_list_icons` prints it.
 
-**2. `ModernImage="$webresource:….svg"` makes a classic button vanish** — the whole button, not just the
-icon. The SVG web resource (type 11) existed, was published and had content; the button was still gone,
-with no error. Remove the attribute and it reappears immediately. Same failure shape as an invalid
-`fontIcon`, so `ribbon_add_button` rejects a `$webresource:` value on `modernImage`. The reliable icon
-route for classic buttons is a **PNG pair** on `Image16by16` / `Image32by32`, which is what this org's
-working buttons use — pass `imageWebResource`.
+**2. A caption the client cannot resolve costs you the whole button.** There are two ways to get one,
+and the harmless-looking one is the worse:
 
-**3. Unresolved `$LocLabels:` references render as the raw token.** The button appeared with `LabelText`
-as its caption. Use literal `LabelText` attributes unless localisation is genuinely needed;
-`ribbon_add_button` rejects a `$LocLabels:` label.
+- A **literal `LabelText`** is stored correctly, reported back correctly by both `ribbon_get` and
+  `RetrieveEntityRibbon` — and the Unified Interface draws nothing at all. A command without a caption
+  has nothing to render. Verified on `invoice`: the same button appeared the moment its caption moved
+  into a `<LocLabel>`, icon and all.
+- A **`$LocLabels:` reference whose `<LocLabel>` node is missing** renders the raw token, giving you a
+  button captioned `LabelText`.
+
+The working configuration is the one the Ribbon Workbench writes: a `<LocLabel>` node per string plus a
+`$LocLabels:<id>` reference on the button. `ribbon_add_button` writes both halves — pass the caption
+itself as `label`, and the language via `languageCode` if the org's base language is not what you want.
+
+> This paragraph used to say the opposite ("use literal `LabelText`"), generalised from a single case
+> where the trigger was a *dangling* reference. Literal captions are worse than a wrong caption: the
+> button is not there at all.
+
+**3. `ModernImage="$webresource:….svg"` is fine.** This entry previously claimed the whole button
+vanishes. It does not — on `invoice`, six buttons carry exactly such a reference and every one of them
+renders. The disappearance that produced the rule is failure 2 above. The rejection in
+`ribbon_add_button` has been removed. A PNG pair on `Image16by16` / `Image32by32` via `imageWebResource`
+remains the route for the classic (non-modern) command bar.
 
 **4. A `Location` that does not exist renders nothing.** Import succeeds, publish succeeds, no button.
 `ribbon_add_button` validates the location against the compiled ribbon first; `ribbon_get` with
@@ -242,7 +255,8 @@ app (`sample_mainapp`) and the Purchase Orders app both showed the button. Check
 will conclude the mechanism is broken.
 
 **6. `RetrieveEntityRibbon` proves storage, not rendering.** The definition sat there the whole time
-while the button was not being drawn.
+while the button was not being drawn. This holds per **attribute**, not just per button: a literal
+`LabelText` is reported back verbatim by a button that has no caption as far as the client is concerned.
 
 **7. `origin` on `appaction` is create-only.** `PATCH {"origin":0}` answers 200 and changes nothing.
 
@@ -282,9 +296,14 @@ So:
 
 - **Read the whole command bar.** Do not filter for the label you expect — a mislabelled button is
   precisely the case you would then miss.
-- **Compare against a reference object you know works.** Here that was the command "Plattform öffnen".
-  If your reference renders and yours does not, the difference is in your definition. If neither
-  renders, you are looking in the wrong app.
+- **Compare against a reference object you know works — on the SAME table.** If your reference renders
+  and yours does not, the difference is in your definition. If neither renders, you are looking in the
+  wrong app.
+  This qualifier cost a full round of debugging on its own. A button on `invoice` was compared against
+  `sample_purchaseorder`, where a literal caption without an icon works fine. That comparison sent the
+  investigation through `Location`, `TemplateAlias`, the id scheme, `Sequence`, publishing and the
+  client cache, while the cause sat in the caption the whole time — the five buttons on `invoice` itself
+  would have shown it in one look, because every one of them uses `<LocLabel>` nodes.
 - **Check in an app where custom commands are known to appear**, not in `d365default`.
 - **Separate storage from rendering.** `ribbon_get` (or `RetrieveEntityRibbon`) answers "is it stored".
   Only the browser answers "is it drawn". Never let the first stand in for the second.
@@ -320,15 +339,16 @@ could add a button to"
 | `tableLogicalName` | string | yes | |
 | `buttonId` | string | yes | e.g. `sample.sample_purchaseorder.CorrectPrice.Button`; the CustomAction becomes `<buttonId>.CustomAction`, the command `<buttonId>.Command` |
 | `location` | string | yes | Full `Location`, e.g. `Mscrm.Form.sample_purchaseorder.MainTab.Save.Controls._children` |
-| `label` | string | yes | Literal caption. `$LocLabels:` is rejected |
+| `label` | string | yes | The caption itself. The tool writes the `<LocLabel>` nodes and the `$LocLabels:` references |
 | `webResourceName` | string | yes | JScript web resource holding the handler |
 | `functionName` | string | yes | Fully qualified handler |
 | `parameters` | string | yes | Classic ribbons **name** their parameters: `PrimaryControl` for a form button, `SelectedControlSelectedItemIds,SelectedControl` for a grid one. Literals: `String:abc`, `Bool:true`, `Int:5` |
 | `sequence` | int | no | Default 41 |
 | `imageWebResource` | string | no | PNG web resource for `Image16by16`/`Image32by32` — the reliable icon route |
-| `modernImage` | string | no | A `$webresource:` value is rejected; see failure 2 |
-| `enableRule` | string | no | `OneSelected`, `AtLeastOneSelected`, `SelectionCountRule:<min>[-<max>]`, or a literal `<EnableRule>` fragment |
-| `tooltipTitle`, `tooltipDescription` | string | no | Default to the label |
+| `modernImage` | string | no | Icon for the modern command bar, e.g. `$webresource:sample_/images/envelope-back-front.svg` |
+| `enableRule` | string | no | `OneSelected`, `AtLeastOneSelected`, `SelectionCountRule:<min>[-<max>]`, or a literal `<EnableRule>` fragment. **A `Minimum` above 1 is not enforced** — see below |
+| `tooltipTitle`, `tooltipDescription` | string | no | Default to the label; each gets its own `<LocLabel>` |
+| `languageCode` | int | no | Language of the caption LocLabels; defaults to the org's base language |
 | `templateAlias` | string | no | Default `o1` |
 | `solutionUniqueName` | string | no | Reuse a solution instead of a throwaway one |
 | `publisherUniqueName` | string | no | Defaults to the publisher owning the table's prefix |
@@ -338,6 +358,11 @@ could add a button to"
 **Example prompt:** "Add a grid button 'EA-ER-Differenz auflösen' to sample_purchaseorder that calls
 Sample.PurchaseOrder.CorrectPrice.onGridButton in sample_purchaseorder_correct_price.js with
 SelectedControlSelectedItemIds and SelectedControl, enabled only when exactly one row is selected"
+
+> **`SelectionCountRule` with `Minimum="2"` is not enforced.** The button is enabled with a single row
+> selected as well — the platform treats the rule as "at least one selection". This is not a tool defect
+> and the rule is still written as asked, but the lower bound has to be checked again in the handler and
+> server-side. `Maximum` and the `OneSelected` shortcut are unaffected.
 
 ---
 

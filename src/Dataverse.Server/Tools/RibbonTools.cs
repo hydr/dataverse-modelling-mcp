@@ -27,14 +27,15 @@ public sealed class RibbonTools
     private const string SilentFailureNote =
         "Failure modes here are silent — the API returns success and the button simply is not there. " +
         "The verified ones: (1) a Location that does not exist in the compiled ribbon; " +
-        "(2) ModernImage=\"$webresource:….svg\", which removes the button entirely even though the SVG " +
-        "web resource exists, is published and has content — use a PNG pair via imageWebResource " +
-        "instead; (3) an unresolved $LocLabels: reference, which renders the raw token as the caption " +
-        "(a button captioned \"LabelText\"); (4) forgetting to publish. Also: RetrieveEntityRibbon " +
-        "proves storage, not rendering, and custom buttons only render in some apps — d365default shows " +
-        "nothing where a custom app shows the button. When checking, read the whole command bar and " +
-        "compare against a button you know works; do not grep for the label you expect, because a " +
-        "mislabelled button is exactly what you would then miss.";
+        "(2) a caption the client cannot resolve — either a literal LabelText, which the modern command " +
+        "bar does not draw at all, or a $LocLabels: reference whose LocLabel node is missing, which " +
+        "renders the raw token; ribbon_add_button writes both halves; (3) forgetting to publish. " +
+        "Also: RetrieveEntityRibbon proves storage, not rendering — it reports a literal LabelText back " +
+        "perfectly for a button that is never drawn — and custom buttons only render in some apps: " +
+        "d365default shows nothing where a custom app shows the button. When checking, read the whole " +
+        "command bar and compare against a button you know works ON THE SAME TABLE; a reference from " +
+        "another table can differ in exactly the property that is broken. Do not grep for the label you " +
+        "expect, because a mislabelled button is exactly what you would then miss.";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -105,8 +106,9 @@ public sealed class RibbonTools
                      "'Mscrm.HomepageGrid.sample_purchaseorder.MainTab.Management.Controls._children'. " +
                      "Validated against the compiled ribbon; run ribbon_get with includeLocations=true " +
                      "to see the choices.")] string location,
-        [Description("Literal button caption. Not a $LocLabels: reference — those are unreliable and " +
-                     "render the raw token as the caption.")] string label,
+        [Description("The button caption itself, e.g. 'PDF und Sammel-E-Mail'. Pass the text, not a " +
+                     "$LocLabels: reference — the tool writes the LocLabel node and the reference for " +
+                     "you.")] string label,
         [Description("Name of the JScript web resource holding the handler, e.g. " +
                      "'sample_purchaseorder_correct_price.js'")] string webResourceName,
         [Description("Fully qualified handler, e.g. 'Sample.PurchaseOrder.CorrectPrice.onFormButton'")] string functionName,
@@ -117,9 +119,9 @@ public sealed class RibbonTools
         [Description("Display order within the group (default 41)")] int sequence = 41,
         [Description("Name of a PNG web resource for Image16by16/Image32by32. PNG pairs are the verified " +
                      "reliable icon route for classic buttons.")] string? imageWebResource = null,
-        [Description("ModernImage attribute. A '$webresource:' value is REJECTED — with an SVG web " +
-                     "resource that exists, is published and has content, the button silently stops " +
-                     "rendering entirely. Use imageWebResource instead.")] string? modernImage = null,
+        [Description("ModernImage attribute — the icon the modern command bar draws, e.g. " +
+                     "'$webresource:sample_/images/envelope-back-front.svg'. Verified working: six buttons " +
+                     "on invoice carry an SVG reference and all of them render.")] string? modernImage = null,
         [Description("Visibility/enablement rule: 'OneSelected' (exactly one row), 'AtLeastOneSelected', " +
                      "'SelectionCountRule:<min>[-<max>]', or a literal <EnableRule Id=\"…\">…</EnableRule> " +
                      "fragment. This is the entity-bound equivalent of a modern command's Power Fx " +
@@ -134,6 +136,8 @@ public sealed class RibbonTools
                      "off re-enables the silent 'imported fine, renders nothing' failure.")] bool validateLocation = true,
         [Description("Publish the table afterwards (default true). Without it the button is stored but " +
                      "neither compiled nor verifiable.")] bool publish = true,
+        [Description("Language of the caption LocLabels, e.g. 1031 for German. Defaults to the org's " +
+                     "base language — a caption stored under a language nobody uses does not render.")] int? languageCode = null,
         CancellationToken ct = default)
     {
         try
@@ -162,6 +166,7 @@ public sealed class RibbonTools
                 validateLocation,
                 stripEntityInfo: true,
                 publish: publish,
+                languageCode: languageCode,
                 ct: ct);
 
             return JsonSerializer.Serialize(result, JsonOptions);

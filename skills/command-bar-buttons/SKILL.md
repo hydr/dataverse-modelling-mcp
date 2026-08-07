@@ -15,7 +15,9 @@ the first write — the summary below is a router, not a substitute.
 **Does visibility depend on what is selected in a grid?**
 
 - **Yes → classic ribbon.** `SelectionCountRule` is entity-bound and self-contained. Tools:
-  `ribbon_get`, `ribbon_add_button`, `ribbon_remove_button`.
+  `ribbon_get`, `ribbon_add_button`, `ribbon_remove_button`. One limit to plan around: a `Minimum`
+  above 1 is **not enforced** — the button is enabled on a single selected row too, so the lower bound
+  has to be re-checked in the handler and server-side.
 - **No → either works.** Modern commands are Microsoft's direction; classic stays versionable as XML.
 
 The modern equivalent of a selection rule is a Power Fx formula, and that formula must live in a
@@ -50,10 +52,13 @@ something does not appear:
 
 1. **Invalid `fontIcon`** (e.g. `$clientsvg:Money`) — modern command never renders. `command_create`
    validates; `command_list_icons` prints the known-good set.
-2. **`ModernImage="$webresource:….svg"`** — the whole classic button disappears, not just the icon.
-   Use a PNG pair via `imageWebResource`.
-3. **Unresolved `$LocLabels:`** — the button renders with the raw token as its caption. Use literal
-   `LabelText`.
+2. **A caption the client cannot resolve** — and a *literal* `LabelText` is one: it is stored and read
+   back perfectly, and the Unified Interface draws no button at all. A `$LocLabels:` reference without
+   its `<LocLabel>` node renders the raw token instead. The configuration that works is a `<LocLabel>`
+   node plus a reference, which is what `ribbon_add_button` now writes — pass the caption as `label`.
+3. **~~`ModernImage="$webresource:….svg"`~~** — this was in the list and is wrong. Six buttons on
+   `invoice` carry such a reference and all of them render; the disappearance came from the caption
+   (point 2). The rejection has been removed from the tool.
 4. **A `Location` that does not exist** — nothing renders. `ribbon_get` with `includeLocations=true`
    lists the valid ones.
 5. **Grid modern command with `visibilitytype = 0`** — vanishes as soon as rows are selected. The most
@@ -68,8 +73,10 @@ Never let one stand in for the other.
 - **Read the whole command bar.** Do not filter for the caption you expect — a mislabelled button is
   exactly the case you would then miss. This once produced the conclusion that classic ribbons no
   longer worked at all, when the button had been rendering the whole time as `LabelText`.
-- **Compare against a reference button you know works.** If yours is missing and the reference
-  renders, the fault is in your definition. If neither renders, you are in the wrong app.
+- **Compare against a reference button you know works — on the same table.** If yours is missing and
+  the reference renders, the fault is in your definition. If neither renders, you are in the wrong app.
+  The table matters: comparing an `invoice` button against `sample_purchaseorder`, where literal captions
+  work fine, sends you through Location, TemplateAlias, Sequence and cache while the cause is the label.
 - **Searching the compiled ribbon for your CustomAction id always fails.** `RetrieveEntityRibbon`
   returns the ribbon with the diff already applied — it contains no `<CustomAction>` elements at all.
   Search for the button id and the caption.

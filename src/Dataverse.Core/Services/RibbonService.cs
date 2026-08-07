@@ -323,6 +323,7 @@ public sealed class RibbonService
         bool stripEntityInfo = true,
         bool publish = true,
         int importTimeoutSeconds = 900,
+        int? languageCode = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(buttonId))
@@ -333,8 +334,9 @@ public sealed class RibbonService
         if (label.Contains("$LocLabels:", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
-                "Pass a literal label. An unresolved $LocLabels: reference renders as the raw token " +
-                "(the button then shows something like 'LabelText'), and nothing reports the failure.",
+                "Pass the caption itself, not a $LocLabels: reference. This tool writes the LocLabel " +
+                "node for you and points the button at it — a reference passed in here would end up " +
+                "nested inside another one.",
                 nameof(label));
         }
 
@@ -363,6 +365,8 @@ public sealed class RibbonService
             .Select(c => c.DiffId)
             .ToList();
 
+        var captionLanguage = languageCode ?? await GetBaseLanguageCodeAsync(orgUrl, ct);
+
         var ribbonDiffXml = BuildRibbonDiffXml(
             buttonId: buttonId,
             customActionId: customActionId,
@@ -379,7 +383,8 @@ public sealed class RibbonService
             tooltipTitle: tooltipTitle,
             tooltipDescription: tooltipDescription,
             templateAlias: templateAlias,
-            preserve: existing);
+            preserve: existing,
+            languageCode: captionLanguage);
 
         var reuseSolution = !string.IsNullOrWhiteSpace(solutionUniqueName);
         var tempSolution = solutionUniqueName
@@ -743,6 +748,37 @@ public sealed class RibbonService
         entry.DiffType == (int)RibbonDiffType.LocalizedLabel
         || string.Equals(RootElementName(entry.Xml), "LocLabel", StringComparison.Ordinal);
 
+    /// <summary>
+    /// The org's base language, used as the <c>languagecode</c> of the LocLabels this tool writes.
+    /// <para>
+    /// A caption stored under a language nobody uses is a caption that does not render, so guessing 1033
+    /// would reintroduce the very failure the LocLabels are there to fix. Falls back to 1033 only if the
+    /// organization row cannot be read.
+    /// </para>
+    /// </summary>
+    public async Task<int> GetBaseLanguageCodeAsync(string orgUrl, CancellationToken ct = default)
+    {
+        try
+        {
+            var raw = await _client.GetRawAsync(
+                orgUrl, "organizations?$select=languagecode&$top=1", ct: ct);
+            foreach (var item in EnumerateValue(raw))
+            {
+                var code = item.GetInt32OrZero("languagecode");
+                if (code > 0)
+                {
+                    return code;
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Could not read the org's base language; falling back to 1033.");
+        }
+
+        return 1033;
+    }
+
     private async Task<bool> DiffExistsAsync(
         string orgUrl,
         string tableLogicalName,
@@ -762,9 +798,11 @@ public sealed class RibbonService
     /// <summary>
     /// Build the <c>&lt;RibbonDiffXml&gt;</c> document for a single JavaScript button.
     /// <para>
-    /// Labels are written as literal <c>LabelText</c> attributes on purpose. A <c>$LocLabels:</c>
-    /// reference that does not resolve is not reported anywhere — the button simply renders with the raw
-    /// token as its caption.
+    /// Captions are written the way the Ribbon Workbench writes them: one <c>&lt;LocLabel&gt;</c> node per
+    /// string, referenced from the button as <c>$LocLabels:&lt;id&gt;</c>. A literal <c>LabelText</c> is
+    /// stored and reported back correctly by both <c>ribbon_get</c> and <c>RetrieveEntityRibbon</c>, and
+    /// the Unified Interface still does not draw the button — verified on <c>invoice</c>, where the same
+    /// button appeared the moment its caption moved into a LocLabel.
     /// </para>
     /// </summary>
     public static string BuildRibbonDiffXml(
@@ -783,14 +821,20 @@ public sealed class RibbonService
         string? tooltipTitle = null,
         string? tooltipDescription = null,
         string? templateAlias = "o1",
-        RibbonInfo? preserve = null)
+        RibbonInfo? preserve = null,
+        int languageCode = 1033)
     {
+        var (labels, labelReferences) = BuildLocLabels(
+            buttonId, label, tooltipTitle ?? label, tooltipDescription ?? label, languageCode);
+
         var button = new XElement("Button",
             new XAttribute("Id", buttonId),
             new XAttribute("Command", commandId),
-            new XAttribute("LabelText", label),
-            new XAttribute("ToolTipTitle", tooltipTitle ?? label),
-            new XAttribute("ToolTipDescription", tooltipDescription ?? label));
+            new XAttribute("LabelText", labelReferences.LabelText),
+            // Alt is the accessible name and points at the caption, as on every hand-built button.
+            new XAttribute("Alt", labelReferences.LabelText),
+            new XAttribute("ToolTipTitle", labelReferences.ToolTipTitle),
+            new XAttribute("ToolTipDescription", labelReferences.ToolTipDescription));
 
         if (!string.IsNullOrWhiteSpace(templateAlias))
         {
@@ -808,7 +852,6 @@ public sealed class RibbonService
 
         if (!string.IsNullOrWhiteSpace(modernImage))
         {
-            ValidateModernImage(modernImage);
             button.Add(new XAttribute("ModernImage", modernImage));
         }
 
@@ -870,10 +913,53 @@ public sealed class RibbonService
             rules.Add(enableRuleElement);
         }
 
-        // The new button carries a literal LabelText and needs no LocLabel of its own — but the labels
-        // of every other button on the table have to be re-sent, or the non-empty <LocLabels> section
-        // deletes them the same way an omitted CustomAction would.
-        return ComposeRibbonDiffXml(customActions, commandDefinitions, rules, existingLocLabels).ToString();
+        // The labels of every other button have to be re-sent too: a non-empty <LocLabels> replaces the
+        // whole collection, exactly as <CustomActions> does.
+        var locLabels = existingLocLabels
+            .Where(e => !labels.Any(l => IdEquals(e, l.Attribute("Id")!.Value)))
+            .Concat(labels)
+            .ToList();
+
+        return ComposeRibbonDiffXml(customActions, commandDefinitions, rules, locLabels).ToString();
+    }
+
+    /// <summary>
+    /// Build the <c>&lt;LocLabel&gt;</c> nodes for a button's captions and the <c>$LocLabels:</c>
+    /// references that point at them.
+    /// <para>
+    /// The reference carries no trailing semicolon — that is what every working button on a live org
+    /// looks like, and what the Ribbon Workbench writes.
+    /// </para>
+    /// </summary>
+    public static (List<XElement> Labels, (string LabelText, string ToolTipTitle, string ToolTipDescription) References)
+        BuildLocLabels(
+            string buttonId,
+            string label,
+            string tooltipTitle,
+            string tooltipDescription,
+            int languageCode)
+    {
+        XElement Label(string suffix, string text) =>
+            new("LocLabel",
+                new XAttribute("Id", $"{buttonId}.{suffix}"),
+                new XElement("Titles",
+                    new XElement("Title",
+                        new XAttribute("languagecode", languageCode),
+                        new XAttribute("description", text))));
+
+        var labels = new List<XElement>
+        {
+            Label("LabelText", label),
+            Label("ToolTipTitle", tooltipTitle),
+            Label("ToolTipDescription", tooltipDescription)
+        };
+
+        var references = (
+            LabelText: $"$LocLabels:{buttonId}.LabelText",
+            ToolTipTitle: $"$LocLabels:{buttonId}.ToolTipTitle",
+            ToolTipDescription: $"$LocLabels:{buttonId}.ToolTipDescription");
+
+        return (labels, references);
     }
 
     /// <summary>
@@ -983,33 +1069,10 @@ public sealed class RibbonService
     private static bool IdEquals(XElement element, string id) =>
         string.Equals(element.Attribute("Id")?.Value, id, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Reject the <c>ModernImage</c> forms that make a classic button vanish without a trace.
-    /// <para>
-    /// <c>ModernImage="$webresource:….svg"</c> is the documented-looking way to give a classic button a
-    /// modern icon, and it does not work: with a self-authored SVG web resource (type 11) that exists, is
-    /// published and has content, the button stops rendering entirely — no error anywhere. Removing the
-    /// attribute brings it straight back. The reliable route is a PNG pair on
-    /// <c>Image16by16</c>/<c>Image32by32</c> (that is what this org's working buttons use), which is what
-    /// <c>imageWebResource</c> writes.
-    /// </para>
-    /// <para>
-    /// This is the exact same failure shape as an invalid <c>fonticon</c> on a modern command, so it gets
-    /// the same treatment: refuse up front instead of shipping an invisible button.
-    /// </para>
-    /// </summary>
-    public static void ValidateModernImage(string modernImage)
-    {
-        if (modernImage.StartsWith("$webresource:", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException(
-                $"ModernImage='{modernImage}' is rejected: a $webresource: reference on ModernImage makes " +
-                "the classic button disappear silently — verified with an existing, published SVG web " +
-                "resource (type 11). Use imageWebResource with a PNG pair (Image16by16/Image32by32) " +
-                "instead, or leave the button without an icon.",
-                nameof(modernImage));
-        }
-    }
+    // ModernImage="$webresource:….svg" used to be rejected here, on the theory that it made the button
+    // vanish. It does not: on invoice, six buttons carry exactly that and all of them render. The
+    // original disappearance had a different cause — an empty caption, which gives the modern command
+    // bar nothing to draw.
 
     /// <summary>
     /// Translate the <c>enableRule</c> argument into the <c>&lt;EnableRule&gt;</c> element to declare and

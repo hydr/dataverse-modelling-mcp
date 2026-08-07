@@ -36,6 +36,12 @@ classic `RibbonDiffXml` is ignored. Both mechanisms render side by side on the s
   `lostCustomActionIds`; a hand-built import has no such guard.
 - An **empty** `<CustomActions />` removes nothing. Deletion goes through `ribbon_remove_button`,
   which deletes the stored `ribbondiff` / `ribboncommand` / `ribbonrule` rows.
+- **`ribbondiff` holds more than CustomActions.** Localized captions live there too, as `<LocLabel>`
+  nodes with `difftype = 3`, and they belong in `<LocLabels>` — not in `<CustomActions>`, where the
+  importer rejects them with *"Missing Location Attribute … for CustomAction element with
+  Id=….LabelText"*. `ribbon_get` returns them separately (`customActions` / `locLabels` /
+  `otherDiffs`), and `ribbon_remove_button` deletes a button's label rows with it — an orphaned one
+  breaks the next add on that table. Any table that has seen the Ribbon Workbench has such rows.
 
 ## Failures that return success
 

@@ -95,6 +95,8 @@ public sealed class RibbonService
         var encoded = Uri.EscapeDataString(filter);
 
         var diffs = new List<RibbonDiffEntry>();
+        var locLabels = new List<RibbonDiffEntry>();
+        var otherDiffs = new List<RibbonDiffEntry>();
         var diffRaw = await _client.GetRawAsync(
             orgUrl,
             $"{DiffSet}?$filter={encoded}&$select=ribbondiffid,diffid,difftype,ismanaged,rdx&$orderby=diffid",
@@ -102,13 +104,15 @@ public sealed class RibbonService
         foreach (var item in EnumerateValue(diffRaw))
         {
             var type = item.GetInt32OrZero("difftype");
-            diffs.Add(new RibbonDiffEntry(
+            var entry = new RibbonDiffEntry(
                 RibbonDiffId: item.TryGetGuid("ribbondiffid"),
                 DiffId: item.GetStringOrEmpty("diffid"),
                 DiffType: type,
                 DiffTypeName: EnumName<RibbonDiffType>(type),
                 IsManaged: IsTrue(item, "ismanaged"),
-                Xml: item.GetStringOrNull("rdx")));
+                Xml: item.GetStringOrNull("rdx"));
+
+            SortDiffRow(entry, diffs, locLabels, otherDiffs);
         }
 
         var commands = new List<RibbonCommandEntry>();
@@ -154,11 +158,73 @@ public sealed class RibbonService
             CustomActions: diffs,
             CommandDefinitions: commands,
             Rules: rules,
-            RibbonDiffXml: AssembleRibbonDiffXml(diffs, commands, rules),
+            RibbonDiffXml: AssembleRibbonDiffXml(diffs, commands, rules, locLabels),
             InsertLocations: locations,
             Source: "ribbondiff / ribboncommand / ribbonrule rows (the stored difference, not the " +
                     "compiled ribbon). RetrieveEntityRibbon would return the merged out-of-the-box + " +
-                    "managed + unmanaged ribbon instead.");
+                    "managed + unmanaged ribbon instead.",
+            LocLabels: locLabels,
+            OtherDiffs: otherDiffs);
+    }
+
+    /// <summary>
+    /// Put one <c>ribbondiff</c> row into the bucket its section calls for.
+    /// <para>
+    /// The element name of the stored <c>rdx</c> wins over <c>difftype</c>: the column is what the
+    /// platform recorded when the row was written, the element is what the importer will actually
+    /// parse. A <c>&lt;LocLabel&gt;</c> in <c>&lt;CustomActions&gt;</c> fails the import with
+    /// "Missing Location Attribute" no matter what the column says.
+    /// </para>
+    /// </summary>
+    private static void SortDiffRow(
+        RibbonDiffEntry entry,
+        List<RibbonDiffEntry> customActions,
+        List<RibbonDiffEntry> locLabels,
+        List<RibbonDiffEntry> otherDiffs)
+    {
+        var elementName = RootElementName(entry.Xml);
+
+        if (string.Equals(elementName, "LocLabel", StringComparison.Ordinal)
+            || (elementName is null && entry.DiffType == (int)RibbonDiffType.LocalizedLabel))
+        {
+            locLabels.Add(entry);
+            return;
+        }
+
+        if (IsCustomActionsChild(elementName)
+            || (elementName is null && entry.DiffType == (int)RibbonDiffType.Standard))
+        {
+            customActions.Add(entry);
+            return;
+        }
+
+        otherDiffs.Add(entry);
+    }
+
+    /// <summary>
+    /// Element names that legitimately live inside <c>&lt;CustomActions&gt;</c>. <c>HideCustomAction</c>
+    /// belongs there just as much as <c>CustomAction</c> does — on a grown table it is usually the
+    /// majority of the section (invoice: 11 of 17), and dropping one un-hides an out-of-the-box button.
+    /// </summary>
+    private static bool IsCustomActionsChild(string? elementName) =>
+        elementName is "CustomAction" or "HideCustomAction";
+
+    /// <summary>Local name of the stored node's root element, or <c>null</c> if it does not parse.</summary>
+    private static string? RootElementName(string? xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml))
+        {
+            return null;
+        }
+
+        try
+        {
+            return XElement.Parse(xml).Name.LocalName;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -455,14 +521,18 @@ public sealed class RibbonService
     {
         var info = await GetAsync(orgUrl, tableLogicalName, includeManaged: true, ct: ct);
 
-        var matches = info.CustomActions.Where(d => Matches(d, buttonId)).ToList();
+        // The label rows count as part of the button. Leaving them behind is not cosmetic: an orphaned
+        // <LocLabel> stays in the table's diff and breaks the next ribbon_add_button on it.
+        var candidates = info.CustomActions.Concat(info.LocLabels ?? []).ToList();
+
+        var matches = candidates.Where(d => BelongsToButton(d, buttonId)).ToList();
         if (matches.Count == 0)
         {
             throw new InvalidOperationException(
                 $"No ribbon diff of '{tableLogicalName}' matches '{buttonId}'. " +
-                (info.CustomActions.Count == 0
+                (candidates.Count == 0
                     ? "This table has no stored ribbon customisation at all."
-                    : "Stored diff ids: " + string.Join(", ", info.CustomActions.Select(d => d.DiffId))));
+                    : "Stored diff ids: " + string.Join(", ", candidates.Select(d => d.DiffId))));
         }
 
         var managed = matches.Where(m => m.IsManaged).ToList();
@@ -654,10 +724,24 @@ public sealed class RibbonService
                || ex.Message.Contains("Generic SQL error", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool Matches(RibbonDiffEntry entry, string buttonId) =>
+    /// <summary>
+    /// Whether a stored diff row belongs to <paramref name="buttonId"/>.
+    /// <para>
+    /// Label rows are matched by prefix rather than by a fixed suffix list: a <c>&lt;LocLabel&gt;</c> id
+    /// is always <c>&lt;controlId&gt;.&lt;attribute&gt;</c> (<c>.LabelText</c>, <c>.Alt</c>,
+    /// <c>.ToolTipTitle</c>, …), and the set of attributes a designer may localize is open-ended.
+    /// </para>
+    /// </summary>
+    public static bool BelongsToButton(RibbonDiffEntry entry, string buttonId) =>
         string.Equals(entry.DiffId, buttonId, StringComparison.OrdinalIgnoreCase)
         || string.Equals(entry.DiffId, $"{buttonId}.CustomAction", StringComparison.OrdinalIgnoreCase)
-        || (entry.Xml ?? string.Empty).Contains($"Id=\"{buttonId}\"", StringComparison.OrdinalIgnoreCase);
+        || (entry.Xml ?? string.Empty).Contains($"Id=\"{buttonId}\"", StringComparison.OrdinalIgnoreCase)
+        || (IsLocLabel(entry)
+            && entry.DiffId.StartsWith($"{buttonId}.", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsLocLabel(RibbonDiffEntry entry) =>
+        entry.DiffType == (int)RibbonDiffType.LocalizedLabel
+        || string.Equals(RootElementName(entry.Xml), "LocLabel", StringComparison.Ordinal);
 
     private async Task<bool> DiffExistsAsync(
         string orgUrl,
@@ -767,7 +851,7 @@ public sealed class RibbonService
 
         // Everything the table already has, minus anything this button is about to redefine. Omitting
         // an existing node from a non-empty section deletes it.
-        var (existingActions, existingCommands, existingRules) = ExplodePreserved(preserve);
+        var (existingActions, existingCommands, existingRules, existingLocLabels) = ExplodePreserved(preserve);
 
         var customActions = existingActions
             .Where(e => !IdEquals(e, customActionId))
@@ -786,7 +870,10 @@ public sealed class RibbonService
             rules.Add(enableRuleElement);
         }
 
-        return ComposeRibbonDiffXml(customActions, commandDefinitions, rules).ToString();
+        // The new button carries a literal LabelText and needs no LocLabel of its own — but the labels
+        // of every other button on the table have to be re-sent, or the non-empty <LocLabels> section
+        // deletes them the same way an omitted CustomAction would.
+        return ComposeRibbonDiffXml(customActions, commandDefinitions, rules, existingLocLabels).ToString();
     }
 
     /// <summary>
@@ -801,7 +888,8 @@ public sealed class RibbonService
     public static XElement ComposeRibbonDiffXml(
         IEnumerable<XElement> customActions,
         IEnumerable<XElement> commandDefinitions,
-        IEnumerable<XElement> rules)
+        IEnumerable<XElement> rules,
+        IEnumerable<XElement>? locLabels = null)
     {
         var ruleList = rules.ToList();
 
@@ -817,7 +905,7 @@ public sealed class RibbonService
                 Bucket("TabDisplayRules", "TabDisplayRule"),
                 Bucket("DisplayRules", "DisplayRule"),
                 Bucket("EnableRules", "EnableRule")),
-            new XElement("LocLabels"));
+            new XElement("LocLabels", (locLabels ?? []).Cast<object>().ToArray()));
     }
 
     /// <summary>
@@ -825,23 +913,34 @@ public sealed class RibbonService
     /// ones (they belong to their owning solution and must not be re-sent from an unmanaged layer) and
     /// anything unparseable.
     /// </summary>
-    private static (List<XElement> Actions, List<XElement> Commands, List<XElement> Rules) ExplodePreserved(
-        RibbonInfo? preserve)
+    private static (List<XElement> Actions, List<XElement> Commands, List<XElement> Rules, List<XElement> LocLabels)
+        ExplodePreserved(RibbonInfo? preserve)
     {
         var actions = new List<XElement>();
         var commands = new List<XElement>();
         var rules = new List<XElement>();
+        var locLabels = new List<XElement>();
 
         if (preserve is null)
         {
-            return (actions, commands, rules);
+            return (actions, commands, rules, locLabels);
         }
 
+        // Second line of defence behind the sorting in GetAsync: the importer demands a Location
+        // attribute of every child of <CustomActions>, and a <LocLabel> has none.
         foreach (var entry in preserve.CustomActions.Where(e => !e.IsManaged))
+        {
+            if (TryParse(entry.Xml) is { } el && IsCustomActionsChild(el.Name.LocalName))
+            {
+                actions.Add(el);
+            }
+        }
+
+        foreach (var entry in (preserve.LocLabels ?? []).Where(e => !e.IsManaged))
         {
             if (TryParse(entry.Xml) is { } el)
             {
-                actions.Add(el);
+                locLabels.Add(el);
             }
         }
 
@@ -861,7 +960,7 @@ public sealed class RibbonService
             }
         }
 
-        return (actions, commands, rules);
+        return (actions, commands, rules, locLabels);
 
         static XElement? TryParse(string? xml)
         {
@@ -1140,7 +1239,8 @@ public sealed class RibbonService
     public static string AssembleRibbonDiffXml(
         IReadOnlyList<RibbonDiffEntry> diffs,
         IReadOnlyList<RibbonCommandEntry> commands,
-        IReadOnlyList<RibbonRuleEntry> rules)
+        IReadOnlyList<RibbonRuleEntry> rules,
+        IReadOnlyList<RibbonDiffEntry>? locLabels = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine("<RibbonDiffXml>");
@@ -1168,6 +1268,14 @@ public sealed class RibbonService
         }
 
         sb.AppendLine("  </RuleDefinitions>");
+
+        sb.AppendLine("  <LocLabels>");
+        foreach (var locLabel in (locLabels ?? []).Where(l => !string.IsNullOrWhiteSpace(l.Xml)))
+        {
+            sb.Append("    ").AppendLine(locLabel.Xml!.Trim());
+        }
+
+        sb.AppendLine("  </LocLabels>");
         sb.Append("</RibbonDiffXml>");
 
         return sb.ToString();

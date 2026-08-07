@@ -47,9 +47,24 @@ one `ribboncustomization` record per table:
 | XML node | Table | Key column | XML column |
 |---|---|---|---|
 | `<CustomAction>` | `ribbondiff` | `diffid` | `rdx` |
+| `<HideCustomAction>` | `ribbondiff` | `diffid` | `rdx` |
+| `<LocLabel>` | `ribbondiff` | `diffid` | `rdx` |
 | `<CommandDefinition>` | `ribboncommand` | `command` | `commanddefinition` |
 | `<EnableRule>` / `<DisplayRule>` | `ribbonrule` | `ruleid` | `ruledefinition` |
 | button ↔ tab placement | `ribbontabtocommandmap` | `controlid` | — |
+
+`ribbondiff` holds more than CustomActions, and the column that tells them apart is `difftype`:
+
+| `difftype` | Name | Section it belongs in |
+|---|---|---|
+| 0 | `Standard` | `<CustomActions>` — both `<CustomAction>` and `<HideCustomAction>` |
+| 1 | `Tab` | `<Templates>` |
+| 2 | `LayoutTemplate` | `<Templates>` |
+| 3 | `LocalizedLabel` | `<LocLabels>` |
+
+`ribbon_get` returns them pre-sorted: `customActions` (type 0), `locLabels` (type 3) and `otherDiffs`
+(types 1 and 2, carried along untouched). See "Tables with Ribbon Workbench history" below for why
+that separation is not a nicety.
 
 All four are readable through the Web API. The three that carry XML are also **deletable** — which is
 the whole answer to "how do I remove a ribbon button". The parent `ribboncustomization` is not:
@@ -124,6 +139,42 @@ Two consequences worth knowing. Re-running `ribbon_add_button` with the same `bu
 button in place. And removal *could* in principle be done by importing a non-empty collection that omits
 the unwanted node — but only while at least one other button remains, since the all-empty case is a
 no-op. That is a sharp edge, which is why `ribbon_remove_button` deletes rows instead.
+
+**Re-sending is not enough — each node has to go back into its own section.** `<LocLabels>` behaves
+exactly like `<CustomActions>`: empty means "leave alone", non-empty replaces the collection. So the
+labels of the other buttons have to travel with the import too, and they have to travel in the right
+place. See the next section for what happens when they do not.
+
+### Tables with Ribbon Workbench history
+
+The Ribbon Workbench does not write captions as literal `LabelText` attributes. It writes a `<LocLabel>`
+node per localized string and points the button at it with `$LocLabels:<id>;`:
+
+```xml
+<LocLabel Id="sample.invoice.Clone.CloneButton.LabelText">
+  <Titles><Title languagecode="1031" description="Rechnung kopieren" /></Titles>
+</LocLabel>
+```
+
+Those nodes land in `ribbondiff` with `difftype = 3`, right next to the CustomActions. Feed one back
+into `<CustomActions>` and the import fails — the importer parses every child of that section as a
+CustomAction and demands a `Location` attribute, which a LocLabel naturally does not have:
+
+```
+Ribbons import: FAILURE: Missing Location Attribute in the Ribbon Customization XML
+for CustomAction element with Id=sample.invoice.Clone.CloneButton.LabelText on Entity=invoice
+```
+
+The import is atomic, so nothing is lost when this happens — but nothing can be added either, and the
+table stays unmanageable through the tool until the sorting is right.
+
+Worth knowing why this went unnoticed for so long: the reference table used throughout this document,
+`sample_purchaseorder`, has **zero** LocLabel nodes — all of its captions are literal. Any table someone has
+opened in the Ribbon Workbench has them, which is most of the older ones.
+
+`ribbon_remove_button` deletes a button's label rows along with it (`<buttonId>.LabelText`, `.Alt`, and
+any other `<buttonId>.<attribute>`). That matters more than tidiness: an orphaned LocLabel row stays in
+the table's diff and breaks the *next* `ribbon_add_button` on that table.
 
 **Step 7 needs a retry.** A publish issued immediately after `ImportSolutionAsync` reports terminal
 routinely comes back with HTTP 429 / `0x80071151 — "Cannot start the requested operation [Publish]
@@ -254,7 +305,8 @@ So:
 | `includeLocations` | bool | no | Also list valid `Location` strings from the compiled ribbon |
 
 Returns the reconstructed `RibbonDiffXml` plus the underlying rows with their ids, so you can see
-exactly what `ribbon_remove_button` would delete.
+exactly what `ribbon_remove_button` would delete. The rows come pre-sorted by `difftype`:
+`customActions`, `locLabels` and `otherDiffs`.
 
 **Example prompt:** "Show me the classic ribbon customisations on sample_purchaseorder and the locations I
 could add a button to"
@@ -294,7 +346,7 @@ SelectedControlSelectedItemIds and SelectedControl, enabled only when exactly on
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `tableLogicalName` | string | yes | |
-| `buttonId` | string | yes | Matches the button id, the CustomAction id, or any diff whose XML declares `Id="<buttonId>"` |
+| `buttonId` | string | yes | Matches the button id, the CustomAction id, any diff whose XML declares `Id="<buttonId>"`, and the button's `<LocLabel>` rows (`<buttonId>.LabelText`, `.Alt`, …) |
 | `removeCommandDefinition` | bool | no | Default true; skipped when another CustomAction still references it |
 | `publish` | bool | no | Default true |
 

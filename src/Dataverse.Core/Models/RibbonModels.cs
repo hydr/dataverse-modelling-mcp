@@ -55,18 +55,34 @@ public sealed record RibbonRuleEntry(
 /// <summary>
 /// The reconstructed ribbon <b>difference</b> of a table plus, optionally, the insert points that
 /// exist in its <b>compiled</b> ribbon.
+/// <para>
+/// The <c>ribbondiff</c> rows arrive as one flat set and are split by <see cref="RibbonDiffType"/>,
+/// because each kind belongs in a different section of the RibbonDiffXml. Sending them all as
+/// <c>&lt;CustomActions&gt;</c> is what the import rejects with "Missing Location Attribute".
+/// </para>
 /// </summary>
 public sealed record RibbonInfo(
     string TableLogicalName,
     int CustomActionCount,
     int CommandDefinitionCount,
     int RuleCount,
+    /// <summary><c>difftype = Standard</c> — the <c>&lt;CustomAction&gt;</c> nodes, nothing else.</summary>
     IReadOnlyList<RibbonDiffEntry> CustomActions,
     IReadOnlyList<RibbonCommandEntry> CommandDefinitions,
     IReadOnlyList<RibbonRuleEntry> Rules,
     string RibbonDiffXml,
     IReadOnlyList<string>? InsertLocations,
-    string Source);
+    string Source,
+    /// <summary>
+    /// <c>difftype = LocalizedLabel</c> — <c>&lt;LocLabel&gt;</c> nodes carrying the per-language
+    /// captions. The Ribbon Workbench writes one per label it localizes.
+    /// </summary>
+    IReadOnlyList<RibbonDiffEntry>? LocLabels = null,
+    /// <summary>
+    /// <c>difftype = Tab</c> / <c>LayoutTemplate</c>. Carried along so a round-trip does not silently
+    /// drop them; this code does not place them into their sections.
+    /// </summary>
+    IReadOnlyList<RibbonDiffEntry>? OtherDiffs = null);
 
 public sealed record RibbonAddButtonResult(
     bool Success,

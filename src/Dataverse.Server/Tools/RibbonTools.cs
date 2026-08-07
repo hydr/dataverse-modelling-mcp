@@ -88,6 +88,10 @@ public sealed class RibbonTools
                  "existing unmanaged nodes alongside the new one, replacing only the node with a matching " +
                  "id, and reports anything that went missing in lostCustomActionIds. Re-running with the " +
                  "same buttonId updates that button in place. " +
+                 "Each node goes into the section its element name calls for. That matters on any table " +
+                 "someone has touched with the Ribbon Workbench: its localized captions are stored as " +
+                 "<LocLabel> nodes, and re-sending one inside <CustomActions> fails the import with " +
+                 "'Missing Location Attribute … for CustomAction element with Id=….LabelText'. " +
                  "Labels are written as literal LabelText attributes; a $LocLabels: value is rejected. " +
                  SilentFailureNote + " " + ChoiceNote)]
     public static async Task<string> RibbonAddButton(
@@ -185,7 +189,10 @@ public sealed class RibbonTools
                  "<CommandDefinition> can linger in the compiled ribbon even after its row is deleted and " +
                  "the org is fully published — it is inert, since nothing places it on a tab, and it is " +
                  "reported as a warning. Managed diff rows are refused; those can only be suppressed with " +
-                 "a <HideCustomAction> shipped in a solution.")]
+                 "a <HideCustomAction> shipped in a solution. " +
+                 "The button's <LocLabel> rows ('<buttonId>.LabelText', '.Alt', …) are deleted with it. " +
+                 "Leaving them behind is not cosmetic: an orphaned label row stays in the table's diff " +
+                 "and breaks the next ribbon_add_button on that table.")]
     public static async Task<string> RibbonRemoveButton(
         RibbonService svc,
         ConfigProvider config,

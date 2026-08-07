@@ -240,6 +240,160 @@ public sealed class RibbonServiceTests
         });
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // LocLabels — every node of the diff belongs in the section its element name calls for
+    // ---------------------------------------------------------------------------------------------
+
+    [Test]
+    public void BuildRibbonDiffXml_PutsLocLabelsIntoTheirOwnSection()
+    {
+        // The failure this guards against: a <LocLabel> re-sent inside <CustomActions> makes the import
+        // fail with "Missing Location Attribute … for CustomAction element with Id=….LabelText",
+        // because the importer parses every child of that section as a CustomAction.
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: ExistingRibbon("b1"));
+
+        var doc = XElement.Parse(xml);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                doc.Element("CustomActions")!.Elements().Select(e => e.Name.LocalName).Distinct(),
+                Is.EquivalentTo(new[] { "CustomAction", "HideCustomAction" }),
+                "<CustomActions> takes CustomAction and HideCustomAction — and nothing else.");
+            Assert.That(
+                doc.Element("CustomActions")!.Elements().All(e => e.Attribute("Location") is not null),
+                Is.True,
+                "Every child needs a Location attribute — that is exactly what the import checks.");
+            Assert.That(
+                doc.Element("LocLabels")!.Elements("LocLabel").Select(e => e.Attribute("Id")!.Value),
+                Is.EqualTo(new[] { "b1.LabelText" }));
+        });
+    }
+
+    [Test]
+    public void BuildRibbonDiffXml_KeepsHideCustomActions()
+    {
+        // On a grown table these are the majority of <CustomActions> — invoice has 11 of 17. Dropping
+        // one silently un-hides an out-of-the-box button.
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: ExistingRibbon("b1"));
+
+        Assert.That(
+            XElement.Parse(xml).Element("CustomActions")!
+                .Elements("HideCustomAction").Select(e => e.Attribute("HideActionId")!.Value),
+            Is.EqualTo(new[] { "b1.Hide" }));
+    }
+
+    [Test]
+    public void BuildRibbonDiffXml_KeepsTheLocLabelsOfOtherButtons()
+    {
+        // <LocLabels> replaces the whole collection just like <CustomActions> does: omitting the labels
+        // of the buttons already on the table would strip their captions.
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: ExistingRibbon("b1"));
+
+        var label = XElement.Parse(xml).Element("LocLabels")!.Elements("LocLabel").Single();
+
+        Assert.That(
+            label.Element("Titles")!.Element("Title")!.Attribute("description")!.Value,
+            Is.EqualTo("Altes Label"));
+    }
+
+    [Test]
+    public void BuildRibbonDiffXml_DoesNotReSendManagedLocLabels()
+    {
+        var managed = ExistingRibbon("b1") with
+        {
+            LocLabels = new[]
+            {
+                new RibbonDiffEntry(Guid.NewGuid(), "b1.LabelText", 3, "LocalizedLabel", true,
+                    "<LocLabel Id=\"b1.LabelText\"><Titles><Title languagecode=\"1031\" " +
+                    "description=\"Verwaltet\" /></Titles></LocLabel>")
+            }
+        };
+
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: managed);
+
+        Assert.That(XElement.Parse(xml).Element("LocLabels")!.Elements(), Is.Empty);
+    }
+
+    [Test]
+    public void ExplodePreserved_DropsANonCustomActionThatSlippedIntoTheCustomActionList()
+    {
+        // Belt and braces for rows whose difftype column does not match what they actually are.
+        var mislabelled = ExistingRibbon("b1") with
+        {
+            CustomActions = new[]
+            {
+                new RibbonDiffEntry(Guid.NewGuid(), "b1.LabelText", 0, "Standard", false,
+                    "<LocLabel Id=\"b1.LabelText\"><Titles /></LocLabel>")
+            }
+        };
+
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: mislabelled);
+
+        Assert.That(
+            XElement.Parse(xml).Element("CustomActions")!.Elements().Select(e => e.Attribute("Id")!.Value),
+            Is.EqualTo(new[] { "b2.CustomAction" }));
+    }
+
+    [Test]
+    public void ComposeRibbonDiffXml_EmitsAnEmptyLocLabelsSectionWhenThereAreNone()
+    {
+        var doc = RibbonService.ComposeRibbonDiffXml(
+            Array.Empty<XElement>(), Array.Empty<XElement>(), Array.Empty<XElement>());
+
+        Assert.That(doc.Element("LocLabels")!.Elements(), Is.Empty);
+    }
+
+    [Test]
+    public void AssembleRibbonDiffXml_ShowsLocLabelsInTheirOwnSection()
+    {
+        // ribbon_get used to hand back a document no import would accept.
+        var info = ExistingRibbon("b1");
+
+        var doc = XElement.Parse(RibbonService.AssembleRibbonDiffXml(
+            info.CustomActions, info.CommandDefinitions, info.Rules, info.LocLabels));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                doc.Element("CustomActions")!.Elements().Select(e => e.Name.LocalName).Distinct(),
+                Is.EquivalentTo(new[] { "CustomAction", "HideCustomAction" }));
+            Assert.That(doc.Element("LocLabels")!.Elements("LocLabel").Count(), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void BelongsToButton_ClaimsTheLabelRowsOfItsButton()
+    {
+        // Orphaned label rows are what poisoned the next ribbon_add_button on the same table.
+        var labelRow = new RibbonDiffEntry(Guid.NewGuid(), "b1.LabelText", 3, "LocalizedLabel", false,
+            "<LocLabel Id=\"b1.LabelText\"><Titles /></LocLabel>");
+        var altRow = labelRow with { DiffId = "b1.Alt" };
+        var otherButton = labelRow with { DiffId = "b2.LabelText" };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RibbonService.BelongsToButton(labelRow, "b1"), Is.True);
+            Assert.That(RibbonService.BelongsToButton(altRow, "b1"), Is.True);
+            Assert.That(RibbonService.BelongsToButton(otherButton, "b1"), Is.False);
+        });
+    }
+
     private static RibbonInfo ExistingRibbon(string buttonId) => new(
         "sample_mcptest", 1, 1, 1,
         new[]
@@ -247,7 +401,10 @@ public sealed class RibbonServiceTests
             new RibbonDiffEntry(Guid.NewGuid(), $"{buttonId}.CustomAction", 0, "Standard", false,
                 $"<CustomAction Id=\"{buttonId}.CustomAction\" Location=\"oldloc\" Sequence=\"41\">" +
                 $"<CommandUIDefinition><Button Id=\"{buttonId}\" Command=\"{buttonId}.Command\" " +
-                "LabelText=\"Old\" /></CommandUIDefinition></CustomAction>")
+                "LabelText=\"Old\" /></CommandUIDefinition></CustomAction>"),
+            // difftype 0 as well, and by far the more common kind on a grown table.
+            new RibbonDiffEntry(Guid.NewGuid(), $"{buttonId}.Hide", 0, "Standard", false,
+                $"<HideCustomAction HideActionId=\"{buttonId}.Hide\" Location=\"Mscrm.Form.x.Y\" />")
         },
         new[]
         {
@@ -260,7 +417,15 @@ public sealed class RibbonServiceTests
             new RibbonRuleEntry(Guid.NewGuid(), $"{buttonId}.EnableRule", 1, false,
                 $"<EnableRule Id=\"{buttonId}.EnableRule\"><SelectionCountRule Minimum=\"1\" /></EnableRule>")
         },
-        "<RibbonDiffXml />", null, "test");
+        "<RibbonDiffXml />", null, "test",
+        // What the Ribbon Workbench leaves behind on every table with localized captions — and what no
+        // test used to cover, which is why difftype 3 slipped through as a CustomAction.
+        LocLabels: new[]
+        {
+            new RibbonDiffEntry(Guid.NewGuid(), $"{buttonId}.LabelText", 3, "LocalizedLabel", false,
+                $"<LocLabel Id=\"{buttonId}.LabelText\"><Titles>" +
+                "<Title languagecode=\"1031\" description=\"Altes Label\" /></Titles></LocLabel>")
+        });
 
     // ---------------------------------------------------------------------------------------------
     // Enable rules

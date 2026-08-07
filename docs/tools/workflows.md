@@ -165,7 +165,8 @@ Attributen, und die Signatur der referenzierten Codeaktivitäten.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `definitionJson` | string | Yes | Die Definition als JSON |
+| `definitionJson` | string | Eines von beiden | Die Definition als JSON |
+| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
 
 Jeder Befund trägt `code`, `path`, `problem` und `fix`. Die Codetabelle steht im Skill.
 
@@ -181,12 +182,23 @@ Schreibt die Logik als XAML. Schreibt **nur**, wenn alle drei Prüfungen sauber 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflowId` | GUID string | Yes | Der Zielworkflow |
-| `definitionJson` | string | Yes | Die Definition als JSON |
+| `definitionJson` | string | Eines von beiden | Die Definition als JSON |
+| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
 | `reactivate` | bool | No | Aktivierten Workflow deaktivieren, schreiben, wieder aktivieren |
+| `dryRun` | bool | No | Nur prüfen und in `diff` berichten, nichts schreiben |
+| `backupFile` | string | No | Pfad, unter dem das vorherige XAML abgelegt wird |
 
-Die Antwort enthält die vergebenen `stepIds` und in `backup` das vorherige XAML. Ein aktivierter
-Workflow wird ohne `reactivate=true` abgelehnt (`WF210`). Den **Modus vorher setzen** — er bestimmt,
-ob das XAML Persistenzpunkte enthalten darf.
+Die Antwort enthält die vergebenen `stepIds` und das vorherige XAML — in `backup`, oder als Pfad in
+`backupFile`, wenn du einen angegeben hast. Ein aktivierter Workflow wird ohne `reactivate=true`
+abgelehnt (`WF210`). Den **Modus vorher setzen** — er bestimmt, ob das XAML Persistenzpunkte enthalten
+darf.
+
+**Bei echten Workflows `definitionFile` und `backupFile` nehmen, nicht die Inline-Varianten.** Eine
+Definition mit eingebettetem Signaturbild liegt bei ~28.000 Zeichen, das XAML dahinter bei ~180.000.
+Inline übergeben heißt: jemand tippt das ab, und dabei kippen Zeichen. Der Fehler ist still — das JSON
+bleibt gültig, alle drei Prüfungen laufen sauber durch, kaputt ist nur der base64-Block, den es
+transportiert. Genau so ist im August 2026 in zwei Workflows das Logo in der E-Mail-Signatur
+zerstört worden; aufgefallen ist es erst beim Nachrechnen der PNG-Prüfsummen.
 
 **Example prompt:** „Schreibe diese Logik in Workflow abc123"
 
@@ -200,7 +212,12 @@ Schreibvorgang.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflowId` | GUID string | Yes | Der Workflow |
-| `xaml` | string | Yes | Das wiederherzustellende XAML |
+| `xaml` | string | Eines von beiden | Das wiederherzustellende XAML |
+| `xamlFile` | string | Eines von beiden | Pfad zu der Datei, in der das XAML liegt |
+
+`xamlFile` ist hier der Normalfall: „unverändert zurücksetzen" überlebt das Abschreiben eines
+sechsstelligen Strings nicht. Es passt direkt auf `backupFile` von `workflow_set_definition` und auf
+die Datei, in die ein zu großer Export ausgelagert wurde.
 
 **Example prompt:** „Stelle das XAML von vorhin in Workflow abc123 wieder her"
 
@@ -212,8 +229,9 @@ Findet heraus, **welcher Teil** einer Definition sich nicht aktivieren lässt.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `definitionJson` | string | Yes | Die Definition, die nicht aktiviert |
 | `primaryEntity` | string | Yes | Logischer Name der Primärentität |
+| `definitionJson` | string | Eines von beiden | Die Definition, die nicht aktiviert |
+| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
 | `isRealtime` | bool | No | `true` bei einem Echtzeitprozess (Standard `false`) |
 
 Aktivierungsfehler sind praktisch nutzlos: `0x80040216` heißt wörtlich „unerwarteter Fehler". Das Tool

@@ -375,6 +375,13 @@ public sealed class WorkflowAuthoringService(
                 {
                     foreach (var (condition, index) in conditions.Select((c, n) => (c, n)))
                     {
+                        // A bracketed group holds comparisons instead of being one.
+                        if (condition.IsGroup)
+                        {
+                            await WalkConditions(condition.Conditions!, $"{basePath}.conditions[{index}]");
+                            continue;
+                        }
+
                         // A comparison on a step output has no attribute of its own.
                         if (string.IsNullOrWhiteSpace(condition.StepOutput))
                             await CheckAttribute(condition.Entity ?? definition.PrimaryEntity, condition.Attribute,

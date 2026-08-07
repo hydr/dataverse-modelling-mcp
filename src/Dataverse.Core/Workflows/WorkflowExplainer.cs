@@ -224,12 +224,16 @@ public static class WorkflowExplainer
         var joiner = string.Equals(logicalOperator, "Or", StringComparison.OrdinalIgnoreCase)
             ? " OR " : " AND ";
 
-        return string.Join(joiner, conditions.Select(c => string.IsNullOrWhiteSpace(c.StepOutput)
-            // A related read is worth naming as such, so the reader sees the hop.
-            ? $"{c.Entity}.{c.Attribute}"
-              + (string.IsNullOrWhiteSpace(c.Via) ? string.Empty : $" (via {c.Via})")
-              + $" {Humanise(c.Operator)}{DescribeValue(c.Value)}"
-            : $"output {c.StepOutput} {Humanise(c.Operator)}{DescribeValue(c.Value)}"));
+        return string.Join(joiner, conditions.Select(c =>
+            // A bracket is shown as one, or the line would read as if the operators were flat.
+            c.IsGroup
+                ? $"({DescribeConditions(c.Conditions!, c.GroupOperator)})"
+                : string.IsNullOrWhiteSpace(c.StepOutput)
+                    // A related read is worth naming as such, so the reader sees the hop.
+                    ? $"{c.Entity}.{c.Attribute}"
+                      + (string.IsNullOrWhiteSpace(c.Via) ? string.Empty : $" (via {c.Via})")
+                      + $" {Humanise(c.Operator)}{DescribeValue(c.Value)}"
+                    : $"output {c.StepOutput} {Humanise(c.Operator)}{DescribeValue(c.Value)}"));
     }
 
     private static string Humanise(string op) => op switch

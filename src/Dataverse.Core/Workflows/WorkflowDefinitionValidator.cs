@@ -332,10 +332,46 @@ public static class WorkflowDefinitionValidator
         }
         else
         {
-            for (var i = 0; i < branch.Conditions.Count; i++)
+            ValidateComparisons(
+                branch.Conditions, $"{path}.conditions", definition, issues, availableOutputs);
+        }
+
+        if (branch.Steps is { Count: > 0 })
+            ValidateSteps(branch.Steps, $"{path}.{stepsProperty}", definition, issues, availableOutputs,
+                insideStage, activities);
+
+        if (branch.Conditions.Count > 1
+            && branch.LogicalOperator is { } logical
+            && logical is not ("And" or "Or" or "and" or "or"))
+            issues.Add(new WorkflowValidationIssue("error", "WF076", $"{path}.logicalOperator",
+                $"Unknown logical operator '{logical}'.",
+                "Use \"And\" or \"Or\"."));
+    }
+
+    /// <summary>
+    /// One level of comparisons. An entry that brackets others recurses with its own operator.
+    /// </summary>
+    private static void ValidateComparisons(
+        List<WorkflowCondition> conditions, string path, WorkflowDefinition definition,
+        List<WorkflowValidationIssue> issues, List<string> availableOutputs)
+    {
+            for (var i = 0; i < conditions.Count; i++)
             {
-                var condition = branch.Conditions[i];
-                var conditionPath = $"{path}.conditions[{i}]";
+                var condition = conditions[i];
+                var conditionPath = $"{path}[{i}]";
+
+                if (condition.IsGroup)
+                {
+                    if (condition.GroupOperator is { } groupOperator
+                        && groupOperator is not ("And" or "Or" or "and" or "or"))
+                        issues.Add(new WorkflowValidationIssue("error", "WF076", $"{conditionPath}.groupOperator",
+                            $"Unknown logical operator '{groupOperator}'.",
+                            "Use \"And\" or \"Or\"."));
+
+                    ValidateComparisons(
+                        condition.Conditions!, $"{conditionPath}.conditions", definition, issues, availableOutputs);
+                    continue;
+                }
 
                 var comparesOutput = !string.IsNullOrWhiteSpace(condition.StepOutput);
 
@@ -393,18 +429,6 @@ public static class WorkflowDefinitionValidator
                 if (condition.Value is not null)
                     ValidateValue(condition.Value, $"{conditionPath}.value", definition, issues, availableOutputs);
             }
-        }
-
-        if (branch.Steps is { Count: > 0 })
-            ValidateSteps(branch.Steps, $"{path}.{stepsProperty}", definition, issues, availableOutputs,
-                insideStage, activities);
-
-        if (branch.Conditions.Count > 1
-            && branch.LogicalOperator is { } logical
-            && logical is not ("And" or "Or" or "and" or "or"))
-            issues.Add(new WorkflowValidationIssue("error", "WF076", $"{path}.logicalOperator",
-                $"Unknown logical operator '{logical}'.",
-                "Use \"And\" or \"Or\"."));
     }
 
     private static void ValidateCustomActivity(

@@ -297,8 +297,12 @@ public static class WorkflowXamlParser
         var branches = new List<WorkflowConditionBranch>();
         List<WorkflowStep>? @else = null;
 
-        var pending = new List<WorkflowCondition>();
-        string? pendingLogical = null;
+        // Comparisons and their combination are collected by the variable each writes its result to,
+        // because the combination is a tree: EvaluateLogicalCondition takes a left and a right operand,
+        // and either may be the result of another one. Reading them as a flat list would silently drop
+        // the bracketing of "A And (B Or C)".
+        var comparisons = new Dictionary<string, WorkflowCondition>(StringComparer.Ordinal);
+        var combinations = new Dictionary<string, (string Operator, string Left, string Right)>(StringComparer.Ordinal);
 
         foreach (var activity in activities)
         {
@@ -309,13 +313,18 @@ public static class WorkflowXamlParser
 
             if (aqn.Contains(".EvaluateCondition"))
             {
-                pending.Add(ReadComparison(activity, reads, literals, chain, primaryEntity));
+                var result = (OutArgumentValue(activity, "Result") ?? string.Empty).Trim('[', ']');
+                comparisons[result] = ReadComparison(activity, reads, literals, chain, primaryEntity);
                 continue;
             }
 
             if (aqn.Contains(".EvaluateLogicalCondition"))
             {
-                pendingLogical ??= ArgumentValue(activity, "LogicalOperator");
+                var result = (OutArgumentValue(activity, "Result") ?? string.Empty).Trim('[', ']');
+                combinations[result] = (
+                    ArgumentValue(activity, "LogicalOperator") ?? "And",
+                    (ArgumentValue(activity, "LeftOperand") ?? string.Empty).Trim('[', ']'),
+                    (ArgumentValue(activity, "RightOperand") ?? string.Empty).Trim('[', ']'));
                 continue;
             }
 
@@ -327,10 +336,13 @@ public static class WorkflowXamlParser
                 ? []
                 : ParseSteps(ActivitiesOf(inner), primaryEntity, unrecognised, notes);
 
+            var root = (ArgumentValue(activity, "Condition") ?? string.Empty).Trim('[', ']');
+            var (conditions, logical) = ReadConditionTree(root, comparisons, combinations);
+
             // Condition="True" with no comparisons of its own is the default case.
             var isElseBranch =
                 string.Equals(ArgumentValue(activity, "Condition"), "True", StringComparison.OrdinalIgnoreCase)
-                && pending.Count == 0;
+                && conditions.Count == 0;
 
             if (isElseBranch)
             {
@@ -341,14 +353,14 @@ public static class WorkflowXamlParser
                 branches.Add(new WorkflowConditionBranch
                 {
                     BranchId = SplitDisplayName(Attr(activity, "DisplayName")).StepId,
-                    Conditions = [.. pending],
-                    LogicalOperator = pendingLogical,
+                    Conditions = conditions,
+                    LogicalOperator = logical,
                     Steps = branchSteps
                 });
             }
 
-            pending.Clear();
-            pendingLogical = null;
+            comparisons.Clear();
+            combinations.Clear();
         }
 
         var single = branches.Count == 1 ? branches[0] : null;
@@ -365,6 +377,51 @@ public static class WorkflowXamlParser
             Branches = single is null ? branches : null,
             Else = @else
         };
+    }
+
+    /// <summary>
+    /// The combination tree behind one branch, read back into the flat-with-groups shape of the model.
+    /// </summary>
+    /// <remarks>
+    /// Nodes sharing their parent's operator are flattened, so an ordinary chain of "A Or B Or C" comes
+    /// back as three comparisons with one operator — exactly what it was before groups existed. A node
+    /// whose operator differs becomes a group, which is how bracketing survives the round trip.
+    /// </remarks>
+    private static (List<WorkflowCondition> Conditions, string? LogicalOperator) ReadConditionTree(
+        string root,
+        Dictionary<string, WorkflowCondition> comparisons,
+        Dictionary<string, (string Operator, string Left, string Right)> combinations)
+    {
+        if (combinations.TryGetValue(root, out var node))
+            return (Members(root, node.Operator), node.Operator);
+
+        return comparisons.TryGetValue(root, out var single)
+            ? ([single], null)
+            : ([], null);
+
+        // Everything below `variable` that belongs to the same operator level, in source order.
+        List<WorkflowCondition> Members(string variable, string levelOperator)
+        {
+            if (!combinations.TryGetValue(variable, out var current))
+            {
+                return comparisons.TryGetValue(variable, out var leaf) ? [leaf] : [];
+            }
+
+            if (!string.Equals(current.Operator, levelOperator, StringComparison.OrdinalIgnoreCase))
+            {
+                // A different operator starts a bracket.
+                return
+                [
+                    new WorkflowCondition
+                    {
+                        Conditions = Members(variable, current.Operator),
+                        GroupOperator = current.Operator
+                    }
+                ];
+            }
+
+            return [.. Members(current.Left, levelOperator), .. Members(current.Right, levelOperator)];
+        }
     }
 
     /// <summary>One EvaluateCondition back into a comparison.</summary>

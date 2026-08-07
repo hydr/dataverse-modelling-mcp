@@ -3,6 +3,7 @@ namespace Dataverse.Server.Tools;
 using System.ComponentModel;
 using System.Text.Json;
 using Dataverse.Core.Config;
+using Dataverse.Core.Io;
 using Dataverse.Core.Services;
 using Dataverse.Core.Workflows;
 using ModelContextProtocol.Server;
@@ -439,16 +440,24 @@ public sealed class WorkflowTools
                  "completeness, value expressions and — against live metadata — that every table and " +
                  "attribute exists. Returns issues with a code, a JSON path, the problem and the fix. " +
                  "Use this while composing a definition; workflow_set_definition runs the same checks " +
-                 "and refuses to write when any error remains.")]
+                 "and refuses to write when any error remains. " +
+                 "Pass the definition inline as definitionJson, or as definitionFile — a path to a " +
+                 "local .json file, which is the better choice for anything large.")]
     public static async Task<string> WorkflowValidateDefinition(
         WorkflowAuthoringService authoring,
         ConfigProvider config,
-        [Description("The workflow definition as JSON (see the classic-workflows skill for the shape)")] string definitionJson,
+        [Description("The workflow definition as JSON (see the classic-workflows skill for the shape)")] string? definitionJson = null,
+        [Description("Path to a local file holding the definition JSON — use this instead of definitionJson for large definitions")] string? definitionFile = null,
         CancellationToken ct = default)
     {
         try
         {
-            var definition = ParseDefinition(definitionJson, out var parseError);
+            var payload = await PayloadSource.ResolveAsync(
+                definitionJson, definitionFile, nameof(definitionJson), nameof(definitionFile), ct);
+            if (payload.Error is not null)
+                return JsonSerializer.Serialize(new { canSave = false, error = payload.Error }, JsonOptions);
+
+            var definition = ParseDefinition(payload.Content!, out var parseError);
             if (definition is null)
                 return JsonSerializer.Serialize(new { canSave = false, issues = new[] { parseError } }, JsonOptions);
 
@@ -478,14 +487,21 @@ public sealed class WorkflowTools
                  "The workflow must be a draft; pass reactivate=true to deactivate, write and " +
                  "re-activate in one call. The response contains the previous XAML as 'backup'. " +
                  "Pass dryRun=true first on a workflow you did not author: it validates and reports " +
-                 "what would change, in 'diff', without writing anything.")]
+                 "what would change, in 'diff', without writing anything. " +
+                 "Pass the definition inline as definitionJson, or as definitionFile — a path to a " +
+                 "local .json file. Prefer definitionFile: a definition with an embedded image runs to " +
+                 "tens of thousands of characters, and copying it inline flips characters silently, " +
+                 "which no validation catches. backupFile writes the previous XAML to disk instead of " +
+                 "into the response, which keeps the response small enough to read.")]
     public static async Task<string> WorkflowSetDefinition(
         WorkflowAuthoringService authoring,
         ConfigProvider config,
         [Description("The workflow GUID")] string workflowId,
-        [Description("The workflow definition as JSON (see the classic-workflows skill for the shape)")] string definitionJson,
+        [Description("The workflow definition as JSON (see the classic-workflows skill for the shape)")] string? definitionJson = null,
+        [Description("Path to a local file holding the definition JSON — use this instead of definitionJson for large definitions")] string? definitionFile = null,
         [Description("If the workflow is active: deactivate, write, re-activate (default false = refuse)")] bool reactivate = false,
         [Description("Validate and report what would change, without writing (default false)")] bool dryRun = false,
+        [Description("Path to write the previous XAML to; the response then carries 'backupFile' instead of the XAML itself")] string? backupFile = null,
         CancellationToken ct = default)
     {
         try
@@ -493,12 +509,23 @@ public sealed class WorkflowTools
             if (!Guid.TryParse(workflowId, out var id))
                 return JsonSerializer.Serialize(new { error = "Invalid workflowId GUID format." });
 
-            var definition = ParseDefinition(definitionJson, out var parseError);
+            var payload = await PayloadSource.ResolveAsync(
+                definitionJson, definitionFile, nameof(definitionJson), nameof(definitionFile), ct);
+            if (payload.Error is not null)
+                return JsonSerializer.Serialize(new { applied = false, error = payload.Error }, JsonOptions);
+
+            var definition = ParseDefinition(payload.Content!, out var parseError);
             if (definition is null)
                 return JsonSerializer.Serialize(new { applied = false, issues = new[] { parseError } }, JsonOptions);
 
             var env = config.GetActiveEnvironment();
             var result = await authoring.SetDefinitionAsync(env.OrgUrl, id, definition, reactivate, dryRun, ct);
+
+            // The backup is the whole previous XAML — six figures of characters for a real workflow.
+            // Written to disk it stays a usable restore point without swamping the response.
+            var backupPath = backupFile is null || result.Backup is null
+                ? null
+                : await PayloadSource.WriteAsync(backupFile, result.Backup, ct);
 
             return JsonSerializer.Serialize(new
             {
@@ -512,8 +539,9 @@ public sealed class WorkflowTools
                 errorCount = result.Validation.ErrorCount,
                 warningCount = result.Validation.WarningCount,
                 issues = result.Validation.Issues,
-                // Keep this to undo the change with workflow_restore_xaml.
-                backup = result.Backup
+                // Keep either of these to undo the change with workflow_restore_xaml.
+                backupFile = backupPath,
+                backup = backupPath is null ? result.Backup : null
             }, JsonOptions);
         }
         catch (Exception ex)
@@ -532,14 +560,20 @@ public sealed class WorkflowTools
     public static async Task<string> WorkflowDiagnoseActivation(
         WorkflowActivationDiagnoser diagnoser,
         ConfigProvider config,
-        [Description("The workflow definition as JSON — the one that will not activate")] string definitionJson,
         [Description("Logical name of the primary entity")] string primaryEntity,
+        [Description("The workflow definition as JSON — the one that will not activate")] string? definitionJson = null,
+        [Description("Path to a local file holding the definition JSON — use this instead of definitionJson for large definitions")] string? definitionFile = null,
         [Description("true if the workflow is real-time (default false = background)")] bool isRealtime = false,
         CancellationToken ct = default)
     {
         try
         {
-            var definition = ParseDefinition(definitionJson, out var parseError);
+            var payload = await PayloadSource.ResolveAsync(
+                definitionJson, definitionFile, nameof(definitionJson), nameof(definitionFile), ct);
+            if (payload.Error is not null)
+                return JsonSerializer.Serialize(new { error = payload.Error }, JsonOptions);
+
+            var definition = ParseDefinition(payload.Content!, out var parseError);
             if (definition is null)
                 return JsonSerializer.Serialize(new { issues = new[] { parseError } }, JsonOptions);
 
@@ -567,23 +601,30 @@ public sealed class WorkflowTools
     [McpServerTool(Name = "workflow_restore_xaml")]
     [Description("Write a previously exported XAML back verbatim, to undo a change. " +
                  "Takes the string from workflow_export_xaml or the 'backup' field of " +
-                 "workflow_set_definition. The workflow must be a draft.")]
+                 "workflow_set_definition. The workflow must be a draft. " +
+                 "Prefer xamlFile — a path to the file the backup was written to. A workflow's XAML " +
+                 "runs to six figures of characters, and 'verbatim' is not something that survives " +
+                 "being copied inline.")]
     public static async Task<string> WorkflowRestoreXaml(
         WorkflowAuthoringService authoring,
         ConfigProvider config,
         [Description("The workflow GUID")] string workflowId,
-        [Description("The XAML to restore")] string xaml,
+        [Description("The XAML to restore")] string? xaml = null,
+        [Description("Path to a local file holding the XAML — use this instead of xaml, which is large by nature")] string? xamlFile = null,
         CancellationToken ct = default)
     {
         try
         {
             if (!Guid.TryParse(workflowId, out var id))
                 return JsonSerializer.Serialize(new { error = "Invalid workflowId GUID format." });
-            if (string.IsNullOrWhiteSpace(xaml))
-                return JsonSerializer.Serialize(new { error = "xaml must not be empty." });
+
+            var payload = await PayloadSource.ResolveAsync(
+                xaml, xamlFile, nameof(xaml), nameof(xamlFile), ct);
+            if (payload.Error is not null)
+                return JsonSerializer.Serialize(new { error = payload.Error }, JsonOptions);
 
             var env = config.GetActiveEnvironment();
-            await authoring.RestoreXamlAsync(env.OrgUrl, id, xaml, ct);
+            await authoring.RestoreXamlAsync(env.OrgUrl, id, payload.Content!, ct);
             return JsonSerializer.Serialize(new { success = true, workflowId });
         }
         catch (Exception ex)

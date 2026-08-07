@@ -64,14 +64,39 @@ parser cannot map. The explanation is then incomplete — and you must not rewri
 ```
 1. workflow_export_xaml            → keep as restore point
 2. workflow_get_definition         → check "fullyUnderstood": true
-3. modify the JSON
-4. workflow_validate_definition    → fix all errors
-5. workflow_set_definition         → writes only when clean
+3. modify the JSON                 → with a script, in a file, never by retyping it
+4. workflow_validate_definition    → definitionFile=…, fix all errors
+5. workflow_set_definition         → definitionFile=…, backupFile=…, writes only when clean
 6. workflow_set_state activate=true
 ```
 
 If `fullyUnderstood` is false, stop and tell the user which parts are unsupported. Offer to make the
 change in the designer instead.
+
+#### Never pass a real definition inline
+
+`definitionJson` and `xaml` exist for small, hand-written payloads. Everything read out of a live
+workflow is not that: a definition whose e-mail body carries a base64 signature image runs to ~28.000
+characters, its XAML to ~180.000. **Reproducing that corrupts it.** Characters flip, and nothing
+catches it — the JSON stays valid, all three validation gates pass, and the damage sits in the payload
+the string transports. In August 2026 exactly this destroyed the signature logo in two dunning
+workflows; it only surfaced when the PNG chunk checksums were recomputed.
+
+So keep the content on disk and pass paths:
+
+| Direction | Parameter | On |
+|---|---|---|
+| Definition in | `definitionFile` | `workflow_set_definition`, `workflow_validate_definition`, `workflow_diagnose_activation` |
+| Previous XAML out | `backupFile` | `workflow_set_definition` |
+| XAML back in | `xamlFile` | `workflow_restore_xaml` |
+
+A too-large tool result is already written to a file for you, so the round trip needs no copy at any
+point: read the definition, edit **the file** with a script, pass its path back. Delegating the write
+to a subagent does not help — it has the same context window and makes the same mistake.
+
+Verify afterwards rather than assuming: read the definition back and diff it against what you meant to
+write (step ids are regenerated, so ignore `stepId`/`branchId`), and for an embedded image decode the
+base64 and check the PNG chunk CRCs.
 
 ### Creating a new workflow
 
@@ -209,6 +234,34 @@ Mixing `branches` with `conditions`/`then` in the same step is rejected as `WF14
 
 Several comparisons in one case are combined with `logicalOperator`: `"And"` (default) or `"Or"`.
 It sits next to the `conditions` list — in the short form on the step, in a chain on the branch.
+
+### Mixing And and Or: groups
+
+One level combines its comparisons with a single operator, so `A And (B Or C)` needs a bracket. An
+entry of `conditions` becomes one by carrying `conditions` of its own plus a `groupOperator`, instead
+of an attribute and an operator:
+
+```json
+{
+  "kind": "condition",
+  "logicalOperator": "And",
+  "conditions": [
+    { "attribute": "new_paymentmethod", "operator": "In",
+      "value": {"kind":"literal","dataType":"OptionSetValue","literals":["100000000","100000001"]} },
+    { "groupOperator": "Or", "conditions": [
+        { "attribute": "new_accountowner", "operator": "Null" },
+        { "attribute": "new_bic",          "operator": "Null" } ] }
+  ],
+  "then": [ … ]
+}
+```
+
+Groups nest to any depth and work in a `branches` case just as well. Nothing else changes: a level
+whose members all share one operator is still written — and read back — as a flat list.
+
+The XAML needs no new construct for this, because the combination has always been a tree:
+`EvaluateLogicalCondition` takes a `LeftOperand` and a `RightOperand`, and either may be the result of
+another one. A designer-authored example is kept as the `condition-group` fixture.
 
 ### Comparison operators
 
@@ -378,11 +431,17 @@ Nothing is written unless all three pass. Each issue carries `code`, `path`, `pr
 
 ## Rules and pitfalls
 
+- **A cancellation message that shows only the step name means the message was empty.** Dataverse
+  falls back to the display name. The cause is a field read inside the message that names a target
+  type: for anything that is not text — a date above all — it comes back empty and takes the sentence
+  with it. The builder now reads untyped there, matching the designer. If you see it again, compare
+  the `GetEntityProperty.TargetType` of that read against a designer-authored workflow.
 - **Active workflows cannot be changed.** Either deactivate first or pass `reactivate=true`. If
   re-activation fails after writing, the response says so and the workflow stays a draft — never
   assume it is active again.
-- **Keep the backup.** `workflow_set_definition` returns the previous XAML in `backup`. On any
-  surprise, `workflow_restore_xaml` puts it back.
+- **Keep the backup.** `workflow_set_definition` returns the previous XAML in `backup`, or writes it
+  to `backupFile` if you give it a path — do give it one, both to keep the response readable and
+  because `workflow_restore_xaml` can then take `xamlFile` and restore it without a copy.
 - **Activating leaves a second row behind.** Dataverse stores an activation copy (`type=2`) that
   neither deactivating nor deleting the definition removes — an environment used for testing fills up
   with them. `workflow_delete` takes them along; it refuses an activated workflow unless

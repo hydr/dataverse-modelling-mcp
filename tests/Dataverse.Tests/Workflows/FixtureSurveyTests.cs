@@ -7,7 +7,7 @@ using NUnit.Framework;
 /// Reads every designer-authored fixture and reports what the parser makes of it.
 /// </summary>
 /// <remarks>
-/// Ten real workflows from contoso-dev, chosen for different constructs rather than different purposes. Each
+/// Real workflows from a live organisation, chosen for different constructs rather than different purposes. Each
 /// one that arrived here brought at least one format defect to light that no hand-written test case had
 /// found — so the survey is both a regression net and the place where the next gap shows up.
 /// </remarks>
@@ -108,7 +108,7 @@ public sealed class FixtureSurveyTests
     {
         "payment-reminder" or "dunning-1" or "dunning-2" or "dunning-1-manual" => "invoice",
         "lead-mail-owner" or "lead-mail-project-participant" => "lead",
-        "assign-owner-from-lead" => "account",
+        "assign-owner-from-lead" or "condition-group" => "account",
         "quote-as-won" => "quote",
         "marketing-list-master" => "list",
         _ => "salesorder"

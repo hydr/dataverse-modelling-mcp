@@ -120,21 +120,29 @@ public static class WorkflowXamlBuilder
                 FromValue(part);
         }
 
-        foreach (var step in steps)
+        // A comparison may bracket others instead of being one, so this walks the tree.
+        void FromConditions(IEnumerable<WorkflowCondition> conditions)
         {
-            foreach (var condition in step.Conditions ?? [])
+            foreach (var condition in conditions)
             {
+                if (condition.IsGroup)
+                {
+                    FromConditions(condition.Conditions!);
+                    continue;
+                }
+
                 Note(condition.FromStepOutput);
                 FromValue(condition.Value);
             }
+        }
+
+        foreach (var step in steps)
+        {
+            FromConditions(step.Conditions ?? []);
 
             foreach (var branch in step.Branches ?? [])
             {
-                foreach (var condition in branch.Conditions)
-                {
-                    Note(condition.FromStepOutput);
-                    FromValue(condition.Value);
-                }
+                FromConditions(branch.Conditions);
                 CollectOutputsToLoad(branch.Steps, state);
             }
 
@@ -338,97 +346,138 @@ public static class WorkflowXamlBuilder
         ctx.DeclareVariable(conditionVar, "x:Boolean", defaultFalse: true);
 
         // Each comparison yields a boolean; several are folded with EvaluateLogicalCondition.
-        var boolVars = new List<string>();
         var activities = new StringBuilder();
-
-        foreach (var condition in branch.Conditions)
-        {
-            string left;
-            if (!string.IsNullOrWhiteSpace(condition.StepOutput))
-            {
-                // Comparing the output of an earlier code activity: its variable is the operand,
-                // so no GetEntityProperty is emitted.
-                left = StepOutputVariable(condition.StepOutput!, state);
-            }
-            else
-            {
-                left = ctx.NextVariable("x:Object");
-                activities.Append(GetEntityProperty(
-                    condition.Attribute,
-                    EntityExpression(condition.Entity, state, condition.Via,
-                        condition.FromStep, condition.FromStepOutput),
-                    condition.Entity ?? state.PrimaryEntity,
-                    left,
-                    targetType: null));
-            }
-
-            // In / NotIn compare against a set, so the parameter array can hold several values.
-            var rightVars = new List<string>();
-            if (condition.Value is { } value)
-            {
-                if (value.Kind == WorkflowValueKind.Literal && value.Literals is { Count: > 0 })
-                {
-                    foreach (var literal in value.Literals)
-                    {
-                        var target = ctx.NextVariable("x:Object");
-                        activities.Append(CreateCrmType(literal, value.DataType,
-                            XamlTypeFor(value.DataType) ?? "x:String", target));
-                        rightVars.Add(target);
-                    }
-                }
-                else
-                {
-                    rightVars.Add(EmitValue(value, ctx, activities, state, convertForCodeActivity: false,
-                        // In a comparison the designer reads a single field straight into the operand
-                        // variable, without the SelectFirstNonNull indirection used for field values.
-                        simplifyFieldRead: true));
-                }
-            }
-
-            var resultVar = branch.Conditions.Count == 1 ? conditionVar : ctx.NextVariable("x:Boolean", defaultFalse: true);
-            if (branch.Conditions.Count > 1)
-                boolVars.Add(resultVar);
-
-            // Value-less operators (Null / NotNull) must emit an explicit null for Parameters.
-            // An empty array initialiser is rejected by the platform with 0x80045040.
-            var parameters = rightVars.Count == 0
-                ? "<x:Null x:Key=\"Parameters\" />"
-                : $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">[New Object() {{ {string.Join(", ", rightVars)} }}]</InArgument>";
-
-            activities.Append(
-                $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateCondition")}\" DisplayName=\"EvaluateCondition\">"
-                + "<mxswa:ActivityReference.Arguments>"
-                + $"<InArgument x:TypeArguments=\"mxsq:ConditionOperator\" x:Key=\"ConditionOperator\">{MapOperator(condition.Operator)}</InArgument>"
-                + parameters
-                + $"<InArgument x:TypeArguments=\"x:Object\" x:Key=\"Operand\">[{left}]</InArgument>"
-                + $"<OutArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Result\">[{resultVar}]</OutArgument>"
-                + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>");
-        }
-
-        // Fold multiple comparisons pairwise into the condition variable.
-        if (boolVars.Count > 1)
-        {
-            var op = string.Equals(branch.LogicalOperator, "Or", StringComparison.OrdinalIgnoreCase) ? "Or" : "And";
-            var current = boolVars[0];
-            for (var i = 1; i < boolVars.Count; i++)
-            {
-                var isLast = i == boolVars.Count - 1;
-                var target = isLast ? conditionVar : ctx.NextVariable("x:Boolean", defaultFalse: true);
-                activities.Append(
-                    $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateLogicalCondition")}\" DisplayName=\"EvaluateLogicalCondition\">"
-                    + "<mxswa:ActivityReference.Arguments>"
-                    + $"<InArgument x:TypeArguments=\"mxsq:LogicalOperator\" x:Key=\"LogicalOperator\">{op}</InArgument>"
-                    + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"LeftOperand\">[{current}]</InArgument>"
-                    + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"RightOperand\">[{boolVars[i]}]</InArgument>"
-                    + $"<OutArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Result\">[{target}]</OutArgument>"
-                    + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>");
-                current = target;
-            }
-        }
+        EmitConditionList(branch.Conditions, branch.LogicalOperator, conditionVar, ctx, activities, state);
 
         // The branch node itself, carrying the steps of this case.
         activities.Append(Branch(branchId, $"[{conditionVar}]", branch.Steps, state));
         return activities.ToString();
+    }
+
+    /// <summary>
+    /// Emits one level of comparisons and folds them into <paramref name="target"/>.
+    /// </summary>
+    /// <remarks>
+    /// A level is a list of siblings joined by one operator; an entry that is a group recurses with its
+    /// own. The fold is pairwise and left-leaning, so a flat list produces exactly the chain this
+    /// emitted before groups existed — the variable numbering included.
+    /// </remarks>
+    private static string EmitConditionList(
+        List<WorkflowCondition> conditions, string? logicalOperator, string? target,
+        StepScope ctx, StringBuilder activities, BuildState state)
+    {
+        // No comparisons at all: nothing is emitted and the condition variable keeps its default of
+        // false. Parsed workflows do contain such branches, so this must not throw.
+        if (conditions.Count == 0)
+            return target ?? ctx.NextVariable("x:Boolean", defaultFalse: true);
+
+        // A single entry writes straight into the target; there is nothing to fold.
+        if (conditions.Count == 1)
+            return EmitConditionNode(conditions[0], target, ctx, activities, state);
+
+        // Each entry allocates its result only after its operands, which is the order the designer
+        // numbers them in — and the order this produced before groups existed.
+        var boolVars = conditions
+            .Select(c => EmitConditionNode(c, null, ctx, activities, state))
+            .ToList();
+
+        var op = string.Equals(logicalOperator, "Or", StringComparison.OrdinalIgnoreCase) ? "Or" : "And";
+        var current = boolVars[0];
+        for (var i = 1; i < boolVars.Count; i++)
+        {
+            var isLast = i == boolVars.Count - 1;
+            var result = isLast && target is not null
+                ? target
+                : ctx.NextVariable("x:Boolean", defaultFalse: true);
+            activities.Append(
+                $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateLogicalCondition")}\" DisplayName=\"EvaluateLogicalCondition\">"
+                + "<mxswa:ActivityReference.Arguments>"
+                + $"<InArgument x:TypeArguments=\"mxsq:LogicalOperator\" x:Key=\"LogicalOperator\">{op}</InArgument>"
+                + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"LeftOperand\">[{current}]</InArgument>"
+                + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"RightOperand\">[{boolVars[i]}]</InArgument>"
+                + $"<OutArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Result\">[{result}]</OutArgument>"
+                + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>");
+            current = result;
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// Emits one entry — a bracketed group, or a single comparison. Writes into
+    /// <paramref name="target"/> when one is given, otherwise into a fresh variable, and returns the
+    /// one that ends up holding the result.
+    /// </summary>
+    private static string EmitConditionNode(
+        WorkflowCondition condition, string? target,
+        StepScope ctx, StringBuilder activities, BuildState state)
+    {
+        if (condition.IsGroup)
+        {
+            return EmitConditionList(
+                condition.Conditions!, condition.GroupOperator, target, ctx, activities, state);
+        }
+
+        string left;
+        if (!string.IsNullOrWhiteSpace(condition.StepOutput))
+        {
+            // Comparing the output of an earlier code activity: its variable is the operand,
+            // so no GetEntityProperty is emitted.
+            left = StepOutputVariable(condition.StepOutput!, state);
+        }
+        else
+        {
+            left = ctx.NextVariable("x:Object");
+            activities.Append(GetEntityProperty(
+                condition.Attribute,
+                EntityExpression(condition.Entity, state, condition.Via,
+                    condition.FromStep, condition.FromStepOutput),
+                condition.Entity ?? state.PrimaryEntity,
+                left,
+                targetType: null));
+        }
+
+        // In / NotIn compare against a set, so the parameter array can hold several values.
+        var rightVars = new List<string>();
+        if (condition.Value is { } value)
+        {
+            if (value.Kind == WorkflowValueKind.Literal && value.Literals is { Count: > 0 })
+            {
+                foreach (var literal in value.Literals)
+                {
+                    var slot = ctx.NextVariable("x:Object");
+                    activities.Append(CreateCrmType(literal, value.DataType,
+                        XamlTypeFor(value.DataType) ?? "x:String", slot));
+                    rightVars.Add(slot);
+                }
+            }
+            else
+            {
+                rightVars.Add(EmitValue(value, ctx, activities, state, convertForCodeActivity: false,
+                    // In a comparison the designer reads a single field straight into the operand
+                    // variable, without the SelectFirstNonNull indirection used for field values.
+                    simplifyFieldRead: true));
+            }
+        }
+
+        // Value-less operators (Null / NotNull) must emit an explicit null for Parameters.
+        // An empty array initialiser is rejected by the platform with 0x80045040.
+        var parameters = rightVars.Count == 0
+            ? "<x:Null x:Key=\"Parameters\" />"
+            : $"<InArgument x:TypeArguments=\"s:Object[]\" x:Key=\"Parameters\">[New Object() {{ {string.Join(", ", rightVars)} }}]</InArgument>";
+
+        var resultVar = target ?? ctx.NextVariable("x:Boolean", defaultFalse: true);
+
+        activities.Append(
+            $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("EvaluateCondition")}\" DisplayName=\"EvaluateCondition\">"
+            + "<mxswa:ActivityReference.Arguments>"
+            + $"<InArgument x:TypeArguments=\"mxsq:ConditionOperator\" x:Key=\"ConditionOperator\">{MapOperator(condition.Operator)}</InArgument>"
+            + parameters
+            + $"<InArgument x:TypeArguments=\"x:Object\" x:Key=\"Operand\">[{left}]</InArgument>"
+            + $"<OutArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Result\">[{resultVar}]</OutArgument>"
+            + "</mxswa:ActivityReference.Arguments></mxswa:ActivityReference>");
+
+        return resultVar;
     }
 
     private static string Branch(string branchId, string conditionExpression, List<WorkflowStep>? steps, BuildState state)
@@ -593,7 +642,8 @@ public static class WorkflowXamlBuilder
         var ctx = new StepScope(step.StepId!);
         var activities = new StringBuilder();
         var reason = step.Reason ?? new WorkflowValue { Kind = WorkflowValueKind.Literal, Literal = string.Empty };
-        var reasonVar = EmitValue(reason, ctx, activities, state, convertForCodeActivity: false);
+        var reasonVar = EmitValue(reason, ctx, activities, state, convertForCodeActivity: false,
+            untypedFieldReads: true);
 
         var status = string.Equals(step.Outcome, "cancelled", StringComparison.OrdinalIgnoreCase)
             ? "Canceled" : "Succeeded";
@@ -767,15 +817,16 @@ public static class WorkflowXamlBuilder
     /// </remarks>
     private static string EmitValue(
         WorkflowValue value, StepScope ctx, StringBuilder sb, BuildState state,
-        bool convertForCodeActivity, bool simplifyFieldRead = false)
+        bool convertForCodeActivity, bool simplifyFieldRead = false, bool untypedFieldReads = false)
     {
         if (value.Offset is not { IsZero: false } offset)
-            return EmitPlainValue(value, ctx, sb, state, convertForCodeActivity, simplifyFieldRead);
+            return EmitPlainValue(value, ctx, sb, state, convertForCodeActivity, simplifyFieldRead, untypedFieldReads);
 
         // The base must not be converted yet: the conversion belongs after the addition.
         var typeArgumentOfOffset = XamlTypeFor(value.DataType) ?? "s:DateTime";
         var baseVariable = EmitPlainValue(
-            value with { Offset = null }, ctx, sb, state, convertForCodeActivity: false, simplifyFieldRead);
+            value with { Offset = null }, ctx, sb, state, convertForCodeActivity: false, simplifyFieldRead,
+            untypedFieldReads);
 
         state.UsesTimeSpan = true;
         var span = ctx.NextElementVariable("mxsw:XrmTimeSpan", XrmTimeSpanLiteral(offset));
@@ -796,9 +847,17 @@ public static class WorkflowXamlBuilder
 
     private static string EmitPlainValue(
         WorkflowValue value, StepScope ctx, StringBuilder sb, BuildState state,
-        bool convertForCodeActivity, bool simplifyFieldRead = false)
+        bool convertForCodeActivity, bool simplifyFieldRead = false, bool untypedFieldReads = false)
     {
         var typeArgument = XamlTypeFor(value.DataType) ?? "x:String";
+
+        // A field read that names x:String as its target type comes back empty for anything that is not
+        // text — a date most of all. In an attribute assignment that does not matter, because the value
+        // is converted on the way in; in a cancellation message it does: the message stays empty and
+        // Dataverse shows the step's display name instead of the sentence. The designer reads untyped
+        // there, and the concatenation formats the value. Verified against a designer-authored
+        // workflow, which with a null target type prints the date.
+        var readType = untypedFieldReads ? null : typeArgument;
 
         // Comparison operands: a lone field reference is read directly, matching the designer.
         if (simplifyFieldRead
@@ -862,7 +921,7 @@ public static class WorkflowXamlBuilder
                     var sourceVar = ctx.NextVariable("x:Object");
                     sb.Append(GetEntityProperty(attribute,
                         EntityExpression(entity, state, value.Via, value.FromStep, value.FromStepOutput),
-                        entity, sourceVar, typeArgument));
+                        entity, sourceVar, readType));
                     sources.Add(sourceVar);
                 }
 
@@ -874,7 +933,7 @@ public static class WorkflowXamlBuilder
                 }
 
                 sb.Append(EvaluateExpression("SelectFirstNonNull",
-                    $"[New Object() {{ {string.Join(", ", sources)} }}]", typeArgument, result));
+                    $"[New Object() {{ {string.Join(", ", sources)} }}]", readType, result));
 
                 return convertForCodeActivity ? Convert(result, typeArgument, ctx, sb) : result;
             }
@@ -914,7 +973,8 @@ public static class WorkflowXamlBuilder
                 var parts = new List<string>();
 
                 foreach (var part in value.Parts ?? [])
-                    parts.Add(EmitValue(part, ctx, sb, state, convertForCodeActivity: false));
+                    parts.Add(EmitValue(part, ctx, sb, state, convertForCodeActivity: false,
+                        untypedFieldReads: untypedFieldReads));
 
                 // Add declares no target type — the parts determine it.
                 sb.Append(EvaluateExpression("Add",

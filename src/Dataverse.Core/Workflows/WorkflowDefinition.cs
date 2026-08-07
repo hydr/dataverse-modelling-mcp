@@ -254,6 +254,27 @@ public sealed record WorkflowCondition
     /// Right-hand side. Omit for the Null/NotNull operators, which take no value.
     /// </summary>
     public WorkflowValue? Value { get; init; }
+
+    /// <summary>
+    /// Instead of a comparison: a bracketed group of comparisons, combined with this entry's
+    /// <see cref="GroupOperator"/> and joined to its siblings with the operator of the level above.
+    /// That is how "A And (B Or C)" is expressed — the mixture no single level can hold.
+    /// </summary>
+    /// <remarks>
+    /// The XAML already models the combination as a tree (<c>EvaluateLogicalCondition</c> takes a
+    /// <c>LeftOperand</c> and a <c>RightOperand</c>, either of which may be another node's result), so a
+    /// group needs no new construct — only a nested definition. Groups nest to any depth.
+    /// </remarks>
+    public List<WorkflowCondition>? Conditions { get; init; }
+
+    /// <summary>
+    /// "And" (default) or "Or" — how the members of <see cref="Conditions"/> are combined. Ignored on a
+    /// plain comparison.
+    /// </summary>
+    public string? GroupOperator { get; init; }
+
+    /// <summary>True when this entry brackets other comparisons instead of being one.</summary>
+    public bool IsGroup => this.Conditions is { Count: > 0 };
 }
 
 /// <summary>Assignment of a value to an attribute of a create/update step.</summary>

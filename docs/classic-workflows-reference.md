@@ -776,7 +776,48 @@ Die Verwendung erfolgt dann typisiert: `[DirectCast(CustomActivityStep3_1_conver
 | Kontext | Wert |
 |---|---|
 | Bedingungsvergleich | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
+| Abbruchmeldung (`TerminateWorkflow.Reason`) | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
 | Wertaufbereitung für Felder/Argumente | `<mxswa:ReferenceLiteral Value="x:String" />` (bzw. Zieltyp) |
+
+Die mittlere Zeile ist teuer erkauft: Ein Feldlesevorgang, der in der Abbruchmeldung `x:String` als
+Zieltyp nennt, liefert für alles, was kein Text ist — allen voran ein Datum — **nichts** zurück. Die
+Meldung bleibt damit leer, und Dataverse zeigt statt des Satzes den Anzeigenamen des Schritts
+(„Workflow abbrechen"). Das nachfolgende `SelectFirstNonNull` derselben Kette bleibt ebenfalls
+untypisiert; das anschließende `Add` formatiert den Wert.
+
+Belegt durch den Vergleich derselben Workflow-Definition in zwei Organisationen: die vom Designer
+geschriebene Fassung (Zieltyp `null`) gibt das Datum aus, die erzeugte nicht — die beiden
+XAML-Dokumente unterschieden sich an genau diesen zwei Stellen und sonst nirgends.
+
+### Verknüpfung mehrerer Bedingungen
+
+`EvaluateLogicalCondition` verknüpft **paarweise** über `LeftOperand` und `RightOperand`; beide dürfen
+das `Result` einer anderen `EvaluateLogicalCondition` sein. Die Verknüpfung ist damit kein flaches
+Und/Oder über eine Liste, sondern ein **Ausdrucksbaum** — Klammerung wie `A Und (B Oder C)` braucht
+kein zusätzliches Konstrukt, nur einen Teilbaum mit abweichendem Operator.
+
+```xml
+<!-- A Und (B Oder C) -->
+<mxswa:ActivityReference AssemblyQualifiedName="…EvaluateLogicalCondition…">
+  <InArgument x:Key="LogicalOperator">Or</InArgument>
+  <InArgument x:Key="LeftOperand">[ConditionBranchStep7_4]</InArgument>   <!-- B -->
+  <InArgument x:Key="RightOperand">[ConditionBranchStep7_6]</InArgument>  <!-- C -->
+  <OutArgument x:Key="Result">[ConditionBranchStep7_3]</OutArgument>
+</mxswa:ActivityReference>
+<mxswa:ActivityReference AssemblyQualifiedName="…EvaluateLogicalCondition…">
+  <InArgument x:Key="LogicalOperator">And</InArgument>
+  <InArgument x:Key="LeftOperand">[ConditionBranchStep7_1]</InArgument>   <!-- A -->
+  <InArgument x:Key="RightOperand">[ConditionBranchStep7_3]</InArgument>  <!-- die Gruppe -->
+  <OutArgument x:Key="Result">[ConditionBranchStep7_condition]</OutArgument>
+</mxswa:ActivityReference>
+```
+
+Der Designer nummeriert die Variablen dabei in Präorder (Ergebnis vor den Kindern); zwingend ist das
+nicht — entscheidend ist, dass jede Variable deklariert ist und der Wurzelknoten in
+`<BranchId>_condition` schreibt, worauf sich `ConditionBranch.Condition` beruft.
+
+Als Fixture beigelegt: `condition-group.xaml`, ein vom Designer geschriebener Workflow mit genau
+einer Klammer.
 
 ## Benutzerdefinierte Workflowaktivitäten
 

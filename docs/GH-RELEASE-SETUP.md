@@ -69,12 +69,17 @@ Der Hook lädt von `releases/download/v${BINARY_VERSION}/DataverseMcp-win-x64.ex
 Damit das aufgeht, muss gelten:
 
 ```
-scripts/BINARY_VERSION  ==  Release-Tag (ohne 'v')  ==  Version in Dataverse.Setup.csproj
+scripts/BINARY_VERSION  ==  Release-Tag (ohne 'v')
+                        ==  Version in Dataverse.Setup.csproj
+                        ==  version in .claude-plugin/plugin.json
 ```
 
-Der Release-Workflow erzwingt das über einen Guard-Step: Passt `BINARY_VERSION`
-nicht zum Tag, bricht der Build ab (verhindert den früheren `0.0.0`-Fehler, bei
-dem gar kein Asset existierte).
+Der Release-Workflow erzwingt das über den Guard-Step „Verify all versions match
+the tag": Passt eine der drei Dateien nicht zum Tag, bricht der Build ab und nennt
+die abweichende Datei. Der Guard verhindert zweierlei — den früheren
+`0.0.0`-Fehler, bei dem gar kein Asset existierte, und das Auseinanderlaufen der
+Plugin-Version, die früher eine eigene Spur hatte (0.18.1 gegen Binary 1.16.1),
+sodass aus der Plugin-Version nicht ablesbar war, welche Binary installiert wird.
 
 ## Authentifizierung
 
@@ -91,10 +96,14 @@ Schlägt beides fehl, bricht der Hook **laut** ab (kein stilles `exit 0`).
 ## Release-Prozess (Binary)
 
 1. Feature-Branch, Änderungen, PR gegen `master`.
-2. Versionen erhöhen:
-   - `src/Dataverse.Setup/Dataverse.Setup.csproj` → `<Version>` (bestimmt den Tag)
-   - `scripts/BINARY_VERSION` → **exakt dieselbe** Version
-   - `.claude-plugin/plugin.json` → `version` (eigene Plugin-Spur)
+2. Version erhöhen — in **allen drei** Dateien auf **exakt denselben** Wert, der zugleich der Tag ist:
+   - `src/Dataverse.Setup/Dataverse.Setup.csproj` → `<Version>`
+   - `scripts/BINARY_VERSION`
+   - `.claude-plugin/plugin.json` → `version`
+
+   Der Workflow-Schritt „Verify all versions match the tag" vergleicht alle drei mit dem Tag und
+   bricht bei jeder Abweichung ab, mit Angabe der abweichenden Datei. Früher lief die Plugin-Version
+   auf einer eigenen Spur — aus „Plugin 0.18.1" war dann nicht ablesbar, welche Binary drinsteckte.
 3. PR mergen.
 4. `git tag v<Version> && git push origin v<Version>` → der Release-Workflow
    - packt & pusht das NuGet-Tool `Dataverse.Setup`,

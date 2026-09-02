@@ -22,8 +22,11 @@ in jedem Repo aktiv, in dem das Plugin installiert ist. **Nicht** nach `.claude/
 beschränkt sie auf dieses Repository, also ausgerechnet auf die eine Umgebung, in der Dataverse-Wissen
 am wenigsten gebraucht wird.
 
-Skills sind reine Markdown-Dateien ohne Binary-Bezug. Eine Änderung an ihnen braucht deshalb weder
-eine neue Binary noch einen Release-Tag — nur `.claude-plugin/plugin.json` hochzählen und mergen.
+Skills sind reine Markdown-Dateien ohne Binary-Bezug — eine Änderung an ihnen braucht keine neue
+Binary. Damit Clients sie ziehen, muss aber die Plugin-Version steigen, und die ist an Binary und
+Tool gekoppelt (siehe [Release-Prozess](#release-prozess-bei-jeder-änderung)). Also: alle drei
+Versionsdateien hochzählen, mergen, taggen. Der Release baut dann eine funktional identische Binary
+neu — der Preis dafür, dass die Versionsnummer eindeutig bleibt.
 
 ## Doku gehört zum Fix
 
@@ -56,10 +59,13 @@ Verlassen muss man sich also nur beim vierten Punkt auf Disziplin.
 
 Bei Änderungen am MCP-Server immer:
 1. Feature-Branch erstellen und PR öffnen (gegen `master`)
-2. Versionen erhöhen (minor bei neuen Features, patch bei Bugfixes):
-   - `src/Dataverse.Setup/Dataverse.Setup.csproj` → `<Version>` (bestimmt den Release-Tag)
-   - `scripts/BINARY_VERSION` → **exakt dieselbe** Version wie Setup.csproj (der SessionStart-Hook lädt die Binary von `releases/download/v<BINARY_VERSION>/…`; der Release-Workflow bricht ab, wenn beide abweichen)
-   - `.claude-plugin/plugin.json` → `version` (eigene Plugin-Spur)
+2. Version erhöhen (minor bei neuen Features, patch bei Bugfixes) — in **allen drei** Dateien auf
+   **exakt denselben** Wert, das ist gleichzeitig der Release-Tag:
+   - `src/Dataverse.Setup/Dataverse.Setup.csproj` → `<Version>`
+   - `scripts/BINARY_VERSION` (Hook und Launcher laden die Binary von `releases/download/v<BINARY_VERSION>/…`)
+   - `.claude-plugin/plugin.json` → `version`
+
+   Der Release-Workflow vergleicht alle drei mit dem Tag und bricht bei jeder Abweichung ab.
 3. PR mergen
 4. Git-Tag setzen (`git tag v<Version> && git push origin v<Version>`) → löst den Release-Workflow aus (NuGet-Publish + GitHub Release inkl. Server-Binary-Asset)
 

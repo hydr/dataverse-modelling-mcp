@@ -14,18 +14,32 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # Guard: the SessionStart hook downloads the binary from
-      # releases/download/v<BINARY_VERSION>/... — that file MUST match this tag,
-      # otherwise clients would resolve a non-existent asset (the 0.0.0 bug).
-      - name: Verify BINARY_VERSION matches tag
+      # Guard: all three version files must agree with the tag.
+      #  - scripts/BINARY_VERSION: the SessionStart hook and the MCP launcher download the
+      #    binary from releases/download/v<BINARY_VERSION>/... — a mismatch resolves a
+      #    non-existent asset (the 0.0.0 bug).
+      #  - Dataverse.Setup.csproj: the version of the published NuGet tool.
+      #  - .claude-plugin/plugin.json: the version users see. It used to run on a separate
+      #    track, so "plugin 0.18.1" said nothing about which binary was inside.
+      - name: Verify all versions match the tag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           BINVER="$(tr -d '[:space:]' < scripts/BINARY_VERSION)"
-          echo "Tag=$TAG  BINARY_VERSION=$BINVER"
-          if [ "$TAG" != "$BINVER" ]; then
-            echo "::error::scripts/BINARY_VERSION ($BINVER) does not match release tag ($TAG). Bump BINARY_VERSION before tagging."
-            exit 1
-          fi
+          SETUPVER="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/Dataverse.Setup/Dataverse.Setup.csproj | head -1 | tr -d '[:space:]')"
+          PLUGINVER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .claude-plugin/plugin.json | head -1)"
+          echo "Tag=$TAG  BINARY_VERSION=$BINVER  Setup.csproj=$SETUPVER  plugin.json=$PLUGINVER"
+          FAIL=0
+          for pair in "scripts/BINARY_VERSION:$BINVER" \
+                      "src/Dataverse.Setup/Dataverse.Setup.csproj:$SETUPVER" \
+                      ".claude-plugin/plugin.json:$PLUGINVER"; do
+            file="${pair%%:*}"
+            got="${pair#*:}"
+            if [ "$got" != "$TAG" ]; then
+              echo "::error file=$file::$file has version '$got' but the release tag is '$TAG'. Bump all three to the same value before tagging."
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ]
 
       # --- NuGet tool (Dataverse.Setup) ---
       - run: dotnet pack src/Dataverse.Setup -c Release -o ./artifacts

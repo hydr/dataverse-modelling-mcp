@@ -156,6 +156,37 @@ public sealed class FlowVersionService
     }
 
     /// <summary>
+    /// Validates that <paramref name="clientData"/> is a well-formed JSON document and returns a
+    /// normalized (re-serialized, compact) copy. This guarantees only valid JSON is written to the
+    /// <c>workflow.clientdata</c> column, so malformed input fails fast here with a clear message
+    /// instead of surfacing as a cryptic Dataverse 400 ("Unexpected end when deserializing object.
+    /// Path 'properties' …"). Re-serializing also strips any accidental trailing characters or
+    /// padding, so callers no longer need the historical "append a trailing brace" workaround.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="clientData"/> is empty or not valid JSON.
+    /// </exception>
+    public static string ValidateAndNormalizeClientData(string clientData)
+    {
+        if (string.IsNullOrWhiteSpace(clientData))
+            throw new ArgumentException("clientData must not be empty.", nameof(clientData));
+
+        try
+        {
+            var node = JsonNode.Parse(clientData)
+                ?? throw new ArgumentException("clientData parsed to null (expected a JSON object).", nameof(clientData));
+            return node.ToJsonString();
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException(
+                $"clientData is not valid JSON: {ex.Message} " +
+                "Send the complete Logic Apps wrapper as-is (do not truncate or pad it).",
+                nameof(clientData), ex);
+        }
+    }
+
+    /// <summary>
     /// Saves a draft of a flow without publishing. Mirrors the maker portal's "Save draft" button:
     /// PATCH on the workflow with header <c>mscrm.AsUnpublished: true</c>, which creates an Update
     /// component version row but does NOT promote the changes to the runtime.
@@ -169,7 +200,7 @@ public sealed class FlowVersionService
     {
         var body = new Dictionary<string, object?>
         {
-            ["clientdata"] = clientData
+            ["clientdata"] = ValidateAndNormalizeClientData(clientData)
         };
         if (!string.IsNullOrWhiteSpace(name))
             body["name"] = name;
@@ -205,7 +236,7 @@ public sealed class FlowVersionService
             ["primaryentity"] = "none",
             ["statecode"] = 0,
             ["statuscode"] = 1,
-            ["clientdata"] = clientData
+            ["clientdata"] = ValidateAndNormalizeClientData(clientData)
         };
 
         var headers = new Dictionary<string, string>

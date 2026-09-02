@@ -40,6 +40,18 @@ jeder Änderung mitziehen:
 `DocumentationCoverageTests` prüft die ersten drei automatisch und schlägt fehl, wenn etwas fehlt —
 Verlassen muss man sich also nur beim vierten Punkt auf Disziplin.
 
+## Git-Konventionen
+
+- **Feature-Branches**, nie direkt auf `master`. Namensschema: `feature/<thema>` für Features,
+  `chore/<thema>` für Aufräumarbeiten, `fix/<thema>` für Bugfixes.
+- Änderungen landen über **Pull Requests** gegen `master`. Ein logischer Schritt pro Commit,
+  ein Thema pro Branch/PR.
+- **Regelmäßig committen und pushen** — kleine Commits während der Arbeit statt eines großen
+  Abwurfs am Ende.
+- **Vor dem Start den aktuellen Branch prüfen** (`git branch --show-current`) und entscheiden, ob
+  dort weitergearbeitet oder ein neuer Branch aufgemacht wird.
+- Lokale Dev-Artefakte (`ws-log.json`, Screenshots) nicht committen — sie sind gitignored.
+
 ## Release-Prozess (bei jeder Änderung)
 
 Bei Änderungen am MCP-Server immer:

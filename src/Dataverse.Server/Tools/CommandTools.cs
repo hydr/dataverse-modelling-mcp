@@ -151,7 +151,7 @@ public sealed class CommandTools
                      "start with a publisher customization prefix plus underscore, otherwise Dataverse " +
                      "rejects the create with 0x800608ad.")] string? uniqueName = null,
         [Description("Customization prefix for the generated unique name; defaults to the prefix of the " +
-                     "table's logical name (e.g. 'xv' for 'sample_purchaseorder')")] string? customizationPrefix = null,
+                     "table's logical name (e.g. 'sample' for 'sample_purchaseorder')")] string? customizationPrefix = null,
         [Description("Optional solution unique name — the command is added as component type 10343")] string? solutionUniqueName = null,
         [Description("0=None, 1=Formula (Power Fx), 2=ClassicRules. Beware: on a grid, None means the " +
                      "command disappears as soon as rows are selected.")] int visibilityType = 0,

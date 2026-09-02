@@ -12,7 +12,7 @@ Expert reference for deploying Dataverse solutions through Power Platform Pipeli
 
 - **Pipeline-Host environment is separate.** The `deploymentpipeline`, `deploymentstage`, and `deploymentstagerun` entities live in a dedicated Pipeline-Host env (often hidden from non-admin users in the BAP environments list). The source/Dev env (where the solution actually lives) does NOT have these entities. All pipeline calls go against the Pipeline-Host URL — never against the source/target.
 - **Permission** (on the TARGET env, not the Pipeline-Host): the deploying user must have `prvImportCustomization` on each target environment the pipeline imports into. Without it, **validation itself fails** — the run goes to `stagerunstatus = Fehlgeschlagen` and `validationresults` contains `SecLib::CheckPrivilege failed … PrivilegeName: prvImportCustomization` with the user/BU GUID of the *target* env. Granting the user a Pipeline-Host group/role does NOT help — it must be a role carrying `prvImportCustomization` (e.g. System Customizer) on the target. Verified `2026-06-02`: the same failure occurs identically in the Maker UI, confirming it is purely a target-env permission, not an MCP issue. After a role change allow for security-cache propagation / re-login.
-- **Environment write policy** (per project memory): `contoso-dev` writable without confirmation, `contoso-staging` and `xv` need explicit user confirmation before triggering a pipeline that writes there.
+- **Environment write policy** (per project memory): `contoso-dev` writable without confirmation, `contoso-staging` and `contoso-prod` need explicit user confirmation before triggering a pipeline that writes there.
 - **⚠️ Token-AppId blocker — headless pipeline deploy via the direct API does NOT currently work** (empirically established `2026-06-02`). The Pipeline-Backend's validation workflow only fires for runs created by the **Power Apps Maker portal** AppId `a8f7a65c-f5ba-4859-b2d6-df772c264e9d`. A run created with any other appid returns HTTP 201 but stays in `Nicht gestartet` forever (validation never starts). The problem: a headless MCP **cannot mint an `a8f7a65c` token** —
   - Device Code Flow directly with `a8f7a65c` → token redemption fails with `AADSTS7000218` (requires a client_secret; not a public client for device-code).
   - FOCI refresh-token exchange to `a8f7a65c` (from Azure CLI `04b07795` or PAC `9cee029c`) → `AADSTS70000` (not in the same client family).
@@ -27,10 +27,15 @@ Expert reference for deploying Dataverse solutions through Power Platform Pipeli
 | List pipelines on a host | `pipeline_list(pipelineHostOrgUrl)` |
 | List stages of a pipeline | `pipeline_stages(pipelineHostOrgUrl, pipelineId)` |
 | Map Power-Platform env GUID → pipeline-internal `deploymentenvironmentid` | `pipeline_environments(pipelineHostOrgUrl)` |
-| **One-time Maker-AppId login (Device Code Flow)** | `pipeline_auth_init(pipelineHostOrgUrl)` |
-| **Full deploy (validate + commit + start)** | `solution_deploy_pipeline(...)` with `autoConfirm=true` |
-| Validation-only dry run | `solution_deploy_pipeline(...)` with `autoConfirm=false` |
 | Poll a run's status | `pipeline_run_status(pipelineHostOrgUrl, stageRunId)` |
+| **Commit a deploy** | *No tool* — removed (see below). Use `solution_export` + `solution_import`, or the Maker UI / PAC CLI. |
+
+> **Note:** the deploy tools `solution_deploy_pipeline`, `pipeline_auth_init` and
+> `pipeline_auth_complete` were **removed**. A headless MCP cannot mint the Power-Apps-Maker
+> (`a8f7a65c`) token the pipeline backend requires, so a committed deploy never starts. The
+> investigation below is kept as background; only the read-only `pipeline_*` calls above are live.
+> The `deploymentsettingsjson` / version-bump payloads are documented for anyone re-implementing the
+> deploy path outside this server.
 
 ## The 3-/4-call Maker-UI workflow
 
@@ -147,29 +152,29 @@ The user-GUID in the error message is the **calling user on the target env**. Cr
 - **`solution_import(filePath? | zipBase64?, overwriteUnmanaged, timeoutSeconds=600)`** — runs the **async** `ImportSolutionAsync` action (not the timeout-prone sync `ImportSolution`), polls the `asyncoperation` until terminal, and returns `Success` (driven by async statuscode 30) plus `ComponentErrors[]` parsed from the ImportJob's `data` XML. Provide `filePath` to read the zip from disk (preferred) or `zipBase64` inline.
 - Architecture note: the **PAC CLI was deliberately NOT used** as the engine (own auth store, external-process dependency). If deeper SDK features are ever needed, the **`ServiceClient` SDK with `tokenProviderFunction`** (reuses `DataverseTokenProvider`) is the preferred next step — not the CLI. See memory `project_solution_import_export_architecture`.
 
-## Crossvertise reference values
+## Environment reference values (example)
 
-For the live setup observed on `2026-05-22`. Verify before relying on these — pipeline configuration changes and IDs are tenant-specific.
+Illustrative placeholders showing the shape of a pipeline setup. All IDs are tenant-specific — resolve the real values for your own environment with `pipeline_environments(...)` before relying on them.
 
 | Item | Value |
 |---|---|
 | **Pipeline-Host org URL** | `https://orgexample.crm4.dynamics.com` |
-| Pipeline „Crossvertise" `deploymentpipelineid` | `397990f9-10ee-ef11-9341-6045bda0fa8d` |
-| Stage „contoso-staging" `deploymentstageid` | `8acb88ff-10ee-ef11-9341-6045bda0fa8d` (first stage, `previous=null`) |
-| Stage „xv" (Prod) `deploymentstageid` | `935ec311-cd05-f011-bae2-000d3aacedbc` (`previous=contoso-staging`) |
-| Dev-env mapping (contoso-dev) `deploymentenvironmentid` | `377990f9-10ee-ef11-9341-6045bda0fa8d` |
-| contoso-dev Power-Platform `environmentid` | `699d56e2-7f65-ebb0-ae92-2ae5e3a45159` |
+| Pipeline „Example" `deploymentpipelineid` | `10000000-0000-0000-0000-000000000001` |
+| Stage „contoso-staging" `deploymentstageid` | `20000000-0000-0000-0000-000000000002` (first stage, `previous=null`) |
+| Stage „contoso-prod" (Prod) `deploymentstageid` | `20000000-0000-0000-0000-000000000003` (`previous=contoso-staging`) |
+| Dev-env mapping (contoso-dev) `deploymentenvironmentid` | `30000000-0000-0000-0000-000000000004` |
+| contoso-dev Power-Platform `environmentid` | `40000000-0000-0000-0000-000000000005` |
 | Admin account with `prvImportCustomization` | `admin@contoso.com` |
 
 The `deploymentenvironmentid` (pipeline-internal mapping row id) is NOT the Power-Platform env GUID. Resolve via `pipeline_environments(pipelineHostOrgUrl)` and filter by `EnvironmentId` if you only know the PP env GUID.
 
 ## Typical workflows
 
-### "Deploy CrossvertiseSales from contoso-dev → contoso-staging"
-1. Capture current solution version: `mcp__dataverse-modelling-mcp__solution_get(uniqueName='CrossvertiseSales')` → `version` (e.g. `1.10.0`).
+### "Deploy ContosoSales from contoso-dev → contoso-staging"
+1. Capture current solution version: `mcp__dataverse-modelling-mcp__solution_get(uniqueName='ContosoSales')` → `version` (e.g. `1.10.0`).
 2. Compute target version (typically bump second segment: `1.10.0 → 1.11.0`).
 3. Confirm contoso-staging write with the user (per project memory).
-4. `solution_deploy_pipeline(pipelineHostOrgUrl, solutionId, artifactName='CrossvertiseSales', devDeploymentEnvironmentId, targetStageId=<contoso-staging>, currentVersion='1.10.0', newVersion='1.11.0', deploymentNotes='<reason>', autoConfirm=true)` — blocks ~6–10 min, returns `stageRunId`.
+4. `solution_deploy_pipeline(pipelineHostOrgUrl, solutionId, artifactName='ContosoSales', devDeploymentEnvironmentId, targetStageId=<contoso-staging>, currentVersion='1.10.0', newVersion='1.11.0', deploymentNotes='<reason>', autoConfirm=true)` — blocks ~6–10 min, returns `stageRunId`.
 5. Poll `pipeline_run_status(pipelineHostOrgUrl, stageRunId)` until `stagerunstatus = Erfolgreich` (or Fehlgeschlagen).
 6. On success: solution and its components (cloud flows, tables, etc.) are now in contoso-staging as managed.
 
@@ -212,5 +217,5 @@ API-version inconsistency (v9.2 for read, v9.0 for the run-creation + deploy act
 
 ## Related memories
 
-- See [[feedback_environment_write_policy]] for contoso-dev vs contoso-staging/xv write confirmations.
+- See [[feedback_environment_write_policy]] for contoso-dev vs contoso-staging/contoso-prod write confirmations.
 - See `cloud-flows` skill for editing the cloud-flow content (FetchXML, action inputs) before deploying.

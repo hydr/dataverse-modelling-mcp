@@ -195,7 +195,7 @@ public sealed class SolutionServiceTests
             });
 
         await _svc.CreateAsync(
-            OrgUrl, "CRM531RibbonWork", "EXAMPLE-2 Ribbon Work", "crossvertise", "1.0.0.0", CancellationToken.None);
+            OrgUrl, "RibbonWork", "Ribbon Work", "contoso", "1.0.0.0", CancellationToken.None);
 
         Assert.That(createBody, Is.Not.Null);
         using var doc = JsonDocument.Parse(createBody!);
@@ -208,8 +208,8 @@ public sealed class SolutionServiceTests
         Assert.That(bind.GetString(), Is.EqualTo($"/publishers({publisherId})"));
         Assert.That(root.TryGetProperty("publisherid", out _), Is.False,
             "The primitive 'publisherid' property must not be sent.");
-        Assert.That(root.GetProperty("uniquename").GetString(), Is.EqualTo("CRM531RibbonWork"));
-        Assert.That(root.GetProperty("friendlyname").GetString(), Is.EqualTo("EXAMPLE-2 Ribbon Work"));
+        Assert.That(root.GetProperty("uniquename").GetString(), Is.EqualTo("RibbonWork"));
+        Assert.That(root.GetProperty("friendlyname").GetString(), Is.EqualTo("Ribbon Work"));
         Assert.That(root.GetProperty("version").GetString(), Is.EqualTo("1.0.0.0"));
     }
 

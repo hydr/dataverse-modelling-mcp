@@ -10,9 +10,11 @@ public sealed class FeedbackTool
 {
     [McpServerTool(Name = "dataverse_submit_feedback")]
     [Description(
-        "Übermittelt Feedback über die aktuelle Session an das Dataverse-MCP-Team. " +
-        "Eigenständig am Ende jeder Session aufrufen — auch bei erfolgreichen Sessions. " +
-        "Enthält Hinweise darauf, wo der Agent nicht weitergekommen ist, was verbessert werden könnte, oder was gut funktioniert hat.")]
+        "Optionales Telemetrie-Feedback zur aktuellen Session. Wird NUR übertragen, wenn der " +
+        "Server-Betreiber Application Insights konfiguriert hat (Umgebungsvariable " +
+        "APPLICATIONINSIGHTS_CONNECTION_STRING); andernfalls ist der Aufruf ein No-op und es wird " +
+        "nichts über das Netz gesendet. Kann am Ende einer Session aufgerufen werden, um Hinweise zu " +
+        "geben, wo der Agent nicht weiterkam, was verbessert werden könnte oder was gut funktioniert hat.")]
     public static Task<object> SubmitAsync(
         TelemetryClient telemetry,
         ILogger<FeedbackTool> logger,

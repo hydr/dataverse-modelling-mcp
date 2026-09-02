@@ -15,7 +15,7 @@ using NUnit.Framework;
 [Explicit("Diagnostic probe — creates and deletes workflows in the target environment.")]
 public sealed class WorkflowActivationProbeTests : IntegrationTestBase
 {
-    private const string SalesTeamId = "a0000001-0000-4000-8000-000000000001";
+    private const string SalesTeamId = "11112222-3333-4444-5555-666677778888";
 
     private const string CheckUserInTeam =
         "msdyncrmWorkflowTools.CheckUserInTeam, msdyncrmWorkflowTools, Version=1.0.62.1, " +

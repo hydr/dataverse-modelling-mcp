@@ -44,7 +44,7 @@ public sealed class RibbonIntegrationTests : IntegrationTestBase
         await WebResourceService.UpsertAsync(
             OrgUrl,
             WebResourceName,
-            Encoding.UTF8.GetBytes("var Xv=Xv||{};Sample.McpProbe={run:function(){}};"),
+            Encoding.UTF8.GetBytes("var Sample=Sample||{};Sample.McpProbe={run:function(){}};"),
             displayName: "MCP ribbon probe",
             ct: CancellationToken.None);
 

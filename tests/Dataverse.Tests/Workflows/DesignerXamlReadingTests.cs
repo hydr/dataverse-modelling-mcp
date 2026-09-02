@@ -15,7 +15,7 @@ using NUnit.Framework;
 [TestFixture]
 public sealed class DesignerXamlReadingTests
 {
-    private const string SalesTeamId = "a0000001-0000-4000-8000-000000000001";
+    private const string SalesTeamId = "11112222-3333-4444-5555-666677778888";
 
     private static string DesignerXaml()
     {
@@ -51,16 +51,16 @@ public sealed class DesignerXamlReadingTests
         // Previously all 14 comparisons of all cases landed in one OR-chain. Each case must carry
         // exactly its own — that is the difference between reading it and mangling it.
         Assert.That(chain.Branches![0].Conditions.Select(c => c.Attribute),
-            Is.EqualTo(new[] { "dc_invoicestatus", "dc_invoicenumber", "dc_invoice_type" }));
+            Is.EqualTo(new[] { "sample_invoicestatus", "sample_invoicenumber", "sample_invoice_type" }));
         Assert.That(chain.Branches[1].Conditions.Select(c => c.Attribute),
-            Is.EqualTo(new[] { "dc_invoicedate", "dc_payduedate" }));
+            Is.EqualTo(new[] { "sample_invoicedate", "sample_payduedate" }));
         Assert.That(chain.Branches[2].Conditions.Select(c => c.Attribute),
             Is.EqualTo(new[] { "sample_salutation", "lastname", "emailaddress1" }));
         Assert.That(chain.Branches[2].Conditions.All(c => c.Via == "customerid"), Is.True);
         Assert.That(chain.Branches[3].Conditions.Select(c => c.Attribute),
             Is.EqualTo(new[] { "internalemailaddress", "address1_telephone1", "fullname" }));
         Assert.That(chain.Branches[4].Conditions.Select(c => c.Attribute),
-            Is.EqualTo(new[] { "dc_reminderdate" }));
+            Is.EqualTo(new[] { "sample_reminderdate" }));
 
         // Every case cancels; the default one does the work.
         Assert.That(chain.Branches.All(b => b.Steps!.Single().Kind == WorkflowStepKind.StopWorkflow), Is.True);
@@ -118,10 +118,10 @@ public sealed class DesignerXamlReadingTests
         Assert.That(step.Inputs["Team"].Literal, Is.EqualTo($"team:{SalesTeamId}"));
         Assert.That(step.Inputs["Team"].DataType, Is.EqualTo("EntityReference"));
 
-        // The owner of the related account, reached through the lookup sample_kundefirma.
+        // The owner of the related account, reached through the lookup sample_customeraccount.
         Assert.That(step.Inputs["User"].Kind, Is.EqualTo(WorkflowValueKind.Field));
         Assert.That(step.Inputs["User"].Fields, Is.EqualTo(new[] { "account.ownerid" }));
-        Assert.That(step.Inputs["User"].Via, Is.EqualTo("sample_kundefirma"));
+        Assert.That(step.Inputs["User"].Via, Is.EqualTo("sample_customeraccount"));
 
         Assert.That(step.Outputs, Is.EqualTo(new[] { "isUserInTeam" }));
 
@@ -146,7 +146,7 @@ public sealed class DesignerXamlReadingTests
         Assert.That(rebuilt, Does.Contain($"WorkflowPropertyType.Guid, &quot;{SalesTeamId}&quot;, &quot;UniqueIdentifier&quot;"));
         Assert.That(rebuilt, Does.Contain("WorkflowPropertyType.EntityReference, &quot;team&quot;, &quot;&quot;,"));
         Assert.That(rebuilt, Does.Contain("Name=\"CustomActivityStep1_1_converted\""));
-        Assert.That(rebuilt, Does.Contain("related_sample_kundefirma#account"));
+        Assert.That(rebuilt, Does.Contain("related_sample_customeraccount#account"));
         Assert.That(rebuilt, Does.Contain(
             "<OutArgument x:TypeArguments=\"x:Boolean\" x:Key=\"isUserInTeam\">"));
         Assert.That(WorkflowDefinitionValidator.ValidateGeneratedXaml(rebuilt).CanSave, Is.True);

@@ -33,7 +33,7 @@ public sealed class SendEmailReadingTests
         Assert.That(byName["from"].DataType, Is.EqualTo("PartyList"));
         Assert.That(byName["from"].Literal, Does.StartWith("systemuser:"));
         Assert.That(byName["to"].DataType, Is.EqualTo("PartyList"));
-        Assert.That(byName["to"].Fields, Is.EqualTo(new[] { "lead.dc_projectparticipant1" }));
+        Assert.That(byName["to"].Fields, Is.EqualTo(new[] { "lead.sample_projectparticipant1" }));
 
         Assert.That(byName["subject"].Literal, Is.EqualTo("Leadzuordnung Projektbeteiligter"));
         Assert.That(byName["description"].Kind, Is.EqualTo(WorkflowValueKind.Concat));

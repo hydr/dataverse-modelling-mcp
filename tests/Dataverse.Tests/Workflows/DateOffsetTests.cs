@@ -33,7 +33,7 @@ public sealed class DateOffsetTests
                 Kind = WorkflowStepKind.UpdateRecord,
                 Description = "Frist berechnen",
                 Entity = "invoice",
-                Attributes = [new WorkflowAttributeAssignment { Attribute = "dc_dunning2", Value = value }]
+                Attributes = [new WorkflowAttributeAssignment { Attribute = "sample_dunning2", Value = value }]
             }
         ]
     };
@@ -152,7 +152,7 @@ public sealed class DateOffsetTests
         {
             Assert.That(brokenParse.FullyUnderstood, Is.False,
                 "an unknown expression must not pass as understood");
-            Assert.That(brokenParse.Unrecognised, Has.Some.Contains("dc_dunning2"));
+            Assert.That(brokenParse.Unrecognised, Has.Some.Contains("sample_dunning2"));
         });
     }
 }

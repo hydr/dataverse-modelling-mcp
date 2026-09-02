@@ -70,4 +70,4 @@ Creates or updates a web resource, Base64-encoding the payload.
 \* exactly one of `filePath` / `content` is required.
 
 **Example prompt:** "Upload ./scripts/correct_price.js as sample_purchaseorder_correct_price.js into the
-CrossvertiseSales solution and publish it"
+ContosoSales solution and publish it"

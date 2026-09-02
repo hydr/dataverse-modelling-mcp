@@ -66,7 +66,9 @@ public sealed class CodeActivityScalarInputTests
             {
                 Kind = WorkflowStepKind.CustomActivity,
                 Description = "Skalare Eingaben",
-                AssemblyQualifiedName = DunningPaymentNote.StringFunctionsActivity,
+                AssemblyQualifiedName =
+                    "msdyncrmWorkflowTools.StringFunctions, msdyncrmWorkflowTools, Version=1.0.62.1, "
+                    + "Culture=neutral, PublicKeyToken=416e876b9bee261e",
                 Inputs = inputs,
                 Outputs = ["TrimmedText"]
             }

@@ -19,7 +19,7 @@ Fachliche Anforderung (Testfall, Umgebung `contoso-dev`):
 | Kunde/Firma | `salesorder.customerid` | Customer (account **oder** contact!) |
 | Firma (reines Konto) | `salesorder.accountid` | Lookup → account |
 | Besitzer der Firma | `account.ownerid` | Owner |
-| Team | „Salesteam" | `a0000001-0000-4000-8000-000000000001` |
+| Team | „Salesteam" | `11112222-3333-4444-5555-666677778888` |
 
 > [!NOTE]
 > `customerid` ist ein **Customer**-Feld und kann auf `account` *oder* `contact` zeigen. Für Schritt 5
@@ -76,7 +76,7 @@ Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese
                   "assemblyQualifiedName": "msdyncrmWorkflowTools.CheckUserInTeam, msdyncrmWorkflowTools, Version=1.0.62.1, Culture=neutral, PublicKeyToken=416e876b9bee261e",
                   "inputs": {
                     "Team": { "kind": "literal", "dataType": "EntityReference",
-                              "literal": "team:a0000001-0000-4000-8000-000000000001" },
+                              "literal": "team:11112222-3333-4444-5555-666677778888" },
                     "User": { "kind": "field", "dataType": "EntityReference",
                               "fields": ["account.ownerid"], "via": "accountid" }
                   },

@@ -261,7 +261,7 @@ public sealed class WorkflowXamlBuilderTests
                     [
                         new WorkflowConditionBranch
                         {
-                            Conditions = [new WorkflowCondition { Attribute = "dc_invoicenumber", Operator = "Null" }],
+                            Conditions = [new WorkflowCondition { Attribute = "sample_invoicenumber", Operator = "Null" }],
                             Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
                         },
                         new WorkflowConditionBranch
@@ -269,7 +269,7 @@ public sealed class WorkflowXamlBuilderTests
                             LogicalOperator = "Or",
                             Conditions =
                             [
-                                new WorkflowCondition { Attribute = "dc_reminderdate", Operator = "NotNull" },
+                                new WorkflowCondition { Attribute = "sample_reminderdate", Operator = "NotNull" },
                                 new WorkflowCondition { Attribute = "emailaddress", Operator = "Null" }
                             ],
                             Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
@@ -335,7 +335,7 @@ public sealed class WorkflowXamlBuilderTests
                         ["Team"] = new()
                         {
                             DataType = "EntityReference",
-                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                            Literal = "team:11112222-3333-4444-5555-666677778888"
                         }
                     },
                     Outputs = ["isUserInTeam"]
@@ -378,7 +378,7 @@ public sealed class WorkflowXamlBuilderTests
                         ["Team"] = new()
                         {
                             DataType = "EntityReference",
-                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                            Literal = "team:11112222-3333-4444-5555-666677778888"
                         }
                     }
                 }
@@ -390,7 +390,7 @@ public sealed class WorkflowXamlBuilderTests
         // The designer writes the id with the marker "UniqueIdentifier" — "Key" is not a valid
         // WorkflowPropertyType marker and produces an invalid property bag.
         Assert.That(xaml, Does.Contain(
-            "WorkflowPropertyType.Guid, &quot;a0000001-0000-4000-8000-000000000001&quot;, " +
+            "WorkflowPropertyType.Guid, &quot;11112222-3333-4444-5555-666677778888&quot;, " +
             "&quot;UniqueIdentifier&quot;"));
         Assert.That(xaml, Does.Not.Contain("&quot;Key&quot;"));
         // ... and leaves the label of the reference empty, even for a named record.

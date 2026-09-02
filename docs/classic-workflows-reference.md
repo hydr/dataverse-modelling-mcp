@@ -643,7 +643,7 @@ Laufzeit ist das `Nothing`:
 ```xml
 <Variable x:TypeArguments="x:Object" Name="UpdateStep13_4" />
 ...
-<mxswa:SetEntityProperty Attribute="dc_dunning2" Value="[UpdateStep13_4]" ... />
+<mxswa:SetEntityProperty Attribute="sample_dunning2" Value="[UpdateStep13_4]" ... />
 ```
 
 > [!IMPORTANT]

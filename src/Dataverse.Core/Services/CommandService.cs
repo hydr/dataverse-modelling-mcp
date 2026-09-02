@@ -474,7 +474,7 @@ public sealed class CommandService
 
     /// <summary>
     /// Derive the customization prefix from a custom table's logical name (<c>sample_purchaseorder</c> →
-    /// <c>xv</c>). Returns null for out-of-the-box tables, which have no prefix.
+    /// <c>sample</c>). Returns null for out-of-the-box tables, which have no prefix.
     /// </summary>
     public static string? InferCustomizationPrefix(string tableLogicalName)
     {

@@ -119,13 +119,46 @@ Removes the active customization layer for a component.
 
 ---
 
-### `solution_deploy_pipeline`
+## Solution Pipelines (read-only)
 
-Triggers a Power Platform Pipeline deployment.
+Power Platform Pipeline **deployment** is not exposed as a tool — a headless MCP cannot mint the
+Power-Apps-Maker token the pipeline backend requires, so committing a deploy is a Maker-UI (or PAC
+CLI) operation. Use the file-based `solution_export` + `solution_import` path instead. The read-only
+pipeline tools below remain available for discovery and monitoring. See the
+[`solution-pipelines`](../../skills/solution-pipelines/SKILL.md) skill for the full background.
+
+### `pipeline_list`
+
+Lists all Power Platform Pipelines visible on a Pipeline-Host environment.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `pipelineId` | string | Yes | Pipeline GUID |
-| `stageId` | string | Yes | Target stage GUID |
+| `pipelineHostOrgUrl` | string | Yes | Org URL of the Pipeline-Host environment |
 
-**Example prompt:** "Deploy pipeline abc123 to stage def456"
+### `pipeline_stages`
+
+Lists the stages of a pipeline, including each stage's target deployment environment.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pipelineHostOrgUrl` | string | Yes | Org URL of the Pipeline-Host environment |
+| `pipelineId` | string | Yes | Pipeline GUID |
+
+### `pipeline_environments`
+
+Lists the deployment-environment mappings on a Pipeline-Host (Power-Platform env GUID → pipeline-internal mapping row).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pipelineHostOrgUrl` | string | Yes | Org URL of the Pipeline-Host environment |
+
+### `pipeline_run_status`
+
+Gets the status of a deployment stage run (status, operation, validation results, error message).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pipelineHostOrgUrl` | string | Yes | Org URL of the Pipeline-Host environment |
+| `stageRunId` | string | Yes | Deployment stage-run GUID |
+
+**Example prompt:** "List the pipelines on the host org and show the status of run abc123"

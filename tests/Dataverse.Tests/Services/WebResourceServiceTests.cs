@@ -76,7 +76,7 @@ public sealed class WebResourceServiceTests
     public async Task GetAsync_DecodesTextContent()
     {
         var id = Guid.NewGuid();
-        const string source = "var Xv = Xv || {};";
+        const string source = "var Sample = Sample || {};";
 
         SetupResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new
         {

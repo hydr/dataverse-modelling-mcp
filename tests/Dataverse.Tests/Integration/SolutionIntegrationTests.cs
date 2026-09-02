@@ -8,7 +8,7 @@ using NUnit.Framework;
 public sealed class SolutionIntegrationTests : IntegrationTestBase
 {
     private const string TestSolutionUniqueName = "DV_MCP_Test";
-    private const string KnownSolutionUniqueName = "CrossvertiseSchema";
+    private const string KnownSolutionUniqueName = "ContosoSchema";
     private const string EntityComponentId = "a0e66081-6242-f111-bec6-7c1e528730f7";
 
     // MetadataId of the 'account' table — a stock table carrying many managed layers.
@@ -54,7 +54,7 @@ public sealed class SolutionIntegrationTests : IntegrationTestBase
     }
 
     [Test]
-    public async Task ListSolutions_ContainsKnownSolution_CrossvertiseSchema()
+    public async Task ListSolutions_ContainsKnownSolution_ContosoSchema()
     {
         var solutions = await SolutionService.ListAsync(OrgUrl);
 

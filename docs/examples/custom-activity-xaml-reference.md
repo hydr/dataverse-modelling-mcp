@@ -29,7 +29,7 @@ Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `T
 
       <!-- (1) Fester Lookup: Guid mit Marker "UniqueIdentifier", TargetType mxs:EntityReference -->
       … EvaluateExpression: CreateCrmType,
-        Parameters = [New Object() { …WorkflowPropertyType.Guid, "a0000001-0000-4000-8000-000000000001", "UniqueIdentifier" }],
+        Parameters = [New Object() { …WorkflowPropertyType.Guid, "11112222-3333-4444-5555-666677778888", "UniqueIdentifier" }],
         TargetType = mxs:EntityReference, Result = [CustomActivityStep1_2]
 
       <!-- (2) daraus die Referenz: Label ist LEER -->
@@ -43,7 +43,7 @@ Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `T
 
       <!-- (4) verknüpftes Feld lesen; TargetType ist der ZIELTYP, nicht null -->
       <mxswa:GetEntityProperty Attribute="ownerid"
-          Entity='[InputEntities("related_sample_kundefirma#account")]' EntityName="account"
+          Entity='[InputEntities("related_sample_customeraccount#account")]' EntityName="account"
           Value="[CustomActivityStep1_4]">
         <mxswa:GetEntityProperty.TargetType>
           <InArgument x:TypeArguments="s:Type">

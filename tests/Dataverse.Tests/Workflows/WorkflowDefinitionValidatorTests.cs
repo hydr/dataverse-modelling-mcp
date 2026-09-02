@@ -372,7 +372,7 @@ public sealed class WorkflowDefinitionValidatorTests
     private static WorkflowValue TeamReference() => new()
     {
         DataType = "EntityReference",
-        Literal = "team:a0000001-0000-4000-8000-000000000001"
+        Literal = "team:11112222-3333-4444-5555-666677778888"
     };
 
     [Test]
@@ -422,7 +422,7 @@ public sealed class WorkflowDefinitionValidatorTests
         // An omitted dataType silently means String — which is the wrong type here.
         var result = ValidateActivity(new Dictionary<string, WorkflowValue>
         {
-            ["Team"] = new() { Literal = "team:a0000001-0000-4000-8000-000000000001" }
+            ["Team"] = new() { Literal = "team:11112222-3333-4444-5555-666677778888" }
         });
 
         Assert.That(result.CanSave, Is.False);
@@ -450,7 +450,7 @@ public sealed class WorkflowDefinitionValidatorTests
             ["Team"] = new()
             {
                 DataType = "EntityReference",
-                Literal = "account:a0000001-0000-4000-8000-000000000001"
+                Literal = "account:11112222-3333-4444-5555-666677778888"
             }
         });
 

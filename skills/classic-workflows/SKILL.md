@@ -217,9 +217,9 @@ instead of `conditions`/`then`; `else` is the default case either way:
   "kind": "condition",
   "description": "Voraussetzungen prüfen",
   "branches": [
-    { "conditions": [ { "attribute": "dc_invoicenumber", "operator": "Null" } ],
+    { "conditions": [ { "attribute": "sample_invoicenumber", "operator": "Null" } ],
       "steps": [ { "kind": "stopWorkflow", "outcome": "cancelled" } ] },
-    { "conditions": [ { "attribute": "dc_reminderdate", "operator": "NotNull" } ],
+    { "conditions": [ { "attribute": "sample_reminderdate", "operator": "NotNull" } ],
       "steps": [ { "kind": "stopWorkflow", "outcome": "cancelled" } ] }
   ],
   "else": [ { "kind": "updateRecord", "attributes": [ … ] } ]
@@ -288,7 +288,7 @@ anyway; one that needs a value gets `WF073` if you leave it out.
 | `field` | One or more fields, first non-empty wins, optional fallback | `{"kind":"field","fields":["lead.websiteurl","lead.emailaddress1"],"fallback":"unbekannt"}` |
 | `stepOutput` | Output of an earlier code activity | `{"kind":"stepOutput","stepOutput":"Domain"}` |
 | `now` | Current date and time, evaluated at run time | `{"kind":"now","dataType":"DateTime"}` |
-| `concat` | Several values joined into one string | `{"kind":"concat","dataType":"String","parts":[{"literal":"Nr. "},{"kind":"field","fields":["invoice.dc_invoicenumber"]}]}` |
+| `concat` | Several values joined into one string | `{"kind":"concat","dataType":"String","parts":[{"literal":"Nr. "},{"kind":"field","fields":["invoice.sample_invoicenumber"]}]}` |
 
 `concat` is what an e-mail body is made of: constants and field values in order, nested as deep as
 needed. `now` works both as a written value and as the right-hand side of a date comparison
@@ -317,7 +317,7 @@ for a plain field a wrong type produces a runtime failure; on a code activity's 
 `WF086`.
 
 An `EntityReference` literal is written as `"<entity>:<guid>"`, e.g.
-`"team:a0000001-0000-4000-8000-000000000001"`.
+`"team:11112222-3333-4444-5555-666677778888"`.
 
 Field references are always `entity.attribute` with logical names. Which record they are read from
 depends on one of three keys — without any of them, only the triggering record is readable:
@@ -468,7 +468,7 @@ Nothing is written unless all three pass. Each issue carries `code`, `path`, `pr
   validates and reports in `diff` what would change — including a warning if the current logic
   contains constructs that would be dropped.
 - **Environment write policy:** `contoso-dev` is the safe write target. Confirm with the user before
-  writing to `xv` (production).
+  writing to `contoso-prod` (production).
 
 ## Choosing between classic workflow and cloud flow
 

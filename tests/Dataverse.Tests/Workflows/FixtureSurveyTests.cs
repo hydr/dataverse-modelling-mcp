@@ -57,7 +57,7 @@ public sealed class FixtureSurveyTests
     /// <summary>
     /// Every fixture must be rebuildable: the reading goes back through the builder and the generated
     /// XAML passes its own self-check. That is the offline half of "can this workflow be edited" —
-    /// the online half is proven by PaymentReminderRebuildTests, which activates a rebuild.
+    /// the online half is proven by the integration probes that activate a rebuild against a live org.
     /// </summary>
     [Test]
     public void EveryFixture_CanBeRebuilt()

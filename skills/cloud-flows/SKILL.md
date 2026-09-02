@@ -11,7 +11,7 @@ Expert reference for managing **solution-aware** Power Automate cloud flows via 
 ## Hard prerequisites
 
 - **Only solution-aware flows have version history.** Flows in the default solution get no `componentversion` rows. If a flow is missing from version-history queries, check that it belongs to a non-default solution (`solutioncomponents` filtered on `objectid eq <flowid>`).
-- **Environment write policy:** `contoso-dev` is the safe write target. `xv` (production) and `contoso-staging` need explicit user confirmation before any mutating call.
+- **Environment write policy:** `contoso-dev` is the safe write target. `contoso-prod` (production) and `contoso-staging` need explicit user confirmation before any mutating call.
 - **The `componentversion` virtual entity refuses direct Create.** The Microsoft Learn doc lists Create as supported, but every POST/PATCH against `/componentversions` or the elastic backing table `/componentversionnrddatasourceset` fails. The bound actions documented below are the only working write path.
 
 ## Tool map
@@ -134,7 +134,7 @@ The Dataverse connector supports inline activity parties on email creation — v
   ```
   `addressused` works for distribution lists / shared mailboxes without resolving a systemuser.
 - Send via `PerformBoundAction`, `actionName: Microsoft.Dynamics.CRM.SendEmail`, `item/IssueSend: true` (false = mark sent in CRM without SMTP delivery).
-- Reference flow in production: `Rechnung - Nachtlauf` on contoso-dev, workflowid `4bd74e0f-7015-f011-998a-7c1e5236a14c`.
+- Reference flow (example): a scheduled nightly cloud flow, workflowid `50000000-0000-0000-0000-000000000006`.
 
 ## Reverse-engineered endpoints (Maker UI parity)
 
@@ -217,4 +217,4 @@ GET .../flows/{flowId}/runs/{runId}/actions/{actionName}?api-version=2016-11-01
 
 ## Related memories
 
-- See [[feedback_environment_write_policy]] for the contoso-dev vs xv/contoso-staging write rules.
+- See [[feedback_environment_write_policy]] for the contoso-dev vs contoso-prod/contoso-staging write rules.

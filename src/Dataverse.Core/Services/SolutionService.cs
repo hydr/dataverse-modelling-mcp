@@ -190,7 +190,7 @@ public sealed class SolutionService
             throw new InvalidOperationException(
                 $"Publisher '{publisherUniqueName}' not found in {orgUrl}. " +
                 "Pass the publisher's *unique name* (column 'uniquename' of the publisher table, " +
-                "e.g. 'crossvertise'), not its display name.");
+                "e.g. 'contoso'), not its display name.");
 
         // publisherid is a lookup — it MUST be sent as an OData navigation-property binding.
         // Sending it as a primitive value ("publisherid": "/publishers(...)") makes Dataverse reject

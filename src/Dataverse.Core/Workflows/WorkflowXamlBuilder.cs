@@ -1085,7 +1085,7 @@ public static class WorkflowXamlBuilder
         if (parts.Length < 2 || !Guid.TryParse(parts[1], out var id))
             throw new NotSupportedException(
                 $"'{literal}' is not a valid record reference. Expected \"entity:guid\", " +
-                "e.g. \"team:a0000001-0000-4000-8000-000000000001\".");
+                "e.g. \"team:11112222-3333-4444-5555-666677778888\".");
 
         var entity = parts[0];
         var label = parts.Length > 2 ? parts[2] : string.Empty;

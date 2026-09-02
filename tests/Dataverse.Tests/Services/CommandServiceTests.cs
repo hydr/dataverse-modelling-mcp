@@ -343,8 +343,8 @@ public sealed class CommandServiceTests
     public void BuildUniqueName_PrefixesAndSanitizes()
     {
         Assert.That(
-            CommandService.BuildUniqueName("sample.purchaseorder.CorrectPrice", "sample_purchaseorder", 1, "xv"),
-            Is.EqualTo("sample_xvpurchaseorderCorrectPrice!sample_purchaseorder!1"));
+            CommandService.BuildUniqueName("sample.purchaseorder.CorrectPrice", "sample_purchaseorder", 1, "sample"),
+            Is.EqualTo("sample_samplepurchaseorderCorrectPrice!sample_purchaseorder!1"));
     }
 
     [Test]
@@ -357,7 +357,7 @@ public sealed class CommandServiceTests
     [Test]
     public void InferCustomizationPrefix_TakesThePrefixOfCustomTables()
     {
-        Assert.That(CommandService.InferCustomizationPrefix("sample_purchaseorder"), Is.EqualTo("xv"));
+        Assert.That(CommandService.InferCustomizationPrefix("sample_purchaseorder"), Is.EqualTo("sample"));
         Assert.That(CommandService.InferCustomizationPrefix("account"), Is.Null);
     }
 

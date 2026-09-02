@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dataverse-modelling-mcp",
   "displayName": "Dataverse Modelling MCP",
-  "version": "1.16.2",
+  "version": "1.16.3",
   "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten, Views, Cloud Flows und Command-Bar-Buttons. Plugin-, Binary- und Tool-Version sind identisch; der Launcher bringt die Binary bei jedem Serverstart auf die in scripts/BINARY_VERSION gepinnte Version.",
   "author": {
     "name": "Crossvertise GmbH",
@@ -10,13 +10,13 @@
   },
   "homepage": "https://github.com/hydr/dataverse-modelling-mcp",
   "repository": "https://github.com/hydr/dataverse-modelling-mcp",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": ["dataverse", "modelling", "csharp", "local-mcp", "crossvertise"],
   "userConfig": {
     "dataverse_url": {
       "type": "string",
       "title": "Dataverse Environment URL",
-      "description": "z. B. https://contoso.crm4.dynamics.com — die URL der Dataverse-Umgebung, gegen die modelliert werden soll.",
+      "description": "z. B. https://yourorg.crm4.dynamics.com — die URL der Dataverse-Umgebung, gegen die modelliert werden soll.",
       "required": true
     },
     "client_id": {
@@ -29,7 +29,7 @@
     "tenant_id": {
       "type": "string",
       "title": "Azure AD Tenant ID",
-      "description": "Optional. Default: Crossvertise-Tenant.",
+      "description": "Optional. Default: Tenant der Plugin-Umgebung.",
       "required": false
     },
     "release_repo": {

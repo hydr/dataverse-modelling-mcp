@@ -161,7 +161,7 @@ public sealed class WorkflowXamlParserTests
                     [
                         new WorkflowConditionBranch
                         {
-                            Conditions = [new WorkflowCondition { Attribute = "dc_invoicenumber", Operator = "Null" }],
+                            Conditions = [new WorkflowCondition { Attribute = "sample_invoicenumber", Operator = "Null" }],
                             Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
                         },
                         new WorkflowConditionBranch
@@ -169,7 +169,7 @@ public sealed class WorkflowXamlParserTests
                             LogicalOperator = "Or",
                             Conditions =
                             [
-                                new WorkflowCondition { Attribute = "dc_reminderdate", Operator = "NotNull" },
+                                new WorkflowCondition { Attribute = "sample_reminderdate", Operator = "NotNull" },
                                 new WorkflowCondition { Attribute = "emailaddress", Operator = "Null" }
                             ],
                             Steps = [new WorkflowStep { Kind = WorkflowStepKind.StopWorkflow, Outcome = "cancelled" }]
@@ -204,9 +204,9 @@ public sealed class WorkflowXamlParserTests
 
         // Each case must keep exactly its own comparisons — mixing them up was the old defect.
         Assert.That(step.Branches![0].Conditions.Select(c => c.Attribute),
-            Is.EqualTo(new[] { "dc_invoicenumber" }));
+            Is.EqualTo(new[] { "sample_invoicenumber" }));
         Assert.That(step.Branches[1].Conditions.Select(c => c.Attribute),
-            Is.EqualTo(new[] { "dc_reminderdate", "emailaddress" }));
+            Is.EqualTo(new[] { "sample_reminderdate", "emailaddress" }));
         Assert.That(step.Branches[1].LogicalOperator, Is.EqualTo("Or"));
         Assert.That(step.Branches[0].BranchId, Is.EqualTo("ConditionBranchStep2"));
         Assert.That(step.Else, Has.Count.EqualTo(1));
@@ -236,7 +236,7 @@ public sealed class WorkflowXamlParserTests
                     [
                         new WorkflowCondition
                         {
-                            Attribute = "dc_invoicestatus",
+                            Attribute = "sample_invoicestatus",
                             Operator = "In",
                             Value = new WorkflowValue
                             {
@@ -246,7 +246,7 @@ public sealed class WorkflowXamlParserTests
                         },
                         new WorkflowCondition
                         {
-                            Attribute = "dc_payduedate",
+                            Attribute = "sample_payduedate",
                             Operator = "OnOrAfter",
                             Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
                         }
@@ -271,14 +271,14 @@ public sealed class WorkflowXamlParserTests
                                             new WorkflowValue
                                             {
                                                 Kind = WorkflowValueKind.Field,
-                                                Fields = ["invoice.dc_invoicenumber"]
+                                                Fields = ["invoice.sample_invoicenumber"]
                                             }
                                         ]
                                     }
                                 },
                                 new WorkflowAttributeAssignment
                                 {
-                                    Attribute = "dc_reminderdate",
+                                    Attribute = "sample_reminderdate",
                                     Value = new WorkflowValue { Kind = WorkflowValueKind.Now, DataType = "DateTime" }
                                 }
                             ]
@@ -305,7 +305,7 @@ public sealed class WorkflowXamlParserTests
         Assert.That(concat.Kind, Is.EqualTo(WorkflowValueKind.Concat));
         Assert.That(concat.Parts, Has.Count.EqualTo(2));
         Assert.That(concat.Parts![0].Literal, Is.EqualTo("Zahlungserinnerung "));
-        Assert.That(concat.Parts[1].Fields, Is.EqualTo(new[] { "invoice.dc_invoicenumber" }));
+        Assert.That(concat.Parts[1].Fields, Is.EqualTo(new[] { "invoice.sample_invoicenumber" }));
         Assert.That(assignments[1].Value.Kind, Is.EqualTo(WorkflowValueKind.Now));
 
         var rebuilt = WorkflowXamlBuilder.Build(parsed.Definition with { PrimaryEntity = "invoice" }).Xaml;
@@ -372,7 +372,7 @@ public sealed class WorkflowXamlParserTests
                         ["Team"] = new()
                         {
                             DataType = "EntityReference",
-                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                            Literal = "team:11112222-3333-4444-5555-666677778888"
                         }
                     },
                     Outputs = ["isUserInTeam"]
@@ -437,7 +437,7 @@ public sealed class WorkflowXamlParserTests
         Assert.That(activity.Inputs!["Team"].Kind, Is.EqualTo(WorkflowValueKind.Literal));
         Assert.That(activity.Inputs["Team"].DataType, Is.EqualTo("EntityReference"));
         Assert.That(activity.Inputs["Team"].Literal,
-            Is.EqualTo("team:a0000001-0000-4000-8000-000000000001"));
+            Is.EqualTo("team:11112222-3333-4444-5555-666677778888"));
         Assert.That(activity.Outputs, Is.EqualTo(new[] { "isUserInTeam" }));
 
         Assert.That(parsed.FullyUnderstood, Is.True,
@@ -471,7 +471,7 @@ public sealed class WorkflowXamlParserTests
                         ["Team"] = new()
                         {
                             DataType = "EntityReference",
-                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                            Literal = "team:11112222-3333-4444-5555-666677778888"
                         },
                         ["User"] = new()
                         {
@@ -490,7 +490,7 @@ public sealed class WorkflowXamlParserTests
         var parsed = WorkflowXamlParser.Parse(xaml, "salesorder");
         var inputs = parsed.Definition.Steps[0].Inputs!;
 
-        Assert.That(inputs["Team"].Literal, Is.EqualTo("team:a0000001-0000-4000-8000-000000000001"));
+        Assert.That(inputs["Team"].Literal, Is.EqualTo("team:11112222-3333-4444-5555-666677778888"));
 
         // The related read keeps both its field reference and the lookup it travels through.
         Assert.That(inputs["User"].Kind, Is.EqualTo(WorkflowValueKind.Field));
@@ -525,7 +525,7 @@ public sealed class WorkflowXamlParserTests
                         ["Team"] = new()
                         {
                             DataType = "EntityReference",
-                            Literal = "team:a0000001-0000-4000-8000-000000000001"
+                            Literal = "team:11112222-3333-4444-5555-666677778888"
                         }
                     },
                     Outputs = ["isUserInTeam"]

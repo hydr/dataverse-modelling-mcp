@@ -286,8 +286,8 @@ remains the route for the classic (non-modern) command bar.
 `ribbon_add_button` validates the location against the compiled ribbon first; `ribbon_get` with
 `includeLocations=true` lists the valid ones.
 
-**5. Custom commands only render in some apps.** `d365default` showed nothing where the Crossvertise
-app (`sample_mainapp`) and the Purchase Orders app both showed the button. Check in the wrong app and you
+**5. Custom commands only render in some apps.** `d365default` showed nothing where the custom
+model-driven app (`sample_mainapp`) and the Purchase Orders app both showed the button. Check in the wrong app and you
 will conclude the mechanism is broken.
 
 **6. `RetrieveEntityRibbon` proves storage, not rendering.** The definition sat there the whole time

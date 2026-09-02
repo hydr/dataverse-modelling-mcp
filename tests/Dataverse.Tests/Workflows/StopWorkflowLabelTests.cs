@@ -54,7 +54,7 @@ public sealed class StopWorkflowLabelTests
                 new WorkflowValue { DataType = "String", Literal = "Mahnung 1 wurde bereits verschickt am " },
                 new WorkflowValue
                 {
-                    Kind = WorkflowValueKind.Field, DataType = "String", Fields = ["invoice.dc_dunning1"]
+                    Kind = WorkflowValueKind.Field, DataType = "String", Fields = ["invoice.sample_dunning1"]
                 }
             ]
         });

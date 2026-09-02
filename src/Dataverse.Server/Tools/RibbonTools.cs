@@ -93,7 +93,11 @@ public sealed class RibbonTools
                  "someone has touched with the Ribbon Workbench: its localized captions are stored as " +
                  "<LocLabel> nodes, and re-sending one inside <CustomActions> fails the import with " +
                  "'Missing Location Attribute … for CustomAction element with Id=….LabelText'. " +
-                 "Labels are written as literal LabelText attributes; a $LocLabels: value is rejected. " +
+                 "Captions are written as <LocLabel> nodes plus $LocLabels: references, the way the " +
+                 "Ribbon Workbench writes them — a literal LabelText is stored fine and simply never " +
+                 "drawn. The language is taken from the captions the table already carries (falling back " +
+                 "to the org's base language), and the chosen code comes back as captionLanguageCode: " +
+                 "a caption under a language the org does not use renders as nothing. " +
                  SilentFailureNote + " " + ChoiceNote)]
     public static async Task<string> RibbonAddButton(
         RibbonService svc,
@@ -136,8 +140,9 @@ public sealed class RibbonTools
                      "off re-enables the silent 'imported fine, renders nothing' failure.")] bool validateLocation = true,
         [Description("Publish the table afterwards (default true). Without it the button is stored but " +
                      "neither compiled nor verifiable.")] bool publish = true,
-        [Description("Language of the caption LocLabels, e.g. 1031 for German. Defaults to the org's " +
-                     "base language — a caption stored under a language nobody uses does not render.")] int? languageCode = null,
+        [Description("Language of the caption LocLabels, e.g. 1031 for German. Defaults to whatever the " +
+                     "table's existing captions use, then the org's base language — a caption stored " +
+                     "under a language nobody uses does not render.")] int? languageCode = null,
         CancellationToken ct = default)
     {
         try

@@ -176,6 +176,25 @@ opened in the Ribbon Workbench has them, which is most of the older ones.
 any other `<buttonId>.<attribute>`). That matters more than tidiness: an orphaned LocLabel row stays in
 the table's diff and breaks the *next* `ribbon_add_button` on that table.
 
+**Do not point `solutionUniqueName` at a solution that has grown.** Reusing an existing solution saves
+the throwaway round-trip, but the import then carries *everything* that solution contains. One cloud
+flow left in `ActiveUnpublished` is enough to fail the whole thing:
+
+```
+Error while importing workflow {…} type ModernFlow … : You are attempting to do a published update
+of publishable component in an unmodified active context when there exists an unpublished active row
+```
+
+That has nothing to do with the ribbon. Leave `solutionUniqueName` unset and let the tool create and
+delete its own solution; on an out-of-the-box table such as `invoice` it only needs
+`publisherUniqueName` (there is no customization prefix to infer one from).
+
+**The round-trip needs a long HTTP timeout.** `importTimeoutSeconds` (default 900) governs how long the
+*import job* may take, but the underlying `HttpClient` used to default to 100 s and cancelled the call
+first — `The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing`, on
+a table where the same call had succeeded minutes earlier. The clients are now configured with generous
+timeouts so the per-operation limits are the ones that actually apply.
+
 **Step 7 needs a retry.** A publish issued immediately after `ImportSolutionAsync` reports terminal
 routinely comes back with HTTP 429 / `0x80071151 — "Cannot start the requested operation [Publish]
 because there is another [Import] running at this moment"`. The async operation really is finished; the
@@ -234,7 +253,24 @@ and the harmless-looking one is the worse:
 
 The working configuration is the one the Ribbon Workbench writes: a `<LocLabel>` node per string plus a
 `$LocLabels:<id>` reference on the button. `ribbon_add_button` writes both halves — pass the caption
-itself as `label`, and the language via `languageCode` if the org's base language is not what you want.
+itself as `label`.
+
+**The `languagecode` on the LocLabel should match the org, though less dramatically than expected.**
+`ribbon_add_button` takes the language from **the captions the table already carries** — the same
+"compare on the same table" rule that applies to verifying — and only then falls back to the org's base
+language. The code it settled on and where it came from are reported as `captionLanguageCode` /
+`captionLanguageSource`; `languageCode` overrides it.
+
+> Measured, not assumed: a button whose LocLabels carried `languagecode="1033"` rendered perfectly in an
+> org whose base language is 1031 — caption and icon both. So 1033 is resolved as a fallback rather than
+> ignored, and a mismatched language is **not** the same class of failure as a literal caption. What
+> remains untested is a language the org has not installed at all (1041 and the like); until someone
+> measures that, matching the table is simply the choice with no downside.
+>
+> The reason this is written down at all: the first live run stored 1033 into a 1031 org because the
+> org-level query came back empty (the `organization` row is not readable for every caller) and the
+> fallback said nothing about it. The eleven existing LocLabels on that very table all said 1031 — the
+> table knew the answer the whole time.
 
 > This paragraph used to say the opposite ("use literal `LabelText`"), generalised from a single case
 > where the trigger was a *dangling* reference. Literal captions are worse than a wrong caption: the
@@ -348,7 +384,7 @@ could add a button to"
 | `modernImage` | string | no | Icon for the modern command bar, e.g. `$webresource:sample_/images/envelope-back-front.svg` |
 | `enableRule` | string | no | `OneSelected`, `AtLeastOneSelected`, `SelectionCountRule:<min>[-<max>]`, or a literal `<EnableRule>` fragment. **A `Minimum` above 1 is not enforced** — see below |
 | `tooltipTitle`, `tooltipDescription` | string | no | Default to the label; each gets its own `<LocLabel>` |
-| `languageCode` | int | no | Language of the caption LocLabels; defaults to the org's base language |
+| `languageCode` | int | no | Language of the caption LocLabels; defaults to the language the table's existing captions use, then the org's base language. Reported back as `captionLanguageCode` |
 | `templateAlias` | string | no | Default `o1` |
 | `solutionUniqueName` | string | no | Reuse a solution instead of a throwaway one |
 | `publisherUniqueName` | string | no | Defaults to the publisher owning the table's prefix |

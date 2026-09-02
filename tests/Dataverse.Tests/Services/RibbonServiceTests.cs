@@ -421,6 +421,54 @@ public sealed class RibbonServiceTests
     }
 
     [Test]
+    public void CaptionLanguage_ComesFromTheCaptionsTheTableAlreadyHas()
+    {
+        // Verified the hard way on invoice: the first run wrote languagecode 1033 into an org that reads
+        // 1031, because the organization row could not be queried and the fallback said nothing. The
+        // table's own buttons knew the answer all along — every one of them is captioned 1031.
+        var xml = RibbonService.BuildRibbonDiffXml(
+            "b2", "b2.CustomAction", "b2.Command", "loc2", "L2", "wr.js", "fn2",
+            Array.Empty<RibbonParameter>(),
+            preserve: ExistingRibbon("b1"),
+            languageCode: RibbonService.LanguageCodeOfExistingCaptions(ExistingRibbon("b1")) ?? 1033);
+
+        var title = XElement.Parse(xml).Element("LocLabels")!.Elements("LocLabel")
+            .Single(l => l.Attribute("Id")!.Value == "b2.LabelText")
+            .Element("Titles")!.Element("Title")!;
+
+        Assert.That(title.Attribute("languagecode")!.Value, Is.EqualTo("1031"));
+    }
+
+    [Test]
+    public void LanguageCodeOfExistingCaptions_IsNullWhenTheTableHasNone()
+    {
+        var bare = ExistingRibbon("b1") with { LocLabels = Array.Empty<RibbonDiffEntry>() };
+
+        Assert.That(RibbonService.LanguageCodeOfExistingCaptions(bare), Is.Null);
+    }
+
+    [Test]
+    public void LanguageCodeOfExistingCaptions_TakesTheMajorityWhenTheTableIsMixed()
+    {
+        var mixed = ExistingRibbon("b1") with
+        {
+            LocLabels = new[]
+            {
+                LocLabelRow("a.LabelText", 1031),
+                LocLabelRow("b.LabelText", 1031),
+                LocLabelRow("c.LabelText", 1033)
+            }
+        };
+
+        Assert.That(RibbonService.LanguageCodeOfExistingCaptions(mixed), Is.EqualTo(1031));
+    }
+
+    private static RibbonDiffEntry LocLabelRow(string id, int languageCode) =>
+        new(Guid.NewGuid(), id, 3, "LocalizedLabel", false,
+            $"<LocLabel Id=\"{id}\"><Titles><Title languagecode=\"{languageCode}\" " +
+            "description=\"x\" /></Titles></LocLabel>");
+
+    [Test]
     public void BelongsToButton_ClaimsTheLabelRowsOfItsButton()
     {
         // Orphaned label rows are what poisoned the next ribbon_add_button on the same table.

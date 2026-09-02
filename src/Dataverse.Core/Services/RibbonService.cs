@@ -365,7 +365,9 @@ public sealed class RibbonService
             .Select(c => c.DiffId)
             .ToList();
 
-        var captionLanguage = languageCode ?? await GetBaseLanguageCodeAsync(orgUrl, ct);
+        var (captionLanguage, languageSource) = languageCode is { } explicitCode
+            ? (explicitCode, "the languageCode argument")
+            : await ResolveCaptionLanguageAsync(existing, orgUrl, ct);
 
         var ribbonDiffXml = BuildRibbonDiffXml(
             buttonId: buttonId,
@@ -481,9 +483,13 @@ public sealed class RibbonService
                 Published: publish,
                 Verified: verified,
                 ImportComponentErrors: import.ComponentErrors,
-                Warning: BuildAddWarning(publish, verified, customActionId, tableLogicalName, lost),
+                Warning: BuildAddWarning(
+                    publish, verified, customActionId, tableLogicalName, lost,
+                    captionLanguage, languageSource),
                 PreservedCustomActionIds: preserved,
-                LostCustomActionIds: lost);
+                LostCustomActionIds: lost,
+                CaptionLanguageCode: captionLanguage,
+                CaptionLanguageSource: languageSource);
         }
         catch
         {
@@ -639,7 +645,9 @@ public sealed class RibbonService
         bool verified,
         string customActionId,
         string tableLogicalName,
-        IReadOnlyList<string> lost)
+        IReadOnlyList<string> lost,
+        int captionLanguage,
+        string captionLanguageSource)
     {
         if (!publish)
         {
@@ -648,6 +656,15 @@ public sealed class RibbonService
         }
 
         var parts = new List<string>();
+
+        if (captionLanguageSource.StartsWith("a fallback", StringComparison.Ordinal))
+        {
+            parts.Add(
+                $"The caption was written under language {captionLanguage} because nothing on this org " +
+                "would say which language it uses. A 1033 caption does still render in a non-1033 org " +
+                "(measured on invoice/1031), so this is a mismatch rather than a failure — but if your " +
+                "users read something else, pass languageCode explicitly.");
+        }
 
         if (!verified)
         {
@@ -749,15 +766,29 @@ public sealed class RibbonService
         || string.Equals(RootElementName(entry.Xml), "LocLabel", StringComparison.Ordinal);
 
     /// <summary>
-    /// The org's base language, used as the <c>languagecode</c> of the LocLabels this tool writes.
+    /// The language to write a new caption in, and where that answer came from.
     /// <para>
-    /// A caption stored under a language nobody uses is a caption that does not render, so guessing 1033
-    /// would reintroduce the very failure the LocLabels are there to fix. Falls back to 1033 only if the
-    /// organization row cannot be read.
+    /// The table's own buttons are the best source there is: whatever language <b>they</b> are captioned
+    /// in is the language this org's users read. That also happens to be the rule this document preaches
+    /// for verifying a button — compare against a reference on the same table.
+    /// </para>
+    /// <para>
+    /// A 1033 caption does render in a 1031 org — measured on <c>invoice</c>, caption and icon both — so
+    /// a mismatch is untidy rather than fatal. What is fatal is not knowing: the chosen code and its
+    /// source are reported back with the result instead of being swallowed.
     /// </para>
     /// </summary>
-    public async Task<int> GetBaseLanguageCodeAsync(string orgUrl, CancellationToken ct = default)
+    public async Task<(int LanguageCode, string Source)> ResolveCaptionLanguageAsync(
+        RibbonInfo existing,
+        string orgUrl,
+        CancellationToken ct = default)
     {
+        var fromTable = LanguageCodeOfExistingCaptions(existing);
+        if (fromTable is { } tableCode)
+        {
+            return (tableCode, $"the LocLabels already on '{existing.TableLogicalName}'");
+        }
+
         try
         {
             var raw = await _client.GetRawAsync(
@@ -767,16 +798,58 @@ public sealed class RibbonService
                 var code = item.GetInt32OrZero("languagecode");
                 if (code > 0)
                 {
-                    return code;
+                    return (code, "the org's base language");
                 }
             }
+
+            _logger.LogWarning("The organization row carried no languagecode; falling back to 1033.");
         }
         catch (HttpRequestException ex)
         {
             _logger.LogWarning(ex, "Could not read the org's base language; falling back to 1033.");
         }
 
-        return 1033;
+        return (1033, "a fallback — neither the table nor the organization row answered");
+    }
+
+    /// <summary>The language code most of a table's existing captions use, or <c>null</c> if it has none.</summary>
+    public static int? LanguageCodeOfExistingCaptions(RibbonInfo info) =>
+        MostCommonLanguageCode(info.LocLabels);
+
+    private static int? MostCommonLanguageCode(IReadOnlyList<RibbonDiffEntry>? locLabels)
+    {
+        var codes = (locLabels ?? [])
+            .Select(l => TryParseElement(l.Xml))
+            .Where(el => el is not null)
+            .SelectMany(el => el!.Descendants("Title"))
+            .Select(t => t.Attribute("languagecode")?.Value)
+            .Where(v => int.TryParse(v, out var parsed) && parsed > 0)
+            .Select(int.Parse!)
+            .ToList();
+
+        if (codes.Count == 0)
+        {
+            return null;
+        }
+
+        return codes.GroupBy(c => c).OrderByDescending(g => g.Count()).First().Key;
+    }
+
+    private static XElement? TryParseElement(string? xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml))
+        {
+            return null;
+        }
+
+        try
+        {
+            return XElement.Parse(xml);
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
     }
 
     private async Task<bool> DiffExistsAsync(

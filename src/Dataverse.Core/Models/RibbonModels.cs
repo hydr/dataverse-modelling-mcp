@@ -104,7 +104,14 @@ public sealed record RibbonAddButtonResult(
     /// </summary>
     IReadOnlyList<string>? PreservedCustomActionIds = null,
     /// <summary>Those of <see cref="PreservedCustomActionIds"/> that did not survive — must be empty.</summary>
-    IReadOnlyList<string>? LostCustomActionIds = null);
+    IReadOnlyList<string>? LostCustomActionIds = null,
+    /// <summary>
+    /// The <c>languagecode</c> the caption LocLabels were written under. Worth checking against the
+    /// language the org actually uses: a caption stored under a foreign language renders as nothing.
+    /// </summary>
+    int? CaptionLanguageCode = null,
+    /// <summary>Where <see cref="CaptionLanguageCode"/> came from — a silent fallback says so here.</summary>
+    string? CaptionLanguageSource = null);
 
 public sealed record RibbonRemoveButtonResult(
     bool Success,

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dataverse-modelling-mcp",
   "displayName": "Dataverse Modelling MCP",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten, Views, Cloud Flows und Command-Bar-Buttons. Der Launcher bringt die Binary bei jedem Serverstart auf die in scripts/BINARY_VERSION gepinnte Version.",
   "author": {
     "name": "Crossvertise GmbH",

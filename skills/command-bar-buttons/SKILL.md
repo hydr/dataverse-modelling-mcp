@@ -56,6 +56,8 @@ something does not appear:
    back perfectly, and the Unified Interface draws no button at all. A `$LocLabels:` reference without
    its `<LocLabel>` node renders the raw token instead. The configuration that works is a `<LocLabel>`
    node plus a reference, which is what `ribbon_add_button` now writes — pass the caption as `label`.
+   Watch `captionLanguageCode` in the result: a caption under a language the org does not use is just
+   as invisible as no caption. It defaults to the language the table's other buttons use.
 3. **~~`ModernImage="$webresource:….svg"`~~** — this was in the list and is wrong. Six buttons on
    `invoice` carry such a reference and all of them render; the disappearance came from the caption
    (point 2). The rejection has been removed from the tool.

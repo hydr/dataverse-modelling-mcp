@@ -20,8 +20,12 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 // Core auth and HTTP clients
 builder.Services.AddSingleton<DataverseTokenProvider>();
 builder.Services.AddSingleton<ITokenProvider>(sp => sp.GetRequiredService<DataverseTokenProvider>());
-builder.Services.AddHttpClient<DataverseHttpClient>();
-builder.Services.AddHttpClient<PowerAutomateHttpClient>();
+// HttpClient defaults to a 100 s timeout, which quietly undercuts every long-running operation here:
+// a ribbon round-trip asks for importTimeoutSeconds=900 and still died at 100 s with
+// "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing."
+// The per-operation timeouts are the ones meant to draw the line; this one just must not get there first.
+builder.Services.AddHttpClient<DataverseHttpClient>(c => c.Timeout = TimeSpan.FromMinutes(15));
+builder.Services.AddHttpClient<PowerAutomateHttpClient>(c => c.Timeout = TimeSpan.FromMinutes(5));
 
 // Domain services
 builder.Services.AddSingleton<WorkflowService>();

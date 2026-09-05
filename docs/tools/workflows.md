@@ -139,7 +139,7 @@ Der Einstieg, wenn man einen fremden Prozess verstehen will.
 Am Ende steht ein Abschnitt **„Not understood"**, falls der Parser Konstrukte nicht abbilden konnte.
 Dann ist die Erklärung unvollständig und der Workflow darf nicht überschrieben werden.
 
-**Example prompt:** „Was macht der Workflow Zahlungserinnerung-Email verschicken?"
+**Example prompt:** "What does the payment reminder workflow do?"
 
 ---
 

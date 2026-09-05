@@ -408,7 +408,7 @@ public sealed class WorkflowDefinitionValidatorTests
         var result = ValidateActivity(new Dictionary<string, WorkflowValue>
         {
             // Team is a Microsoft.Crm.Sdk.Lookup, so a string is the wrong argument type.
-            ["Team"] = new() { DataType = "String", Literal = "Salesteam" }
+            ["Team"] = new() { DataType = "String", Literal = "Sales team" }
         });
 
         Assert.That(result.CanSave, Is.False);
@@ -464,7 +464,7 @@ public sealed class WorkflowDefinitionValidatorTests
     {
         var result = ValidateActivity(
             new Dictionary<string, WorkflowValue> { ["Team"] = TeamReference() },
-            ["IsUserInSalesteam"]);
+            ["IsUserInSalesTeam"]);
 
         Assert.That(result.CanSave, Is.False);
         AssertHasCode(result, "WF089");

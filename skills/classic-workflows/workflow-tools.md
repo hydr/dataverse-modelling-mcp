@@ -13,7 +13,7 @@ Lookup-Felder des Primärdatensatzes. Der Zugriff läuft über einen zweiten Sch
 InputEntities("related_<lookupAttribut>#<zielEntität>")
 ```
 
-Beispiel — auf einem `salesorder` das Feld `sample_salesma` der verknüpften `opportunity` lesen
+Beispiel — auf einem `salesorder` das Feld `sample_salesrep` der verknüpften `opportunity` lesen
 (Lookup-Feld dorthin: `opportunityid`):
 
 ```xml
@@ -22,7 +22,7 @@ Beispiel — auf einem `salesorder` das Feld `sample_salesma` der verknüpften `
                          EntityName="salesorder" Value="[UpdateStep3_2]"> … </mxswa:GetEntityProperty>
 
 <!-- Dann das Feld auf der verknüpften Entität -->
-<mxswa:GetEntityProperty Attribute="sample_salesma"
+<mxswa:GetEntityProperty Attribute="sample_salesrep"
                          Entity='[InputEntities("related_opportunityid#opportunity")]'
                          EntityName="opportunity" Value="[UpdateStep3_3]"> … </mxswa:GetEntityProperty>
 ```
@@ -37,7 +37,7 @@ Merkregeln:
 - Die Plattform füllt diese Schlüssel selbst; man muss die Verknüpfung nicht „laden".
 
 Im Definitionsmodell dieses Servers werden solche Verweise als `"<entität>.<attribut>"` geschrieben,
-also `"opportunity.sample_salesma"` — der Builder erzeugt daraus den `related_…`-Schlüssel, sofern er
+also `"opportunity.sample_salesrep"` — der Builder erzeugt daraus den `related_…`-Schlüssel, sofern er
 das Lookup-Attribut kennt (Angabe über `via`).
 
 ## 2. msdyncrmWorkflowTools — was klassische Workflows damit doch können

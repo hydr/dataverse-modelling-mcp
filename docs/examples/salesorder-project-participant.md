@@ -1,35 +1,36 @@
-# Beispiel: Salesbeteiligten auf dem Auftrag ermitteln
+# Example: deriving the project participant on a sales order
 
-Fachliche Anforderung (Testfall, Umgebung `contoso-dev`):
+A worked example of three builder capabilities that only appear together in a non-trivial workflow:
+reading fields across a lookup, branching on an activity output, and writing an `EntityReference`
+literal.
 
-1. Bei **Anlage eines Auftrags** prüfen, ob `sample_projektbeteiligter1` bereits gefüllt ist.
-2. Wenn nicht: prüfen, ob eine Verkaufschance verknüpft ist und dort `sample_salesma` gefüllt ist.
-3. Wenn ja: diesen Wert übernehmen.
-4. Sonst: prüfen, ob `customerid` (Kunde/Firma) gefüllt ist.
-5. Wenn ja: den Besitzer dieser Firma (`account.ownerid`) ermitteln.
-6. Wenn dieser Besitzer Mitglied des Teams **Salesteam** ist: ihn in `sample_projektbeteiligter1` schreiben.
+The requirement:
 
-## Beteiligte Felder
+1. On **creation of a sales order**, check whether `sample_projectparticipant1` is already filled.
+2. If not, check whether an opportunity is linked and `sample_salesrep` is filled there.
+3. If so, take that value.
+4. Otherwise, check whether `customerid` (customer/account) is filled.
+5. If so, determine the owner of that account (`account.ownerid`).
+6. If that owner is a member of the sales team, write them into `sample_projectparticipant1`.
 
-| Zweck | Feld | Typ |
+## Fields involved
+
+| Purpose | Field | Type |
 |---|---|---|
-| Ziel | `salesorder.sample_projektbeteiligter1` | Lookup |
-| Verkaufschance | `salesorder.opportunityid` | Lookup → opportunity |
-| Projektbeteiligter dort | `opportunity.sample_salesma` | Lookup |
-| Kunde/Firma | `salesorder.customerid` | Customer (account **oder** contact!) |
-| Firma (reines Konto) | `salesorder.accountid` | Lookup → account |
-| Besitzer der Firma | `account.ownerid` | Owner |
-| Team | „Salesteam" | `11112222-3333-4444-5555-666677778888` |
+| Target | `salesorder.sample_projectparticipant1` | Lookup |
+| Opportunity | `salesorder.opportunityid` | Lookup → opportunity |
+| Participant there | `opportunity.sample_salesrep` | Lookup |
+| Customer/account | `salesorder.customerid` | Customer (account **or** contact) |
+| Account (pure account) | `salesorder.accountid` | Lookup → account |
+| Owner of the account | `account.ownerid` | Owner |
+| Team | sales team | `11112222-3333-4444-5555-666677778888` |
 
 > [!NOTE]
-> `customerid` ist ein **Customer**-Feld und kann auf `account` *oder* `contact` zeigen. Für Schritt 5
-> ist `accountid` der verlässlichere Einstieg, weil der `related_…`-Zugriff eine feste Zielentität
-> braucht. Alternativ über `customeridtype` verzweigen.
+> `customerid` is a **Customer** field and can point at `account` *or* `contact`. For step 5,
+> `accountid` is the more reliable entry point, because the `related_…` access needs a fixed target
+> entity. Alternatively, branch on `customeridtype`.
 
-## Zielzustand als Definition
-
-Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese Definition in
-`contoso-dev`, aktiviert sie und liest sie wieder aus.
+## The definition
 
 ```json
 {
@@ -37,42 +38,42 @@ Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese
   "steps": [
     {
       "kind": "condition",
-      "description": "Salesbeteiligter noch leer",
+      "description": "Participant still empty",
       "conditions": [
-        { "attribute": "sample_projektbeteiligter1", "operator": "Null" }
+        { "attribute": "sample_projectparticipant1", "operator": "Null" }
       ],
       "then": [
         {
           "kind": "condition",
-          "description": "Verkaufschance mit Projektbeteiligtem vorhanden",
+          "description": "Opportunity with a participant exists",
           "conditions": [
             { "attribute": "opportunityid", "operator": "NotNull" },
             { "entity": "opportunity", "via": "opportunityid",
-              "attribute": "sample_salesma", "operator": "NotNull" }
+              "attribute": "sample_salesrep", "operator": "NotNull" }
           ],
           "logicalOperator": "And",
           "then": [
             {
               "kind": "updateRecord",
-              "description": "Salesbeteiligten aus Verkaufschance uebernehmen",
+              "description": "Take the participant from the opportunity",
               "attributes": [
-                { "attribute": "sample_projektbeteiligter1",
+                { "attribute": "sample_projectparticipant1",
                   "value": { "kind": "field", "dataType": "EntityReference",
-                             "fields": ["opportunity.sample_salesma"], "via": "opportunityid" } }
+                             "fields": ["opportunity.sample_salesrep"], "via": "opportunityid" } }
               ]
             }
           ],
           "else": [
             {
               "kind": "condition",
-              "description": "Firma am Auftrag vorhanden",
+              "description": "Account present on the order",
               "conditions": [
                 { "attribute": "accountid", "operator": "NotNull" }
               ],
               "then": [
                 {
                   "kind": "customActivity",
-                  "description": "Ist der Firmenbesitzer im Salesteam",
+                  "description": "Is the account owner on the sales team",
                   "assemblyQualifiedName": "msdyncrmWorkflowTools.CheckUserInTeam, msdyncrmWorkflowTools, Version=1.0.62.1, Culture=neutral, PublicKeyToken=416e876b9bee261e",
                   "inputs": {
                     "Team": { "kind": "literal", "dataType": "EntityReference",
@@ -84,7 +85,7 @@ Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese
                 },
                 {
                   "kind": "condition",
-                  "description": "Besitzer ist im Salesteam",
+                  "description": "Owner is on the sales team",
                   "conditions": [
                     { "stepOutput": "isUserInTeam",
                       "operator": "Equal",
@@ -93,9 +94,9 @@ Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese
                   "then": [
                     {
                       "kind": "updateRecord",
-                      "description": "Firmenbesitzer als Salesbeteiligten setzen",
+                      "description": "Set the account owner as the participant",
                       "attributes": [
-                        { "attribute": "sample_projektbeteiligter1",
+                        { "attribute": "sample_projectparticipant1",
                           "value": { "kind": "field", "dataType": "EntityReference",
                                      "fields": ["account.ownerid"], "via": "accountid" } }
                       ]
@@ -112,36 +113,33 @@ Umgesetzt und verifiziert: `SalesOrderParticipantWorkflowTests` baut genau diese
 }
 ```
 
-Anschließend:
+Then:
 
 ```
 workflow_update(id, {"triggeroncreate": true, "createstage": 40})
 workflow_set_state(id, activate=true)
 ```
 
-## Die drei Builder-Fähigkeiten, die dafür nötig waren
+## The three builder capabilities this needs
 
-| # | Fähigkeit | Umsetzung |
+| # | Capability | How it works |
 |---|---|---|
-| 1 | Felder verknüpfter Datensätze lesen | `via` (Lookup-Attribut) an `WorkflowCondition` und `WorkflowValue`; der Builder erzeugt `Entity="[InputEntities("related_<via>#<entity>")]"` mit `EntityName="<entity>"`. `WF079`/`WF122` verlangen `via`, sobald die Entität nicht die Primärentität ist. |
-| 2 | Bedingung auf einer Aktivitäts-Ausgabe | `WorkflowCondition.StepOutput` als Alternative zu `Attribute`; die `_localParameter`-Variable wird `Operand`, ohne `GetEntityProperty`. |
-| 3 | `EntityReference`-Literale | Schreibweise `"<entität>:<guid>"`; zwei `CreateCrmType`-Schritte (Guid mit Marker `UniqueIdentifier`, dann die Referenz mit leerem Label und Marker `Lookup`). |
+| 1 | reading fields of related records | `via` (the lookup attribute) on `WorkflowCondition` and `WorkflowValue`; the builder emits `Entity="[InputEntities("related_<via>#<entity>")]"` with `EntityName="<entity>"`. `WF079`/`WF122` require `via` as soon as the entity is not the primary entity. |
+| 2 | a condition on an activity output | `WorkflowCondition.StepOutput` as an alternative to `Attribute`; the `_localParameter` variable becomes the `Operand`, without `GetEntityProperty`. |
+| 3 | `EntityReference` literals | written as `"<entity>:<guid>"`; two `CreateCrmType` steps (Guid with marker `UniqueIdentifier`, then the reference with an empty label and marker `Lookup`). |
 
-Dazu kam, was die Aktivierung eigentlich blockierte: Argumenttypen aus
-`plugintype.customworkflowactivityinfo` statt hart `x:String`, und das Namensschema der konvertierten
-Hilfsvariablen — Details in `custom-activity-xaml-reference.md`.
+On top of that came what actually blocked activation: argument types read from
+`plugintype.customworkflowactivityinfo` rather than hard-coded `x:String`, and the naming scheme of
+the converted helper variables — see [`custom-activity-xaml-reference.md`](custom-activity-xaml-reference.md).
 
-## Zurücklesen
+## Reading it back
 
-`workflow_get_definition` rekonstruiert auch die **Eingaben** des `customActivity`-Schritts: das feste
-Team kommt als `"team:<guid>"` zurück, der Firmenbesitzer als Feldverweis mit `via`. Der Workflow
-bleibt damit über `workflow_set_definition` änderbar.
+`workflow_get_definition` reconstructs the **inputs** of the `customActivity` step as well: the fixed
+team comes back as `"team:<guid>"`, the account owner as a field reference with `via`. The workflow
+therefore stays editable through `workflow_set_definition`.
 
-Belegt gegen echtes Designer-XAML, nicht nur gegen selbst erzeugtes:
-`DesignerXamlReadingTests` liest die Fixture `designer-custom-activity.xaml` — einen im Designer von
-Hand konfigurierten Schritt — und baut daraus dasselbe XAML wieder auf.
-
-Der härtere Beleg ist `PaymentReminderRebuildTests`: es liest den 133 KB grossen Workflow
-"Zahlungserinnerung-Email verschicken" aus `contoso-dev`, baut ihn aus der Lesung neu und **aktiviert** die
-Rekonstruktion als eigenen Workflow. Damit ist der Weg lesen -> aendern -> schreiben fuer einen
-gewachsenen Workflow durchgehend belegt.
+This is evidenced against real designer XAML, not only against XAML the builder produced itself:
+`DesignerXamlReadingTests` reads the fixture `designer-custom-activity.xaml` — a step configured by
+hand in the designer — and rebuilds the same XAML from it. `FixtureSurveyTests` extends that to all
+committed fixtures, including a 130 KB workflow with a six-case branch chain, so the read → change →
+write path is covered for grown workflows too.

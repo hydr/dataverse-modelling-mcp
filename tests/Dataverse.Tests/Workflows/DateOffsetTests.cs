@@ -9,7 +9,7 @@ using NUnit.Framework;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Both were found by trying to rewrite "Mahnung1-Email verschicken" unchanged, which Dataverse refused
+/// Both were found by trying to rewrite the first dunning workflow unchanged, which Dataverse refused
 /// with <c>0x80040216</c>. The reading claimed to be complete, so nothing warned beforehand — that gap
 /// is covered by <see cref="ClearingIsAValueButAnUnreadableExpressionIsNot"/>.
 /// </para>
@@ -31,7 +31,7 @@ public sealed class DateOffsetTests
             new WorkflowStep
             {
                 Kind = WorkflowStepKind.UpdateRecord,
-                Description = "Frist berechnen",
+                Description = "Calculate the deadline",
                 Entity = "invoice",
                 Attributes = [new WorkflowAttributeAssignment { Attribute = "sample_dunning2", Value = value }]
             }

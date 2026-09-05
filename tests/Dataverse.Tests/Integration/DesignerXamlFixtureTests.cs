@@ -22,25 +22,25 @@ public sealed class DesignerXamlFixtureTests : IntegrationTestBase
     /// </summary>
     private static readonly (string File, string Id, string Why)[] Fixtures =
     [
-        ("designer-custom-activity.xaml", "7b74d4c2-e18b-f111-8076-7c1e52217f40",
+        ("designer-custom-activity.xaml", "f0000002-0000-4000-8000-000000000002",
             "code activity configured by hand: fixed lookup plus a related record's owner"),
-        ("payment-reminder.xaml", "8adde851-f7f5-438f-8608-f7ba823760e4",
+        ("payment-reminder.xaml", "f0000009-0000-4000-8000-000000000009",
             "if/else-if chain with six cases, concatenated e-mail body, created-record references"),
-        ("lead-mail-owner.xaml", "fd408bb0-4eb0-49f0-9100-a62058fd84b0",
+        ("lead-mail-owner.xaml", "f0000006-0000-4000-8000-000000000006",
             "lead assignment: e-mail built from createRecord plus EmailToTeam and Class.SendEmail"),
-        ("lead-mail-project-participant.xaml", "0d70b681-4a33-4343-ac9b-328b520dd3ec",
+        ("lead-mail-project-participant.xaml", "f0000007-0000-4000-8000-000000000007",
             "the platform's own SendEmail step, with party lists"),
-        ("dunning-1.xaml", "cba97c10-3a03-4f52-9b64-cb58e4d99f2b",
+        ("dunning-1.xaml", "f0000003-0000-4000-8000-000000000003",
             "first dunning letter, sibling of the payment reminder"),
-        ("dunning-2.xaml", "a0000003-0000-4000-8000-000000000003",
+        ("dunning-2.xaml", "f0000005-0000-4000-8000-000000000005",
             "second dunning letter — a draft, not activated"),
-        ("dunning-1-manual.xaml", "5c98979e-dd64-f111-ab0d-7ced8d4550b3",
+        ("dunning-1-manual.xaml", "f0000004-0000-4000-8000-000000000004",
             "manual variant of the first dunning letter, activated but not named alongside the others"),
-        ("assign-owner-from-lead.xaml", "f22f6dc7-0608-44aa-8617-7f2f8e625292",
+        ("assign-owner-from-lead.xaml", "f0000001-0000-4000-8000-000000000001",
             "assignRecord — changing the owner, on account, real-time"),
-        ("quote-as-won.xaml", "a5c68a65-2db9-4cae-bdc3-a3e2754ee435",
+        ("quote-as-won.xaml", "f000000a-0000-4000-8000-00000000000a",
             "changeStatus via SetState, on quote"),
-        ("marketing-list-master.xaml", "2d274dc4-4b86-4ec1-8c97-ea7cf10821cd",
+        ("marketing-list-master.xaml", "f0000008-0000-4000-8000-000000000008",
             "startChildWorkflow — a master workflow driving child processes")
     ];
 

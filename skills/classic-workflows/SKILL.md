@@ -228,7 +228,7 @@ instead of `conditions`/`then`; `else` is the default case either way:
 
 This is not the same as nesting conditions inside `else`: it produces the shape the designer
 produces, one condition step with N branches. The typical use is a guard clause per precondition, each
-with its own exit — that is how `Zahlungserinnerung-Email verschicken` is built (six cases).
+with its own exit — that is how the payment reminder workflow is built (six cases).
 
 Mixing `branches` with `conditions`/`then` in the same step is rejected as `WF140`.
 
@@ -324,7 +324,7 @@ depends on one of three keys — without any of them, only the triggering record
 
 | Read from | Key | Example |
 |---|---|---|
-| A directly linked record (one level) | `via` = the lookup attribute leading there | `{"fields":["opportunity.sample_salesma"],"via":"opportunityid"}` |
+| A directly linked record (one level) | `via` = the lookup attribute leading there | `{"fields":["opportunity.sample_salesrep"],"via":"opportunityid"}` |
 | A record an earlier `createRecord` step made | `fromStep` = its step id or the created entity | `{"fields":["email.activityid"],"fromStep":"email"}` |
 | The record behind a code activity's output | `fromStepOutput` = the parameter name | `{"fields":["systemuser.fullname"],"fromStepOutput":"InitiatingUser"}` |
 

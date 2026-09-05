@@ -44,7 +44,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                 new WorkflowStep
                 {
                     Kind = WorkflowStepKind.Condition,
-                    Conditions = [new WorkflowCondition { Attribute = "sample_projektbeteiligter1", Operator = "Null" }],
+                    Conditions = [new WorkflowCondition { Attribute = "sample_projectparticipant1", Operator = "Null" }],
                     Then = [Update("description", new WorkflowValue { Literal = "x" })]
                 }
             ]
@@ -59,7 +59,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                 new WorkflowStep
                 {
                     Kind = WorkflowStepKind.Condition,
-                    Conditions = [new WorkflowCondition { Attribute = "sample_projektbeteiligter1", Operator = "Null" }],
+                    Conditions = [new WorkflowCondition { Attribute = "sample_projectparticipant1", Operator = "Null" }],
                     Then =
                     [
                         new WorkflowStep
@@ -87,7 +87,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                         new WorkflowCondition
                         {
                             Entity = "opportunity", Via = "opportunityid",
-                            Attribute = "sample_salesma", Operator = "NotNull"
+                            Attribute = "sample_salesrep", Operator = "NotNull"
                         }
                     ],
                     Then = [Update("description", new WorkflowValue { Literal = "z" })]
@@ -101,11 +101,11 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
             PrimaryEntity = "salesorder",
             Steps =
             [
-                Update("sample_projektbeteiligter1", new WorkflowValue
+                Update("sample_projectparticipant1", new WorkflowValue
                 {
                     Kind = WorkflowValueKind.Field,
                     DataType = "EntityReference",
-                    Fields = ["opportunity.sample_salesma"],
+                    Fields = ["opportunity.sample_salesrep"],
                     Via = "opportunityid"
                 })
             ]
@@ -303,7 +303,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                             Conditions =
                             [
                                 new WorkflowCondition { Attribute = "accountid", Operator = "Null" },
-                                new WorkflowCondition { Attribute = "sample_projektbeteiligter1", Operator = "NotNull" }
+                                new WorkflowCondition { Attribute = "sample_projectparticipant1", Operator = "NotNull" }
                             ],
                             Steps =
                             [
@@ -317,7 +317,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                                 new WorkflowCondition
                                 {
                                     Entity = "opportunity", Via = "opportunityid",
-                                    Attribute = "sample_salesma", Operator = "Null"
+                                    Attribute = "sample_salesrep", Operator = "Null"
                                 }
                             ],
                             Steps = [Update("description", new WorkflowValue { Literal = "kein Salesma" })]
@@ -546,7 +546,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
                 new WorkflowStep
                 {
                     Kind = WorkflowStepKind.CustomActivity,
-                    Description = "Ist der Firmenbesitzer im Salesteam",
+                    Description = "Is the account owner on the sales team",
                     AssemblyQualifiedName = CheckUserInTeam,
                     Inputs = new Dictionary<string, WorkflowValue>
                     {

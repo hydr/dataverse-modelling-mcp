@@ -35,7 +35,7 @@ public sealed class DesignerXamlReadingTests
     }
 
     /// <summary>
-    /// "Zahlungserinnerung-Email verschicken": a real workflow whose first condition is an
+    /// The payment reminder workflow: a real workflow whose first condition is an
     /// if/else-if chain with six cases, five of them cancelling.
     /// </summary>
     [Test]
@@ -44,7 +44,7 @@ public sealed class DesignerXamlReadingTests
         var parsed = WorkflowXamlParser.Parse(PaymentReminderXaml(), "invoice");
         var chain = parsed.Definition.Steps[1];
 
-        Assert.That(chain.Description, Is.EqualTo("Voraussetzungen prüfen"));
+        Assert.That(chain.Description, Is.EqualTo("Check the preconditions"));
         Assert.That(chain.Branches, Has.Count.EqualTo(5), "five cases plus the default one");
         Assert.That(chain.Else, Is.Not.Null.And.Not.Empty);
 
@@ -111,7 +111,7 @@ public sealed class DesignerXamlReadingTests
         Assert.That(step.Kind, Is.EqualTo(WorkflowStepKind.CustomActivity));
         Assert.That(step.StepId, Is.EqualTo("CustomActivityStep1"));
         Assert.That(step.AssemblyQualifiedName, Does.StartWith("msdyncrmWorkflowTools.CheckUserInTeam,"));
-        Assert.That(step.Description, Is.EqualTo("Ist der Besiter der Kunde-Firma im Salesteam?"));
+        Assert.That(step.Description, Is.EqualTo("Is the account owner on the sales team?"));
 
         // The fixed team, written by the designer as two CreateCrmType stages.
         Assert.That(step.Inputs!["Team"].Kind, Is.EqualTo(WorkflowValueKind.Literal));

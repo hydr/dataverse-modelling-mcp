@@ -13,13 +13,13 @@ using NUnit.Framework;
 /// result, from a real run log:
 /// </para>
 /// <code>
-/// WorkflowTerminatedException: Workflow abbrechen - Mahnung 1 bereits verschickt31.07.2026e5415faa-…
+/// WorkflowTerminatedException: Stop the workflow - dunning 1 already sent31.07.2026a1b2c3d4-…
 ///                              └ stepLabelDescription          ┘└ the field ┘└ stepLabelLabelId ┘
 /// </code>
 /// <para>
-/// The intended sentence — "Mahnung 1 wurde bereits verschickt am " plus the date — did not appear at
+/// The intended sentence — "Dunning 1 was already sent on " plus the date — did not appear at
 /// all. A reason that is a plain constant renders correctly with the label present, which is why the
-/// designer keeps the label on four stop steps of "Mahnung1-Email verschicken" and omits it on the
+/// designer keeps the label on four stop steps of the first dunning workflow and omits it on the
 /// fifth, the only one with a composed reason.
 /// </para>
 /// </remarks>
@@ -35,7 +35,7 @@ public sealed class StopWorkflowLabelTests
                 new WorkflowStep
                 {
                     Kind = WorkflowStepKind.StopWorkflow,
-                    Description = "Workflow abbrechen - Mahnung 1 bereits verschickt",
+                    Description = "Stop the workflow - dunning 1 already sent",
                     Outcome = "cancelled",
                     Reason = reason
                 }
@@ -51,7 +51,7 @@ public sealed class StopWorkflowLabelTests
             DataType = "String",
             Parts =
             [
-                new WorkflowValue { DataType = "String", Literal = "Mahnung 1 wurde bereits verschickt am " },
+                new WorkflowValue { DataType = "String", Literal = "Dunning 1 was already sent on " },
                 new WorkflowValue
                 {
                     Kind = WorkflowValueKind.Field, DataType = "String", Fields = ["invoice.sample_dunning1"]
@@ -64,7 +64,7 @@ public sealed class StopWorkflowLabelTests
             Assert.That(WorkflowDefinitionValidator.ValidateGeneratedXaml(xaml).CanSave, Is.True);
             Assert.That(xaml, Does.Not.Contain("stepLabelLabelId"),
                 "the label would replace the message the caller wrote");
-            Assert.That(xaml, Does.Contain("Mahnung 1 wurde bereits verschickt am "));
+            Assert.That(xaml, Does.Contain("Dunning 1 was already sent on "));
         });
     }
 
@@ -74,7 +74,7 @@ public sealed class StopWorkflowLabelTests
         var xaml = Build(new WorkflowValue
         {
             DataType = "String",
-            Literal = "Rechnung muss Status Zahlungserinnerung haben."
+            Literal = "The invoice must have the payment reminder status."
         });
 
         Assert.Multiple(() =>
@@ -91,6 +91,6 @@ public sealed class StopWorkflowLabelTests
         var xaml = Build(new WorkflowValue { DataType = "String", Literal = "Abbruch" });
 
         Assert.That(xaml, Does.Contain(
-            "<TerminateWorkflow DisplayName=\"StopWorkflowStep1: Workflow abbrechen - Mahnung 1 bereits verschickt\""));
+            "<TerminateWorkflow DisplayName=\"StopWorkflowStep1: Stop the workflow - dunning 1 already sent\""));
     }
 }

@@ -351,7 +351,7 @@ public sealed record WorkflowValue
 
     /// <summary>
     /// Lookup attribute of the primary entity leading to the related record, when
-    /// <see cref="Fields"/> points at another entity — e.g. Fields=["opportunity.sample_salesma"] with
+    /// <see cref="Fields"/> points at another entity — e.g. Fields=["opportunity.sample_salesrep"] with
     /// Via="opportunityid". One level of traversal only.
     /// </summary>
     public string? Via { get; init; }
@@ -388,7 +388,7 @@ public sealed record WorkflowValue
     /// </summary>
     /// <remarks>
     /// Only meaningful on a date: <c>{"kind":"now","offset":{"days":7}}</c> is "in a week", which is
-    /// what "Frist berechnen" in the dunning workflows does. Combined with a field read it shifts that
+    /// what the deadline calculation in the dunning workflows does. Combined with a field read it shifts that
     /// field's date instead.
     /// </remarks>
     public WorkflowTimeOffset? Offset { get; init; }

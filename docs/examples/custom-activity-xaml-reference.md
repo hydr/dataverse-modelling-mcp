@@ -1,22 +1,23 @@
-# Referenz: Codeaktivität mit Lookup-Eingaben (vom Designer erzeugt)
+# Reference: a code activity with lookup inputs (as the designer writes it)
 
-Vorlage aus `contoso-dev`, Workflow **ZZ Inspect CustomActivity** (`7b74d4c2-e18b-f111-8076-7c1e52217f40`),
-Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `Team` = Salesteam
-(fester Wert) und `User` = Besitzer der verknüpften Firma.
+Template taken from a workflow whose single step was configured by hand in the designer:
+`msdyncrmWorkflowTools.CheckUserInTeam` with `Team` set to a fixed team and `User` set to the owner of
+the related account. The committed copy is the fixture
+`tests/Dataverse.Tests/Workflows/Fixtures/designer-custom-activity.xaml`.
 
-## Sollzustand
+## Target shape
 
 ```xml
-<!-- Workflow-Ebene: Typ und Default entsprechen dem PARAMETERTYP -->
+<!-- Workflow level: type and default follow the PARAMETER TYPE -->
 <mxswa:Workflow.Variables>
   <Variable x:TypeArguments="x:Boolean" Default="False"
             Name="CustomActivityStep1isUserInTeam_localParameter" />
 </mxswa:Workflow.Variables>
 
 <mxswa:ActivityReference AssemblyQualifiedName="…Activities.Composite, …"
-                        DisplayName="CustomActivityStep1: Ist der Besiter der Kunde-Firma im Salesteam?">
+                        DisplayName="CustomActivityStep1: Is the account owner on the sales team?">
   <mxswa:ActivityReference.Properties>
-    <!-- Hilfsvariablen liegen IM Composite -->
+    <!-- Helper variables live INSIDE the composite -->
     <sco:Collection x:TypeArguments="Variable" x:Key="Variables">
       <Variable x:TypeArguments="x:Object" Name="CustomActivityStep1_1" />
       <Variable x:TypeArguments="x:Object" Name="CustomActivityStep1_2" />
@@ -27,21 +28,21 @@ Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `T
     </sco:Collection>
     <sco:Collection x:TypeArguments="Activity" x:Key="Activities">
 
-      <!-- (1) Fester Lookup: Guid mit Marker "UniqueIdentifier", TargetType mxs:EntityReference -->
+      <!-- (1) Fixed lookup: Guid with marker "UniqueIdentifier", TargetType mxs:EntityReference -->
       … EvaluateExpression: CreateCrmType,
         Parameters = [New Object() { …WorkflowPropertyType.Guid, "11112222-3333-4444-5555-666677778888", "UniqueIdentifier" }],
         TargetType = mxs:EntityReference, Result = [CustomActivityStep1_2]
 
-      <!-- (2) daraus die Referenz: Label ist LEER -->
+      <!-- (2) the reference built from it: the label is EMPTY -->
       … EvaluateExpression: CreateCrmType,
         Parameters = [New Object() { …WorkflowPropertyType.EntityReference, "team", "", CustomActivityStep1_2, "Lookup" }],
         TargetType = mxs:EntityReference, Result = [CustomActivityStep1_1]
 
-      <!-- (3) für das Argument in .NET-Typ wandeln -->
+      <!-- (3) convert to the .NET type for the argument -->
       … ConvertCrmXrmTypes: Value=[CustomActivityStep1_1], TargetType=mxs:EntityReference
         → [CustomActivityStep1_1_converted]
 
-      <!-- (4) verknüpftes Feld lesen; TargetType ist der ZIELTYP, nicht null -->
+      <!-- (4) read the related field; TargetType is the TARGET type, not null -->
       <mxswa:GetEntityProperty Attribute="ownerid"
           Entity='[InputEntities("related_sample_customeraccount#account")]' EntityName="account"
           Value="[CustomActivityStep1_4]">
@@ -52,12 +53,12 @@ Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `T
         </mxswa:GetEntityProperty.TargetType>
       </mxswa:GetEntityProperty>
 
-      <!-- (5) SelectFirstNonNull + Convert wie gewohnt → [CustomActivityStep1_3_converted] -->
+      <!-- (5) SelectFirstNonNull + Convert as usual → [CustomActivityStep1_3_converted] -->
 
-      <!-- (6) die Aktivität selbst: Argumenttypen = Parametertypen -->
+      <!-- (6) the activity itself: argument types = parameter types -->
       <mxswa:ActivityReference
           AssemblyQualifiedName="msdyncrmWorkflowTools.CheckUserInTeam, msdyncrmWorkflowTools, Version=1.0.62.1, Culture=neutral, PublicKeyToken=416e876b9bee261e"
-          DisplayName="CustomActivityStep1: Ist der Besiter der Kunde-Firma im Salesteam?">
+          DisplayName="CustomActivityStep1: Is the account owner on the sales team?">
         <mxswa:ActivityReference.Arguments>
           <InArgument  x:TypeArguments="mxs:EntityReference" x:Key="Team">[DirectCast(CustomActivityStep1_1_converted, Microsoft.Xrm.Sdk.EntityReference)]</InArgument>
           <InArgument  x:TypeArguments="mxs:EntityReference" x:Key="User">[DirectCast(CustomActivityStep1_3_converted, Microsoft.Xrm.Sdk.EntityReference)]</InArgument>
@@ -69,82 +70,80 @@ Schritt im Designer konfiguriert: `msdyncrmWorkflowTools.CheckUserInTeam` mit `T
 </mxswa:ActivityReference>
 ```
 
-## Behobene Abweichungen des Builders
+## Builder deviations that were fixed
 
-Alle fünf sind umgesetzt; die Merkmalsmatrix in `WorkflowActivationProbeTests` aktiviert die
-Codeaktivität mit Lookup-Literal, mit allen Parametern und innerhalb eines Zweigs.
+All five are implemented; the feature matrix in `WorkflowActivationProbeTests` activates the code
+activity with a lookup literal, with every parameter, and inside a branch.
 
-| # | Soll | War vorher | Wirkung |
+| # | Should be | Was | Effect |
 |---|---|---|---|
-| 1 | Ausgabevariable mit dem **Parametertyp** (`x:Boolean`, `Default="False"`) | hart `x:String`, `Default="[Nothing]"` | Typkonflikt |
-| 2 | `OutArgument x:TypeArguments` = **Parametertyp** | hart `x:String` | Typkonflikt |
-| 3 | Guid-Literal-Marker `"UniqueIdentifier"` | `"Key"` | ungültiger Property-Bag |
-| 4 | EntityReference-Label **leer** | Anzeigename | unkritisch, aber abweichend |
-| 5 | `GetEntityProperty.TargetType` = Zieltyp (`mxs:EntityReference`) | bei Bedingungen `x:Null`, bei Werten Zieltyp | war für Lookup-Werte bereits korrekt |
+| 1 | output variable typed with the **parameter type** (`x:Boolean`, `Default="False"`) | hard-coded `x:String`, `Default="[Nothing]"` | type conflict |
+| 2 | `OutArgument x:TypeArguments` = **parameter type** | hard-coded `x:String` | type conflict |
+| 3 | Guid literal marker `"UniqueIdentifier"` | `"Key"` | invalid property bag |
+| 4 | EntityReference label **empty** | display name | harmless, but different |
+| 5 | `GetEntityProperty.TargetType` = target type (`mxs:EntityReference`) | `x:Null` on conditions, target type on values | already correct for lookup values |
 
-Richtig war dagegen: Hilfsvariablen gehören **in** die `Variables`-Collection des Composite.
+What was right all along: helper variables belong **inside** the composite's `Variables` collection.
 
-## Die eigentliche Ursache: das Namensschema der Hilfsvariablen
+## The actual cause: how helper variables are named
 
-Auch mit den korrekten Typen blieb `InvalidPropertyBag` bestehen, während dasselbe XAML aus dem
-Designer aktivierte. Der einzige verbleibende Unterschied war die **Benennung der konvertierten
-Variable**:
+Even with the correct types, `InvalidPropertyBag` persisted while the same XAML from the designer
+activated. The only remaining difference was the **name of the converted variable**:
 
 ```
-Designer:      _1, _2, _1_converted          ← zu _1_converted existiert _1
-Builder (alt): _1, _2, _3_converted          ← _3 gibt es nicht
+Designer:      _1, _2, _1_converted        ← _1 exists for _1_converted
+Builder (old): _1, _2, _3_converted        ← there is no _3
 ```
 
-`Convert` hatte einen neuen Index verbraucht, statt an die Quellvariable anzuhängen. Die Aktivierung
-rekonstruiert den Schritt aus genau diesen Namen — ein `_3_converted` ohne deklariertes `_3` ist für
-sie ein kaputter Property-Bag. Dazu passend: der Designer reserviert erst den **Ergebnis**-Slot und
-dann die Quelle (`_1` = Referenz, `_2` = Guid), nicht umgekehrt.
+`Convert` had consumed a fresh index instead of appending to the source variable. Activation
+reconstructs the step from exactly these names — a `_3_converted` without a declared `_3` is a broken
+property bag to it. Fitting that: the designer reserves the **result** slot first and the source
+second (`_1` = reference, `_2` = Guid), not the other way round.
 
 > [!IMPORTANT]
-> Das ist derselbe Mechanismus wie bei `0x80045037`: Namen sind hier Struktur. Ein Selbsttest, der
-> nur „ist jede referenzierte Variable deklariert?" prüft, fängt das nicht — hier war die
-> *unbenutzte* Basisvariable das Problem, nicht eine fehlende Referenz.
+> This is the same mechanism as `0x80045037`: names are structure here. A self-check that only asks
+> "is every referenced variable declared?" does not catch it — the problem was the *unused* base
+> variable, not a missing reference.
 
-## Weitere Stellen, an denen der Marker bzw. der Typname zählt
+## Other places where the marker or the type name decides
 
-Dieselbe Klasse von Fehlern — das XAML sieht plausibel aus und wird mit `0x80045040` schon beim
-Schreiben abgelehnt:
+The same class of error — the XAML looks plausible and is rejected with `0x80045040` on write:
 
-| Konstrukt | Falsch | Richtig |
+| Construct | Wrong | Right |
 |---|---|---|
-| `CreateCrmType` für ein Optionsset | Marker `"OptionSetValue"` | Marker **`"Picklist"`** |
-| `CreateCrmType` für eine Guid | Marker `"Guid"` | Marker **`"UniqueIdentifier"`** |
-| `CreateCrmType` für eine Referenz | Marker `"EntityReference"` | Marker **`"Lookup"`** (5-teilig) |
-| Datums-Typargument | `x:DateTime` | **`s:DateTime`** — der XAML-2006-Namespace hat kein DateTime |
-| `RetrieveCurrentTime` | `TargetType` = Zieltyp | **`x:Null`**, Parameter `[New Object() {  }]` mit `xml:space="preserve"` |
-| `Add` (Verkettung) | `TargetType` = Zieltyp | **`x:Null`** — die Teile bestimmen den Typ |
+| `CreateCrmType` for an option set | marker `"OptionSetValue"` | marker **`"Picklist"`** |
+| `CreateCrmType` for a Guid | marker `"Guid"` | marker **`"UniqueIdentifier"`** |
+| `CreateCrmType` for a reference | marker `"EntityReference"` | marker **`"Lookup"`** (five parts) |
+| date type argument | `x:DateTime` | **`s:DateTime`** — the XAML 2006 namespace has no DateTime |
+| `RetrieveCurrentTime` | `TargetType` = target type | **`x:Null`**, parameter `[New Object() {  }]` with `xml:space="preserve"` |
+| `Add` (concatenation) | `TargetType` = target type | **`x:Null`** — the parts decide the type |
 
-Der Marker ist also der **CRM-Attributtyp**, nicht der Name des `WorkflowPropertyType`. Belegt durch
-`ValueKindWriteProbeTests`, das jede Wertform einzeln schreibt.
+So the marker is the **CRM attribute type**, not the name of the `WorkflowPropertyType`. Evidenced by
+`ValueKindWriteProbeTests`, which writes each value form on its own.
 
-Dazu zwei Dinge, die erst die Aktivierung des ganzen Workflows zeigte — beide `0x80040216`:
+Two more things surfaced only when activating a whole workflow — both `0x80040216`:
 
-| Konstrukt | Falsch | Richtig |
+| Construct | Wrong | Right |
 |---|---|---|
-| Komma in einer Konstante | `"1,2,3"` | **`"1&#44;2&#44;3"`** — das Parameter-Array wird vor den String-Literalen auf Kommas zerlegt |
-| Persistenzpunkt in einem Realtime-Workflow | `<Persist />` | **entfällt** — nur Hintergrund-Workflows dürfen persistieren |
-| `fromStep`-Verweis nach dem Zurücklesen | die alte Schritt-Id | über die **Entität** auflösen — Neunummerierung macht die Id ungültig, der Verweis zeigt dann auf einen nie erzeugten Datensatz |
+| comma inside a constant | `"1,2,3"` | **`"1&#44;2&#44;3"`** — the parameter array is split on commas before string literals are read |
+| persistence point in a real-time workflow | `<Persist />` | **omit it** — only background workflows may persist |
+| `fromStep` reference after reading back | the old step id | resolve via the **entity** — renumbering invalidates the id, and the reference then points at a record that is never created |
 
-Der letzte Punkt war der zäheste: das XAML war wohlgeformt, der Selbsttest zufrieden, die Validierung
-still. Gefunden durch Halbieren — `PaymentReminderBisectTests` schreibt Teilmengen des Workflows und
-aktiviert jede einzeln, bis nur noch die drei Codeaktivitäten mit dem `fromStep`-Verweis übrig waren.
+The last one was the most stubborn: the XAML was well-formed, the self-check content, the validation
+silent. It was found by bisecting — writing subsets of a large workflow and activating each one until
+only the three code activities carrying the `fromStep` reference were left.
 
-## Umgesetzte Validierung
+## Validation as implemented
 
-Der Parametertyp wird aus `plugintype.customworkflowactivityinfo` gelesen
-(`WorkflowActivityCatalog`) und vor dem PATCH gegen das Modell geprüft:
+The parameter type is read from `plugintype.customworkflowactivityinfo` (`WorkflowActivityCatalog`)
+and checked against the model before the PATCH:
 
-| Prüfung | Code |
+| Check | Code |
 |---|---|
-| Existiert der Parametername (`DependencyPropertyName`)? | `WF085` (Eingabe), `WF089` (Ausgabe) |
-| Passt der `dataType` zum `TypeName` des Parameters? | `WF086` |
-| Sind alle mit `Required=true` markierten Eingaben belegt? | `WF087` |
-| Liegt die Zielentität eines Lookups in `EntityNames`? | `WF088` |
+| Does the parameter name (`DependencyPropertyName`) exist? | `WF085` (input), `WF089` (output) |
+| Does `dataType` match the parameter's `TypeName`? | `WF086` |
+| Is every input marked `Required=true` supplied? | `WF087` |
+| Is a lookup's target entity listed in `EntityNames`? | `WF088` |
 
-Ohne erreichbare Metadaten (Offline-Nutzung, unbekannte Aktivität) entfallen die vier Prüfungen —
-dann meldet erst die Aktivierung den Fehler, wie vorher.
+Without reachable metadata (offline use, unknown activity) these four checks are skipped — activation
+then reports the error, as it did before.

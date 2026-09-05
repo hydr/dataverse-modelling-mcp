@@ -811,7 +811,7 @@ public static class WorkflowXamlBuilder
     /// </summary>
     /// <remarks>
     /// The offset is a second <c>Add</c> on top of whatever produced the date — that is how the designer
-    /// builds "Frist berechnen": <c>RetrieveCurrentTime</c>, then <c>Add</c> of the base and an
+    /// builds the deadline calculation: <c>RetrieveCurrentTime</c>, then <c>Add</c> of the base and an
     /// <c>XrmTimeSpan</c>, this time with the date as the target type (a plain concatenation declares
     /// none).
     /// </remarks>

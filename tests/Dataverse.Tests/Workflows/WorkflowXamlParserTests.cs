@@ -267,7 +267,7 @@ public sealed class WorkflowXamlParserTests
                                         DataType = "String",
                                         Parts =
                                         [
-                                            new WorkflowValue { Literal = "Zahlungserinnerung " },
+                                            new WorkflowValue { Literal = "Payment reminder " },
                                             new WorkflowValue
                                             {
                                                 Kind = WorkflowValueKind.Field,
@@ -304,7 +304,7 @@ public sealed class WorkflowXamlParserTests
         var concat = assignments[0].Value;
         Assert.That(concat.Kind, Is.EqualTo(WorkflowValueKind.Concat));
         Assert.That(concat.Parts, Has.Count.EqualTo(2));
-        Assert.That(concat.Parts![0].Literal, Is.EqualTo("Zahlungserinnerung "));
+        Assert.That(concat.Parts![0].Literal, Is.EqualTo("Payment reminder "));
         Assert.That(concat.Parts[1].Fields, Is.EqualTo(new[] { "invoice.sample_invoicenumber" }));
         Assert.That(assignments[1].Value.Kind, Is.EqualTo(WorkflowValueKind.Now));
 
@@ -391,7 +391,7 @@ public sealed class WorkflowXamlParserTests
                         new WorkflowCondition
                         {
                             Entity = "opportunity", Via = "opportunityid",
-                            Attribute = "sample_salesma", Operator = "NotNull"
+                            Attribute = "sample_salesrep", Operator = "NotNull"
                         }
                     ],
                     Then =
@@ -403,12 +403,12 @@ public sealed class WorkflowXamlParserTests
                             [
                                 new WorkflowAttributeAssignment
                                 {
-                                    Attribute = "sample_projektbeteiligter1",
+                                    Attribute = "sample_projectparticipant1",
                                     Value = new WorkflowValue
                                     {
                                         Kind = WorkflowValueKind.Field,
                                         DataType = "EntityReference",
-                                        Fields = ["opportunity.sample_salesma"],
+                                        Fields = ["opportunity.sample_salesrep"],
                                         Via = "opportunityid"
                                     }
                                 }
@@ -428,7 +428,7 @@ public sealed class WorkflowXamlParserTests
         Assert.That(condition.Conditions[1].Entity, Is.EqualTo("opportunity"));
 
         var value = condition.Then![0].Attributes![0].Value;
-        Assert.That(value.Fields, Is.EqualTo(new[] { "opportunity.sample_salesma" }));
+        Assert.That(value.Fields, Is.EqualTo(new[] { "opportunity.sample_salesrep" }));
         Assert.That(value.Via, Is.EqualTo("opportunityid"));
 
         // The fixed record reference of the code activity comes back as "entity:guid", not as the
@@ -543,7 +543,7 @@ public sealed class WorkflowXamlParserTests
                             DataType = "Boolean",
                             StepOutput = "isUserInTeam"
                         },
-                        ["Text"] = new() { DataType = "String", Literal = "Salesteam, München" }
+                        ["Text"] = new() { DataType = "String", Literal = "Außendienst, Köln" }
                     }
                 }
             ]
@@ -557,7 +557,7 @@ public sealed class WorkflowXamlParserTests
 
         // A comma inside the constant must not be mistaken for an argument separator.
         Assert.That(inputs["Text"].Kind, Is.EqualTo(WorkflowValueKind.Literal));
-        Assert.That(inputs["Text"].Literal, Is.EqualTo("Salesteam, München"));
+        Assert.That(inputs["Text"].Literal, Is.EqualTo("Außendienst, Köln"));
     }
 
     [Test]

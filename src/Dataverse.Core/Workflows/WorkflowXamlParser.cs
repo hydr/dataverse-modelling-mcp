@@ -602,7 +602,7 @@ public static class WorkflowXamlParser
                 if (sourceVar is null || !chain.Produces(sourceVar))
                 {
                     // Either no source at all, or one nothing ever assigns: the designer clears the
-                    // attribute. That is a value, not a gap — "Mahnung 2 loeschen" is exactly this.
+                    // attribute. That is a value, not a gap - clearing a date field is exactly this.
                     notes.Add($"Attribute '{attribute}': cleared (no value assigned).");
                 }
                 else
@@ -957,7 +957,7 @@ public static class WorkflowXamlParser
         /// The designer clears an attribute by pointing at a variable it never writes — at run time that
         /// is <c>Nothing</c>. So an unknown variable is a deliberate "empty", while a known one whose
         /// chain cannot be reduced is a gap in this reader. Telling the two apart is what keeps
-        /// "Mahnung 2 löschen" from being reported as unreadable.
+        /// a cleared date field from being reported as unreadable.
         /// </remarks>
         public bool Produces(string variable) =>
             _reads.ContainsKey(variable) || _expressions.ContainsKey(variable)

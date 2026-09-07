@@ -170,6 +170,7 @@ session still has it open.
 - [Tool reference](docs/tools/)
 - [Command bar buttons — classic ribbon vs modern command](docs/tools/buttons-classic-vs-modern.md)
 - [Modern commands (`appaction`) — field semantics and gotchas](docs/tools/modern-commands.md)
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ---
 

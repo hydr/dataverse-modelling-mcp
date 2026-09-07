@@ -62,6 +62,16 @@ Ein Solution-Import übernimmt ein Code-Component nur, wenn die Version im `Cont
 das nach dem Import und warnt (`customControlWarnings`). `pac pcf push` umgeht die Versionsprüfung
 bewusst, deshalb „funktioniert" es in genau dieser Lage.
 
+### Formulare nicht über rohe FormXML anfassen
+
+`form_get` liefert die Struktur (Tabs → Spalten → Sections → Zellen → Controls) statt XML und löst
+dabei auf, welches Code-Component an einer Zelle hängt — in der Zelle steht nur ein generischer
+Classid plus `uniqueid`, der Rest in einer separaten `controlDescription`. `form_add_control`,
+`form_replace_control` und `form_remove_tab` kapseln die vier Details, an denen man sonst scheitert:
+Publisher-Prefix im Component-Namen, alle drei Form-Faktoren, generischer Classid samt `uniqueid`,
+und eine gebundene Spalte muss vorher publiziert sein. Einzelheiten in
+[`docs/tools/forms.md`](../../docs/tools/forms.md).
+
 ### `systemform` hat kein `modifiedon`
 
 Ein `$select=modifiedon` quittiert Dataverse mit

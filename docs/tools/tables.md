@@ -55,6 +55,8 @@ Updates metadata properties of a table.
 
 **Example prompt:** "Enable auditing on the account table"
 
+Pass only the properties you want to change — see [How updates work](#how-updates-work).
+
 ---
 
 ### `column_add`
@@ -85,6 +87,34 @@ Updates properties of an existing column.
 | `propertiesJson` | JSON | Yes | Properties to update |
 
 **Example prompt:** "Change the max length of the new_projectcode column on account to 50"
+
+---
+
+## How updates work
+
+The metadata endpoint does **not** support `PATCH`. Sending one fails with
+
+```
+405 The requested resource does not support http method 'PATCH'.
+```
+
+and for a table the platform adds `0x80060888 Operation not supported on EntityMetadata`. A metadata
+update is a `PUT` of the **complete** definition, and the `PUT` keeps only what the body carries.
+
+`table_update` and `column_update` therefore do a read-modify-write: they fetch the current
+definition, lay your properties over it, and `PUT` the result back, addressed by its `MetadataId`.
+Two consequences for callers:
+
+- **Pass only what you want to change.** Everything else is carried over for you. You do not have to
+  send a full definition, and you should not — properties you send are what get written.
+- **The overlay is shallow.** A whole object you pass replaces the old one rather than merging into
+  it. Passing `DisplayName` replaces the whole label set for that column, it does not add a label.
+
+`MSCRM.MergeLabels: true` goes with the write, so labels in languages the definition was not read in
+survive the replace.
+
+> A metadata write can read back stale for a few seconds. A `GET` straight after the update that
+> still shows the old value is not proof that the write was rejected — wait briefly and read again.
 
 ---
 

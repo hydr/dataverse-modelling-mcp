@@ -253,6 +253,31 @@ public sealed class DataverseHttpClient
         await EnsureSuccessAsync(response, ct);
     }
 
+    /// <summary>
+    /// PUT — the verb the metadata endpoint requires for updates.
+    /// </summary>
+    /// <remarks>
+    /// <c>EntityDefinitions</c> and its <c>Attributes</c> reject <c>PATCH</c> outright with
+    /// <c>405 The requested resource does not support http method 'PATCH'</c>. A metadata update is a
+    /// full replace, so the body has to be the complete definition, not just the changed properties.
+    /// Callers normally want <c>MSCRM.MergeLabels: true</c> in <paramref name="extraHeaders"/> so
+    /// labels in languages outside the payload survive the replace.
+    /// </remarks>
+    public async Task PutAsync(
+        string orgUrl,
+        string relativeUrl,
+        object body,
+        IReadOnlyDictionary<string, string>? extraHeaders = null,
+        CancellationToken ct = default)
+    {
+        using var request = await BuildRequestAsync(HttpMethod.Put, orgUrl, relativeUrl, body, ct);
+        if (extraHeaders != null)
+            foreach (var (k, v) in extraHeaders)
+                request.Headers.TryAddWithoutValidation(k, v);
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+    }
+
     public async Task DeleteAsync(string orgUrl, string relativeUrl, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Delete, orgUrl, relativeUrl, body: null, ct);

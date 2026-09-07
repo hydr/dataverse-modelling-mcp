@@ -78,7 +78,12 @@ public sealed class TableTools
     }
 
     [McpServerTool(Name = "table_update")]
-    [Description("Update metadata properties of an existing Dataverse table.")]
+    [Description("Update metadata properties of an existing Dataverse table. Pass only the " +
+                 "properties you want to change: the metadata endpoint rejects PATCH and only " +
+                 "accepts a PUT of the complete definition, so the tool reads the current " +
+                 "definition and lays your properties over it. Managed properties may be given as " +
+                 "a plain true/false; note that IsValidForAdvancedFind is a plain boolean on a " +
+                 "TABLE (unlike on a column).")]
     public static async Task<string> TableUpdate(
         TableService svc,
         ConfigProvider config,
@@ -139,7 +144,12 @@ public sealed class TableTools
     }
 
     [McpServerTool(Name = "column_update")]
-    [Description("Update properties of a column on a Dataverse table.")]
+    [Description("Update properties of a column on a Dataverse table. Pass only the properties you " +
+                 "want to change: the metadata endpoint rejects PATCH and only accepts a PUT of the " +
+                 "complete definition, so the tool reads the current definition and lays your " +
+                 "properties over it. The overlay is shallow — a whole object you pass (e.g. " +
+                 "DisplayName) replaces the old one. Managed properties may be given as a plain " +
+                 "true/false or string and are reported under normalizedManagedProperties.")]
     public static async Task<string> ColumnUpdate(
         TableService svc,
         ConfigProvider config,

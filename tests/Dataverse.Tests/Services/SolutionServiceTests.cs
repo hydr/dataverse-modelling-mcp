@@ -83,37 +83,44 @@ public sealed class SolutionServiceTests
     public async Task GetAsync_ReturnsSolutionDetail_WhenFound()
     {
         var solutionId = Guid.NewGuid();
-        var responseBody = JsonSerializer.Serialize(new
-        {
-            value = new[]
-            {
-                new
+        var requestedUrls = new List<string>();
+
+        SetupHttpResponseByUrl(requestedUrls, url =>
+            url.Contains("/solutioncomponents?", StringComparison.Ordinal)
+                ? ComponentRows(1)
+                : JsonSerializer.Serialize(new
                 {
-                    solutionid = solutionId.ToString(),
-                    uniquename = "DV_MCP_Test",
-                    friendlyname = "DV MCP Test",
-                    version = "1.0.0.1",
-                    ismanaged = false,
-                    publisheridname = "Default Publisher",
-                    description = "A test solution",
-                    installedon = "2024-01-01T00:00:00Z",
-                    solution_solutioncomponent = new[]
+                    value = new[]
                     {
-                        new { objectid = Guid.NewGuid().ToString(), componenttype = 1, rootcomponentbehavior = (string?)null }
+                        new
+                        {
+                            solutionid = solutionId.ToString(),
+                            uniquename = "DV_MCP_Test",
+                            friendlyname = "DV MCP Test",
+                            version = "1.0.0.1",
+                            ismanaged = false,
+                            publisheridname = "Default Publisher",
+                            description = "A test solution",
+                            installedon = "2024-01-01T00:00:00Z"
+                        }
                     }
-                }
-            }
-        });
+                }));
 
-        SetupHttpResponse(HttpStatusCode.OK, responseBody);
-
-        var detail = await _svc.GetAsync(OrgUrl, "DV_MCP_Test", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "DV_MCP_Test", resolveComponentNames: false, CancellationToken.None);
 
         Assert.That(detail, Is.Not.Null);
         Assert.That(detail!.UniqueName, Is.EqualTo("DV_MCP_Test"));
         Assert.That(detail.FriendlyName, Is.EqualTo("DV MCP Test"));
         Assert.That(detail.Components, Has.Count.EqualTo(1));
+        Assert.That(detail.ComponentCount, Is.EqualTo(1));
         Assert.That(detail.Components[0].ComponentTypeName, Is.EqualTo("Entity"));
+
+        // The component list must be read as its own query, filtered on the solution lookup.
+        Assert.That(
+            requestedUrls.Any(u => u.Contains("/solutioncomponents?", StringComparison.Ordinal)
+                                   && u.Contains($"_solutionid_value eq {solutionId:D}", StringComparison.Ordinal)),
+            Is.True,
+            "Components must come from a top-level solutioncomponents query, not from an $expand.");
     }
 
     [Test]
@@ -122,7 +129,7 @@ public sealed class SolutionServiceTests
         var responseBody = JsonSerializer.Serialize(new { value = Array.Empty<object>() });
         SetupHttpResponse(HttpStatusCode.OK, responseBody);
 
-        var detail = await _svc.GetAsync(OrgUrl, "NonExistentSolution", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "NonExistentSolution", resolveComponentNames: false, CancellationToken.None);
 
         Assert.That(detail, Is.Null);
     }
@@ -228,33 +235,9 @@ public sealed class SolutionServiceTests
     [Test]
     public async Task GetAsync_MapsComponentTypeNames_Correctly()
     {
-        var responseBody = JsonSerializer.Serialize(new
-        {
-            value = new[]
-            {
-                new
-                {
-                    solutionid = Guid.NewGuid().ToString(),
-                    uniquename = "TestSolution",
-                    friendlyname = "Test",
-                    version = "1.0",
-                    ismanaged = false,
-                    publisheridname = (string?)null,
-                    description = (string?)null,
-                    installedon = (string?)null,
-                    solution_solutioncomponent = new[]
-                    {
-                        new { objectid = Guid.NewGuid().ToString(), componenttype = 24, rootcomponentbehavior = (string?)null },
-                        new { objectid = Guid.NewGuid().ToString(), componenttype = 92, rootcomponentbehavior = (string?)null },
-                        new { objectid = Guid.NewGuid().ToString(), componenttype = 999, rootcomponentbehavior = (string?)null }
-                    }
-                }
-            }
-        });
+        SetupHttpResponseByUrl([], SolutionRouter([24, 92, 999]));
 
-        SetupHttpResponse(HttpStatusCode.OK, responseBody);
-
-        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", resolveComponentNames: false, CancellationToken.None);
 
         // 24 = Form, 92 = SDK Message Processing Step (per the documented componenttype choice).
         Assert.That(detail!.Components[0].ComponentTypeName, Is.EqualTo("Form"));
@@ -295,9 +278,9 @@ public sealed class SolutionServiceTests
     [TestCase(4711, "Type4711")]
     public async Task GetAsync_MapsComponentType_ToDocumentedLabel(int componentType, string expectedName)
     {
-        SetupHttpResponse(HttpStatusCode.OK, SolutionWithComponents(componentType));
+        SetupHttpResponseByUrl([], SolutionRouter([componentType]));
 
-        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", resolveComponentNames: false, CancellationToken.None);
 
         Assert.That(detail!.Components[0].ComponentType, Is.EqualTo(componentType));
         Assert.That(detail.Components[0].ComponentTypeName, Is.EqualTo(expectedName));
@@ -319,7 +302,7 @@ public sealed class SolutionServiceTests
                 var url = req.RequestUri!.ToString();
                 requestedUrls.Add(url);
 
-                var body = url.Contains("solutioncomponentdefinitions")
+                var body = SolutionRouter([10228, 91], u => u.Contains("solutioncomponentdefinitions")
                     ? JsonSerializer.Serialize(new
                     {
                         value = new[]
@@ -328,7 +311,7 @@ public sealed class SolutionServiceTests
                             new { name = "CustomAPI", objecttypecode = 10160 }
                         }
                     })
-                    : SolutionWithComponents(10228, 91);
+                    : null)(url);
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -336,7 +319,7 @@ public sealed class SolutionServiceTests
                 };
             });
 
-        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", resolveComponentNames: false, CancellationToken.None);
 
         Assert.That(detail!.Components[0].ComponentTypeName, Is.EqualTo("ManagedIdentity"));
         Assert.That(detail.Components[1].ComponentTypeName, Is.EqualTo("PluginAssembly"));
@@ -360,10 +343,11 @@ public sealed class SolutionServiceTests
                     }
                     : new HttpResponseMessage(HttpStatusCode.OK)
                     {
-                        Content = new StringContent(SolutionWithComponents(10228), Encoding.UTF8, "application/json")
+                        Content = new StringContent(
+                            SolutionRouter([10228])(req.RequestUri!.ToString()), Encoding.UTF8, "application/json")
                     });
 
-        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", CancellationToken.None);
+        var detail = await _svc.GetAsync(OrgUrl, "TestSolution", resolveComponentNames: false, CancellationToken.None);
 
         // Never invent a name — an unresolvable code stays Type<code>.
         Assert.That(detail!.Components[0].ComponentTypeName, Is.EqualTo("Type10228"));
@@ -382,14 +366,15 @@ public sealed class SolutionServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync((HttpRequestMessage req, CancellationToken _) =>
             {
-                requestedUrls.Add(req.RequestUri!.ToString());
+                var url = req.RequestUri!.ToString();
+                requestedUrls.Add(url);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(SolutionWithComponents(61, 91), Encoding.UTF8, "application/json")
+                    Content = new StringContent(SolutionRouter([61, 91])(url), Encoding.UTF8, "application/json")
                 };
             });
 
-        await _svc.GetAsync(OrgUrl, "TestSolution", CancellationToken.None);
+        await _svc.GetAsync(OrgUrl, "TestSolution", resolveComponentNames: false, CancellationToken.None);
 
         Assert.That(requestedUrls.Any(u => u.Contains("solutioncomponentdefinitions")), Is.False,
             "Documented component types must be mapped without an extra metadata roundtrip.");
@@ -539,31 +524,56 @@ public sealed class SolutionServiceTests
             });
     }
 
-    private static string SolutionWithComponents(params int[] componentTypes) => JsonSerializer.Serialize(new
+    private const string EmptyValue = "{\"value\":[]}";
+
+    /// <summary>The solution row on its own — the component list is a separate request.</summary>
+    private static string SolutionEnvelope(string uniqueName = "TestSolution") => JsonSerializer.Serialize(new
     {
         value = new[]
         {
             new
             {
                 solutionid = Guid.NewGuid().ToString(),
-                uniquename = "TestSolution",
+                uniquename = uniqueName,
                 friendlyname = "Test",
                 version = "1.0",
                 ismanaged = false,
                 publisheridname = (string?)null,
                 description = (string?)null,
-                installedon = (string?)null,
-                solution_solutioncomponent = componentTypes
-                    .Select(t => new
-                    {
-                        objectid = Guid.NewGuid().ToString(),
-                        componenttype = t,
-                        rootcomponentbehavior = (string?)null
-                    })
-                    .ToArray()
+                installedon = (string?)null
             }
         }
     });
+
+    private static string ComponentRows(params int[] componentTypes) => JsonSerializer.Serialize(new
+    {
+        value = componentTypes
+            .Select(t => new
+            {
+                solutioncomponentid = Guid.NewGuid().ToString(),
+                objectid = Guid.NewGuid().ToString(),
+                componenttype = t
+            })
+            .ToArray()
+    });
+
+    /// <summary>
+    /// Route a solution read: the envelope comes from <c>/solutions</c>, the component rows from
+    /// <c>/solutioncomponents</c>. Two requests, because the component list is read as its own paged
+    /// top-level query instead of riding along on an <c>$expand</c>.
+    /// </summary>
+    private static Func<string, string> SolutionRouter(
+        int[] componentTypes,
+        Func<string, string?>? extra = null) => url =>
+    {
+        if (extra?.Invoke(url) is { } handled)
+            return handled;
+        if (url.Contains("/solutioncomponents?", StringComparison.Ordinal))
+            return ComponentRows(componentTypes);
+        if (url.Contains("/solutions?", StringComparison.Ordinal))
+            return SolutionEnvelope();
+        return EmptyValue;
+    };
 
     [Test]
     public async Task ListAsync_ReturnsIsManaged_True_WhenApiReturnsTrue()

@@ -31,17 +31,25 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_get")]
-    [Description("Get a solution by unique name, including its components.")]
+    [Description("Get a solution by unique name, including its complete component list. Each " +
+                 "component carries its objectid as componentId (for a table or column: its " +
+                 "MetadataId — that is the id solution_add_component and solution_remove_component " +
+                 "take), the component type and its label, a resolved name where one could be " +
+                 "looked up, and for root components the rootcomponentbehavior (0 = include " +
+                 "subcomponents, 1 = do not include subcomponents, 2 = include as shell only). " +
+                 "rootcomponentbehavior decides whether a table's forms and columns travel with it " +
+                 "or have to be added explicitly.")]
     public static async Task<string> SolutionGet(
         SolutionService svc,
         ConfigProvider config,
         [Description("Unique name of the solution")] string uniqueName,
+        [Description("Resolve component GUIDs to names (default true). Costs one bulk lookup per component type — pass false when only the ids matter.")] bool resolveComponentNames = true,
         CancellationToken ct = default)
     {
         try
         {
             var env = config.GetActiveEnvironment();
-            var result = await svc.GetAsync(env.OrgUrl, uniqueName, ct);
+            var result = await svc.GetAsync(env.OrgUrl, uniqueName, resolveComponentNames, ct);
             return result is null
                 ? JsonSerializer.Serialize(new { error = "Solution not found." })
                 : JsonSerializer.Serialize(result, JsonOptions);
@@ -98,7 +106,15 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_import")]
-    [Description("Import a solution asynchronously (ImportSolutionAsync + ImportJob polling). Provide EITHER filePath (read zip from disk, recommended) OR zipBase64. Blocks until the import finishes, then returns success plus any per-component errors parsed from the import job.")]
+    [Description("Import a solution asynchronously (ImportSolutionAsync + ImportJob polling). " +
+                 "Provide EITHER filePath (read zip from disk, recommended) OR zipBase64. Blocks " +
+                 "until the import finishes, then returns success plus any per-component errors " +
+                 "parsed from the import job. Code components (PCF) in the zip are additionally " +
+                 "compared against the versions the environment stores afterwards: an import only " +
+                 "applies a control whose ControlManifest version is HIGHER than the stored one, " +
+                 "and reports success either way — those cases come back under " +
+                 "customControlWarnings, with customControlVersions carrying the per-control " +
+                 "comparison.")]
     public static async Task<string> SolutionImport(
         SolutionService svc,
         ConfigProvider config,
@@ -124,13 +140,18 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_add_component")]
-    [Description("Add a component to a solution.")]
+    [Description("Add a component to a solution, then verify that a membership row was really " +
+                 "created. AddSolutionComponent reports success even when it changes nothing: a " +
+                 "column or form whose table is already in the solution with rootcomponentbehavior " +
+                 "0 (include subcomponents) is covered by that table and gets no row of its own. " +
+                 "The result therefore reports explicitMembership, and when it is false, a note " +
+                 "saying which table covers the component (or that the add did nothing).")]
     public static async Task<string> SolutionAddComponent(
         SolutionService svc,
         ConfigProvider config,
         [Description("Unique name of the solution")] string solutionUniqueName,
-        [Description("GUID of the component")] string componentId,
-        [Description("Component type code (e.g. 1=Entity, 24=Workflow, 92=Role)")] int componentType,
+        [Description("objectid of the component — for a table or column its MetadataId, NOT the solutioncomponentid of a membership row")] string componentId,
+        [Description("Component type code (1=Entity, 2=Attribute, 26=SavedQuery, 29=Workflow, 60=SystemForm, 61=WebResource, 66=CustomControl, 91=PluginAssembly)")] int componentType,
         CancellationToken ct = default)
     {
         try
@@ -139,8 +160,8 @@ public sealed class SolutionTools
                 return JsonSerializer.Serialize(new { error = "Invalid componentId GUID format." });
 
             var env = config.GetActiveEnvironment();
-            await svc.AddComponentAsync(env.OrgUrl, solutionUniqueName, compId, componentType, ct);
-            return JsonSerializer.Serialize(new { success = true, solutionUniqueName, componentId });
+            var result = await svc.AddComponentAsync(env.OrgUrl, solutionUniqueName, compId, componentType, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -149,13 +170,19 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_remove_component")]
-    [Description("Remove a component from a solution.")]
+    [Description("Remove a component from a solution. componentId must be the component's own " +
+                 "objectid — for a table or column its MetadataId, as returned by solution_get. " +
+                 "Passing the solutioncomponentid of the membership row instead fails with " +
+                 "0x8004f021 \"Cannot find solution component\". The membership is checked before " +
+                 "and after, so \"not a member\" and \"covered by a table held with " +
+                 "rootcomponentbehavior 0\" come back as a sentence rather than a platform error " +
+                 "code. A subcomponent covered by its table cannot be removed on its own.")]
     public static async Task<string> SolutionRemoveComponent(
         SolutionService svc,
         ConfigProvider config,
         [Description("Unique name of the solution")] string solutionUniqueName,
-        [Description("GUID of the component")] string componentId,
-        [Description("Component type code")] int componentType,
+        [Description("objectid of the component — for a table or column its MetadataId, NOT the solutioncomponentid of a membership row")] string componentId,
+        [Description("Component type code (1=Entity, 2=Attribute, 26=SavedQuery, 29=Workflow, 60=SystemForm, 61=WebResource, 66=CustomControl, 91=PluginAssembly)")] int componentType,
         CancellationToken ct = default)
     {
         try
@@ -164,8 +191,8 @@ public sealed class SolutionTools
                 return JsonSerializer.Serialize(new { error = "Invalid componentId GUID format." });
 
             var env = config.GetActiveEnvironment();
-            await svc.RemoveComponentAsync(env.OrgUrl, solutionUniqueName, compId, componentType, ct);
-            return JsonSerializer.Serialize(new { success = true, solutionUniqueName, componentId });
+            var result = await svc.RemoveComponentAsync(env.OrgUrl, solutionUniqueName, compId, componentType, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (Exception ex)
         {

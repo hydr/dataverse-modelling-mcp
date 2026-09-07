@@ -76,6 +76,58 @@ public sealed class DataverseHttpClient
         return await response.Content.ReadAsStringAsync(ct);
     }
 
+    /// <summary>
+    /// GET a collection and follow every <c>@odata.nextLink</c>, returning all rows of the
+    /// <c>value</c> array across pages.
+    /// </summary>
+    /// <remarks>
+    /// Dataverse caps a response at 5000 rows and hands out the rest via <c>@odata.nextLink</c>.
+    /// A nested <c>$expand</c> is capped far lower — 50 rows — and emits **no** nextLink at all, so a
+    /// collection read through an expand is silently truncated with nothing in the payload to say so.
+    /// Anything that has to be complete therefore has to be read as its own top-level query and paged
+    /// through here. Elements are cloned so they outlive the per-page <see cref="JsonDocument"/>.
+    /// </remarks>
+    /// <param name="maxPages">Safety stop so a runaway nextLink chain cannot loop forever.</param>
+    public async Task<List<JsonElement>> GetAllPagesAsync(
+        string orgUrl,
+        string relativeUrl,
+        int maxPageSize = 5000,
+        int maxPages = 200,
+        CancellationToken ct = default)
+    {
+        var rows = new List<JsonElement>();
+        string? next = relativeUrl;
+
+        for (var page = 0; page < maxPages && next is not null; page++)
+        {
+            using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, next, body: null, ct);
+            request.Headers.TryAddWithoutValidation("Prefer", $"odata.maxpagesize={maxPageSize}");
+            using var response = await _http.SendAsync(request, ct);
+            await EnsureSuccessAsync(response, ct);
+            var json = await response.Content.ReadAsStringAsync(ct);
+
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                    rows.Add(item.Clone());
+            }
+
+            next = doc.RootElement.TryGetProperty("@odata.nextLink", out var nl) && nl.ValueKind == JsonValueKind.String
+                ? nl.GetString()
+                : null;
+        }
+
+        if (next is not null)
+        {
+            _logger.LogWarning(
+                "Stopped paging {Url} after {MaxPages} pages ({Rows} rows) — the result may be incomplete.",
+                relativeUrl, maxPages, rows.Count);
+        }
+
+        return rows;
+    }
+
     public async Task<T?> PostAsync<T>(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);

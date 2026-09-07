@@ -70,8 +70,22 @@ download_binary() {
   note "fetching ${ASSET_NAME} (${tag}) from ${repo} ..."
   local downloaded=0
 
-  # Preferred: gh CLI (reuses the user's existing GitHub auth).
-  if command -v gh >/dev/null 2>&1; then
+  # Preferred for a public repo: the plain release URL, no authentication at all.
+  # Most users have neither gh nor a token; requiring either would stop them from
+  # starting the server. A private repo answers 404 here and falls through.
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL --retry 2 \
+        -H "User-Agent: dataverse-modelling-mcp" \
+        -o "$tmp" \
+        "https://github.com/${repo}/releases/download/${tag}/${ASSET_NAME}" 2>/dev/null; then
+      downloaded=1
+    else
+      rm -f "$tmp"
+    fi
+  fi
+
+  # Next: gh CLI (reuses the user's existing GitHub auth) — for a private repo.
+  if [ "$downloaded" -ne 1 ] && command -v gh >/dev/null 2>&1; then
     if gh release download "$tag" --repo "$repo" --pattern "$ASSET_NAME" --output "$tmp" --clobber >/dev/null 2>&1; then
       downloaded=1
     fi
@@ -81,7 +95,7 @@ download_binary() {
   if [ "$downloaded" -ne 1 ]; then
     local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
     if [ -z "$token" ]; then
-      note "gh CLI unavailable/unauthenticated and neither GITHUB_TOKEN nor GH_TOKEN is set. Run 'gh auth login' or set a token."
+      note "could not download ${ASSET_NAME} anonymously; gh CLI unavailable/unauthenticated and neither GITHUB_TOKEN nor GH_TOKEN is set. Check that release ${tag} exists in ${repo}, or run 'gh auth login'."
       return 1
     fi
     command -v curl >/dev/null 2>&1 || { note "curl not found."; return 1; }

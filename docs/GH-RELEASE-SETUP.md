@@ -83,15 +83,21 @@ sodass aus der Plugin-Version nicht ablesbar war, welche Binary installiert wird
 
 ## Authentifizierung
 
-Das Repo ist privat. Der Hook lädt in dieser Reihenfolge:
+Das Repo ist öffentlich, der Normalfall braucht deshalb **keine** Anmeldung. Der
+Hook lädt in dieser Reihenfolge:
 
-1. **`gh` CLI**, falls installiert & authentifiziert (`gh auth status`) — nutzt die
-   vorhandene GitHub-Anmeldung, kein manuelles Token nötig. **Empfohlen.**
-2. **REST-API mit Token** aus `GITHUB_TOKEN` bzw. `GH_TOKEN` (Bearer). Er löst die
+1. **Anonym** über `https://github.com/<repo>/releases/download/v<version>/<asset>`.
+   Das ist der Regelweg: die meisten Nutzer haben weder `gh` noch ein Token, und
+   beides zu verlangen würde sie am Start des Servers hindern.
+2. **`gh` CLI**, falls installiert & authentifiziert (`gh auth status`) — greift,
+   wenn über die Plugin-Option `release_repo` ein **privates** Repo eingetragen ist.
+3. **REST-API mit Token** aus `GITHUB_TOKEN` bzw. `GH_TOKEN` (Bearer). Löst die
    Asset-ID über `releases/tags/v<version>` auf und lädt sie mit
    `Accept: application/octet-stream`.
 
-Schlägt beides fehl, bricht der Hook **laut** ab (kein stilles `exit 0`).
+Ein privates Repo antwortet auf Weg 1 mit 404, der Hook fällt dann auf 2 und 3
+durch. Schlägt alles fehl, bricht der Hook **laut** ab (kein stilles `exit 0`) und
+nennt den fehlenden Release-Tag.
 
 ## Release-Prozess (Binary)
 
@@ -119,10 +125,10 @@ dotnet publish src/Dataverse.Server -c Release -r win-x64 \
   --self-contained true -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 cp ./publish/Dataverse.Server.exe \
-  "$HOME/.claude/plugins/data/dataverse-modelling-mcp-crossvertise/bin/DataverseMcp.exe"
+  "$HOME/.claude/plugins/data/dataverse-modelling-mcp-hydr/bin/DataverseMcp.exe"
 # optional, damit der Hook nicht neu lädt:
 printf '%s' "<version>" > \
-  "$HOME/.claude/plugins/data/dataverse-modelling-mcp-crossvertise/bin/.version"
+  "$HOME/.claude/plugins/data/dataverse-modelling-mcp-hydr/bin/.version"
 ```
 
 ## Bekannte Einschränkung: Plattformen

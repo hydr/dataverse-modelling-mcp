@@ -87,9 +87,28 @@ function Get-BinaryFromGitHub($repo, $tag, $destination)
     Write-Note "fetching $script:AssetName ($tag) from $repo ..."
     $downloaded = $false
 
-    # Preferred: gh CLI (reuses the user's existing GitHub auth - the same auth that
+    # Preferred for a public repo: the plain release URL, no authentication at all.
+    # Most users have neither gh nor a token; requiring either would stop them from
+    # starting the server. A private repo answers 404 here and falls through.
+    try
+    {
+        $progress = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing `
+            -Headers @{ 'User-Agent' = 'dataverse-modelling-mcp' } `
+            -Uri "https://github.com/$repo/releases/download/$tag/$script:AssetName" `
+            -OutFile $tmp
+        if (Test-Path $tmp) { $downloaded = $true }
+    }
+    catch
+    {
+        if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    finally { $ProgressPreference = $progress }
+
+    # Next: gh CLI (reuses the user's existing GitHub auth - the same auth that
     # powers 'claude plugin marketplace add' for private repos).
-    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    $gh = if (-not $downloaded) { Get-Command gh -ErrorAction SilentlyContinue } else { $null }
     if ($gh)
     {
         try
@@ -108,7 +127,7 @@ function Get-BinaryFromGitHub($repo, $tag, $destination)
         if ([string]::IsNullOrWhiteSpace($token)) { $token = $env:GH_TOKEN }
         if ([string]::IsNullOrWhiteSpace($token))
         {
-            throw "gh CLI unavailable/unauthenticated and neither GITHUB_TOKEN nor GH_TOKEN is set. Run 'gh auth login' or set a token."
+            throw "could not download $script:AssetName anonymously; gh CLI unavailable/unauthenticated and neither GITHUB_TOKEN nor GH_TOKEN is set. Check that release $tag exists in $repo, or run 'gh auth login'."
         }
 
         $headers = @{ Authorization = "Bearer $token"; 'User-Agent' = 'dataverse-modelling-mcp' }

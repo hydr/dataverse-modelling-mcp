@@ -168,6 +168,8 @@ session still has it open.
 - [Architecture](docs/architecture.md)
 - [Authentication](docs/authentication.md)
 - [Tool reference](docs/tools/)
+- [Analysis — dependencies and solution membership](docs/tools/analysis.md)
+- [Forms — structure, code components, FormXML pitfalls](docs/tools/forms.md)
 - [Command bar buttons — classic ribbon vs modern command](docs/tools/buttons-classic-vs-modern.md)
 - [Modern commands (`appaction`) — field semantics and gotchas](docs/tools/modern-commands.md)
 - [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)

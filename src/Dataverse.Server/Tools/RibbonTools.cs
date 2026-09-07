@@ -70,6 +70,59 @@ public sealed class RibbonTools
         }
     }
 
+    [McpServerTool(Name = "ribbon_get_merged")]
+    [Description("Return a table's MERGED (compiled) ribbon XML via RetrieveEntityRibbon — the " +
+                 "out-of-the-box ribbon with every solution's RibbonDiffXml applied, i.e. what the " +
+                 "app actually renders. Use this, not ribbon_get, to answer \"is anything still " +
+                 "hanging off this button or library?\": ribbon_get returns only the stored diff, " +
+                 "which holds this environment's own changes and nothing from managed solutions. " +
+                 "The XML can be large; pass `contains` to get just the matching lines back.")]
+    public static async Task<string> RibbonGetMerged(
+        RibbonService svc,
+        ConfigProvider config,
+        [Description("Table logical name (e.g. 'account')")] string table,
+        [Description("Optional substring. When set, only matching lines are returned, with their line numbers — use it to keep a large ribbon out of the answer.")] string? contains = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var xml = await svc.RetrieveCompiledRibbonAsync(env.OrgUrl, table, ct);
+
+            if (string.IsNullOrWhiteSpace(contains))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    table,
+                    source = "RetrieveEntityRibbon (compiled: out-of-the-box + all RibbonDiffXml)",
+                    length = xml.Length,
+                    ribbonXml = xml
+                }, JsonOptions);
+            }
+
+            var lines = xml.Split('\n');
+            var matches = lines
+                .Select((line, index) => (Line: line.TrimEnd(), Number: index + 1))
+                .Where(l => l.Line.Contains(contains, StringComparison.OrdinalIgnoreCase))
+                .Select(l => new { line = l.Number, text = l.Line })
+                .ToList();
+
+            return JsonSerializer.Serialize(new
+            {
+                table,
+                source = "RetrieveEntityRibbon (compiled: out-of-the-box + all RibbonDiffXml)",
+                length = xml.Length,
+                contains,
+                matchCount = matches.Count,
+                matches
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "ribbon_add_button")]
     [Description("Add a JavaScript-backed button to a table's classic ribbon. Ribbons cannot be written " +
                  "through the Web API, so this performs the solution round-trip: create a throwaway " +

@@ -187,6 +187,33 @@ Which solution carries a change to a form or a column hangs entirely on the owni
 
 The same table routinely sits in several solutions with different behaviours, which is why "add the
 column to the solution" can be a no-op in one and necessary in the next.
+[`entity_solution_map`](analysis.md#entity_solution_map) answers that question for a whole table in
+one call.
+
+---
+
+### `solution_uninstall`
+
+Uninstalls a solution by deleting it. For a managed solution this removes its components too, and
+**there is no undo**.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uniqueName` | string | Yes | Solution unique name |
+| `dryRun` | bool | No | `true` (default) reports what would block the uninstall and changes nothing; `false` actually uninstalls |
+
+**Example prompt:** "What would block uninstalling the CrossvertiseControls solution?"
+
+The dry run checks every root component with
+[`component_dependencies`](analysis.md#component_dependencies) and reports the ones something else
+requires:
+
+> Dry run: 1 of 5 checked root component(s) of 'DV_MCP_Test' are required by something else and
+> would block the uninstall — Entity invoice (193 dependent(s)). Nothing was changed.
+
+A clean dry run is **evidence, not proof**: only root components are checked (subcomponents ride
+along with theirs), and only the first 100 of them. `checkTruncated` says when the cap was hit, and
+the summary admits it.
 
 ---
 

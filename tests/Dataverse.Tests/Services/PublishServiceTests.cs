@@ -63,6 +63,74 @@ public sealed class PublishServiceTests
         Assert.That(xml, Does.Contain("<entity>account</entity>"));
     }
 
+    /// <summary>
+    /// Dashboards and global choices were simply not reachable before, although they are part of the
+    /// documented ParameterXml vocabulary.
+    /// </summary>
+    [Test]
+    public void BuildParameterXml_EmitsDashboardsAndOptionSets()
+    {
+        var dashboard = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+        var xml = PublishService.BuildParameterXml(
+            [], [], [dashboard], ["sample_customoptionset"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xml, Does.Contain(
+                "<dashboards><dashboard>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</dashboard></dashboards>"));
+            Assert.That(xml, Does.Contain(
+                "<optionsets><optionset>sample_customoptionset</optionset></optionsets>"));
+        });
+    }
+
+    /// <summary>The site map and the application ribbon are singletons — their element stays empty.</summary>
+    [Test]
+    public void BuildParameterXml_EmitsSiteMapAndRibbonsAsEmptyElements()
+    {
+        var xml = PublishService.BuildParameterXml([], [], siteMap: true, ribbons: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xml, Does.Contain("<sitemaps><sitemap></sitemap></sitemaps>"));
+            Assert.That(xml, Does.Contain("<ribbons><ribbon></ribbon></ribbons>"));
+        });
+    }
+
+    [Test]
+    public void BuildParameterXml_EscapesNamesThatWouldBreakTheDocument()
+    {
+        var xml = PublishService.BuildParameterXml(["a<b&c"], [], optionSets: ["x<y"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xml, Does.Contain("a&lt;b&amp;c"));
+            Assert.That(xml, Does.Contain("x&lt;y"));
+        });
+    }
+
+    [Test]
+    public void PublishAsync_Throws_WhenNothingAtAllWasRequested()
+    {
+        var ex = Assert.ThrowsAsync<ArgumentException>(async () =>
+            await _svc.PublishAsync(OrgUrl, ct: CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("Nothing to publish"));
+    }
+
+    /// <summary>
+    /// PublishXml takes dashboard ids, not names. Passing a name silently publishes nothing, so it
+    /// is rejected up front instead.
+    /// </summary>
+    [Test]
+    public void PublishAsync_Throws_WhenADashboardIsGivenByName()
+    {
+        var ex = Assert.ThrowsAsync<ArgumentException>(async () =>
+            await _svc.PublishAsync(OrgUrl, dashboards: ["Sales Dashboard"], ct: CancellationToken.None));
+
+        Assert.That(ex!.Message, Does.Contain("not a GUID"));
+    }
+
     [Test]
     public async Task PublishAsync_PostsPublishXml_WithAssembledParameterXml()
     {

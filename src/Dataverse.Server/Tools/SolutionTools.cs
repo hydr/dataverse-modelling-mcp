@@ -200,6 +200,33 @@ public sealed class SolutionTools
         }
     }
 
+    [McpServerTool(Name = "solution_uninstall")]
+    [Description("Uninstall a solution by deleting it. For a managed solution this removes its " +
+                 "components too, and there is no undo. Runs as a DRY RUN by default: every root " +
+                 "component is checked with RetrieveDependenciesForDelete and the blockers are " +
+                 "reported without changing anything. Pass dryRun=false to actually uninstall. Note " +
+                 "that a clean dry run is evidence, not proof — only root components are checked, " +
+                 "and only the first 100 of them.")]
+    public static async Task<string> SolutionUninstall(
+        SolutionService svc,
+        ComponentDependencyService dependencies,
+        ConfigProvider config,
+        [Description("Unique name of the solution")] string uniqueName,
+        [Description("true (default) to only report what would block the uninstall; false to actually uninstall")] bool dryRun = true,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.UninstallAsync(env.OrgUrl, uniqueName, dependencies, dryRun, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "solution_check_layers")]
     [Description("Show the solution layers of a single component — the same stack the Maker's " +
                  "\"Solution Layers\" view displays (source: the msdyn_componentlayer virtual table). " +

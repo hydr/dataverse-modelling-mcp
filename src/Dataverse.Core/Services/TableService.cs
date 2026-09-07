@@ -291,6 +291,44 @@ public sealed class TableService
     }
 
     /// <summary>
+    /// Resolve a column's <c>MetadataId</c> — the id every dependency and solution call wants.
+    /// </summary>
+    public async Task<Guid> GetColumnMetadataIdAsync(
+        string orgUrl,
+        string tableLogicalName,
+        string columnLogicalName,
+        CancellationToken ct = default)
+    {
+        var raw = await _client.GetRawAsync(
+            orgUrl,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')"
+            + $"/Attributes(LogicalName='{columnLogicalName}')?$select=MetadataId",
+            ct: ct);
+        using var doc = JsonDocument.Parse(raw);
+
+        var id = doc.RootElement.TryGetGuid("MetadataId");
+        if (id == Guid.Empty)
+            throw new InvalidOperationException(
+                $"Column '{columnLogicalName}' not found on table '{tableLogicalName}'.");
+
+        return id;
+    }
+
+    /// <summary>Delete a column. Irreversible, and it takes the stored data with it.</summary>
+    public async Task DeleteColumnAsync(
+        string orgUrl,
+        string tableLogicalName,
+        string columnLogicalName,
+        CancellationToken ct = default)
+    {
+        await _client.DeleteAsync(
+            orgUrl,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')"
+            + $"/Attributes(LogicalName='{columnLogicalName}')",
+            ct);
+    }
+
+    /// <summary>
     /// Read a metadata definition as a plain property bag, ready to be merged and written back.
     /// </summary>
     private async Task<Dictionary<string, JsonElement>> ReadDefinitionAsync(

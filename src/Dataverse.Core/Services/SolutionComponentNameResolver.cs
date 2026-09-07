@@ -78,9 +78,17 @@ public sealed class SolutionComponentNameResolver
     /// Resolve names for the given components. Returns a fresh list in the same order, with
     /// <see cref="SolutionComponent.Name"/> filled in wherever it could be resolved.
     /// </summary>
+    /// <param name="attributeParents">
+    /// Optional map from a column's MetadataId to its owning table's MetadataId. There is no global
+    /// attribute collection to query, so without a parent a column can only be found by searching
+    /// the tables that happen to be in the same list. Callers that already know the parent — a
+    /// dependency response carries it — should pass it and get an exact answer for one request per
+    /// table instead of a scan.
+    /// </param>
     public async Task<IReadOnlyList<SolutionComponent>> ResolveAsync(
         string orgUrl,
         IReadOnlyList<SolutionComponent> components,
+        IReadOnlyDictionary<Guid, Guid>? attributeParents = null,
         CancellationToken ct = default)
     {
         if (components.Count == 0)
@@ -102,16 +110,27 @@ public sealed class SolutionComponentNameResolver
 
         if (attributeIds.Count > 0)
         {
-            // Only tables that are themselves in the solution can be searched for the columns —
-            // there is no global attribute collection to query by MetadataId.
-            var owningTables = tableIds
+            // Tables to search for the columns: the ones a caller pointed at explicitly, then the
+            // ones that are in the list anyway.
+            var owningTables = new List<string>();
+
+            if (attributeParents is not null)
+            {
+                owningTables.AddRange(attributeParents
+                    .Where(kv => attributeIds.Contains(kv.Key))
+                    .Select(kv => tableNames.TryGetValue(kv.Value, out var n) ? n : null)
+                    .Where(n => n is not null)
+                    .Select(n => n!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+            }
+
+            owningTables.AddRange(tableIds
                 .Select(id => tableNames.TryGetValue(id, out var n) ? n : null)
                 .Where(n => n is not null)
                 .Select(n => n!)
-                .Take(MaxTablesForAttributeLookup)
-                .ToList();
+                .Where(n => !owningTables.Contains(n, StringComparer.OrdinalIgnoreCase)));
 
-            foreach (var table in owningTables)
+            foreach (var table in owningTables.Take(MaxTablesForAttributeLookup))
             {
                 if (attributeIds.Count == 0)
                     break;

@@ -4,9 +4,9 @@
 
 Please report security issues **privately**, not as a public issue:
 
-- By e-mail to `it@crossvertise.com`.
-- Or, if [private vulnerability reporting](https://github.com/hydr/dataverse-modelling-mcp/security/advisories/new)
-  is enabled on this repository, as a private security advisory.
+- Preferred: [open a private security advisory](https://github.com/hydr/dataverse-modelling-mcp/security/advisories/new).
+  Private vulnerability reporting is enabled on this repository.
+- Alternatively, by e-mail to `it@crossvertise.com`.
 
 Please include what the issue allows an attacker to do, how to reproduce it, and the
 version (`.claude-plugin/plugin.json` → `version`, or `scripts/BINARY_VERSION`). You

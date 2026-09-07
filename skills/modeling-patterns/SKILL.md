@@ -71,22 +71,28 @@ fehlen ebenfalls. Zum Vergleichen von Ständen gibt es `versionnumber` (BigInt),
 
 ### Ein Rücklesen direkt nach dem Schreiben beweist nichts
 
-Ein Schreibvorgang auf Formulare oder Metadaten quittiert mit 204, aber ein unmittelbar folgendes
-`GET` kann noch den alten Stand liefern — inklusive alter `versionnumber`. **Ein Rücklesen ohne
-Wartezeit ist also kein Beweis dafür, dass der Schreibvorgang verworfen wurde.**
+**Ein Rücklesen ohne Wartezeit bzw. ohne Publish ist kein Beweis dafür, dass der Schreibvorgang
+verworfen wurde.** Es sind zwei verschiedene Mechanismen, und sie verhalten sich unterschiedlich —
+gegen eine echte Umgebung gemessen:
 
-Wie lange das anhält, ist unklar. Belegt sind zwei Beobachtungen, die sich nicht deckten:
+| Schreibvorgang | Rücklesen ohne Publish |
+|---|---|
+| `systemform.formxml` (`PATCH`, HTTP 204) | **wird nie aktuell** — nach 120 s noch alte `formxml` und alte `versionnumber` |
+| dasselbe Formular nach `publish_customizations` | sofort aktuell, `versionnumber` sprang 55888235 → 64095408 |
+| Metadaten anlegen | sichtbar nach ~3 s |
+| Metadaten ändern (`PUT`) | aktuell nach ~3 s |
+| Metadaten löschen | verschwunden nach ~16 s |
 
-- In einer echten Session blieb der alte Stand bestehen, bis `publish_customizations` lief
-  (Formular-`formxml` und `versionnumber`, sowie eine gelöschte Spalte, die in
-  `EntityDefinitions/Attributes` weiter auftauchte).
-- Bei einem `PUT` auf ein Attribut war der neue Wert zunächst nicht sichtbar, wenige Sekunden später
-  aber schon — **ohne** dass ein Publish dafür nötig war.
+**Beim Formular ist es kein Cache.** Ein `PATCH` schreibt die *unpublizierte* Fassung, ein `GET`
+liefert die *publizierte* — bis zum Publish sind das schlicht zwei verschiedene Stände. Warten hilft
+hier nicht, nur `publish_customizations(entities='<tabelle>')`.
 
-Die Ursachenschicht ist damit offen; plausibel ist Eventual Consistency im Metadaten-Cache. Praktisch
-heißt das: nach einem Schreibvorgang kurz warten und erneut lesen, bevor man ihn für gescheitert
-erklärt. Ein `publish_customizations` ist davon unabhängig weiterhin nötig, damit Clients die
-Änderung überhaupt sehen — kein Tool publiziert automatisch.
+**Bei Metadaten ist es Eventual Consistency.** `EntityDefinitions` zieht von selbst nach, ganz ohne
+Publish. Der Publish wird trotzdem gebraucht, damit *Clients* die Änderung sehen.
+
+Praktisch: nach einem Formular-Schreibvorgang publizieren und dann lesen; nach einem
+Metadaten-Schreibvorgang kurz warten und erneut lesen. Die metadatenschreibenden Tools haben dafür
+ein `publish`-Flag und melden im Ergebnis, wenn sie nicht publiziert haben.
 
 ## Lokales MCP
 

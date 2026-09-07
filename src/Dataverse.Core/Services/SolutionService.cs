@@ -153,7 +153,7 @@ public sealed class SolutionService
         if (resolveComponentNames && components.Count > 0)
         {
             resolved = await new SolutionComponentNameResolver(_client, _logger)
-                .ResolveAsync(orgUrl, components, ct);
+                .ResolveAsync(orgUrl, components, ct: ct);
         }
 
         string? detailPubName = null;
@@ -467,7 +467,7 @@ public sealed class SolutionService
     /// <c>solutioncomponent_rootcomponentbehavior</c>). Which solution carries a form or column
     /// hangs entirely on this value, so it is worth spelling out rather than returning a bare code.
     /// </summary>
-    internal static string? MapRootComponentBehavior(int? behavior) => behavior switch
+    public static string? MapRootComponentBehavior(int? behavior) => behavior switch
     {
         null => null,
         0 => "IncludeSubcomponents",
@@ -751,6 +751,122 @@ public sealed class SolutionService
             Note: removed
                 ? null
                 : "RemoveSolutionComponent returned success but the membership row is still there.");
+    }
+
+    /// <summary>
+    /// How many root components an uninstall check will look at before giving up. Each one is a
+    /// separate request, and a large solution would otherwise turn one question into hundreds.
+    /// </summary>
+    private const int MaxRootComponentsToCheck = 100;
+
+    /// <summary>
+    /// Uninstall a solution — with a dry run first.
+    /// </summary>
+    /// <remarks>
+    /// Deleting the <c>solutions</c> row is the uninstall, and for a managed solution it takes the
+    /// components with it. There is no undo, and the platform will happily refuse halfway through
+    /// because something outside the solution still depends on a component. So the default is a dry
+    /// run: every root component is checked with <c>RetrieveDependenciesForDelete</c> and the
+    /// blockers are reported, without touching anything.
+    /// <para>
+    /// A clean dry run is evidence, not proof: only root components are checked, and only the first
+    /// <see cref="MaxRootComponentsToCheck"/> of them.
+    /// </para>
+    /// </remarks>
+    public async Task<SolutionUninstallReport> UninstallAsync(
+        string orgUrl,
+        string uniqueName,
+        ComponentDependencyService dependencies,
+        bool dryRun = true,
+        CancellationToken ct = default)
+    {
+        var solutionId = await ResolveSolutionIdAsync(orgUrl, uniqueName, ct);
+
+        var raw = await _client.GetRawAsync(
+            orgUrl, $"api/data/v9.2/solutions({solutionId:D})?$select=ismanaged", ct: ct);
+        using var doc = JsonDocument.Parse(raw);
+        var isManaged = doc.RootElement.TryGetProperty("ismanaged", out var m) && m.ValueKind == JsonValueKind.True;
+
+        var components = await ReadComponentsAsync(orgUrl, solutionId, ct);
+
+        // Root components are the ones that carry a behaviour; subcomponents ride along with them,
+        // so checking those too would mostly repeat the same answer.
+        var roots = components.Where(c => c.RootComponentBehavior is not null).ToList();
+        var toCheck = roots.Take(MaxRootComponentsToCheck).ToList();
+
+        var blockers = new List<ComponentDependencyReport>();
+        foreach (var root in toCheck)
+        {
+            try
+            {
+                var report = await dependencies.GetDependenciesForDeleteAsync(
+                    orgUrl, root.ComponentId, root.ComponentType, ct);
+                if (!report.CanDelete)
+                    blockers.Add(report);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(
+                    ex, "Dependency check failed for component {ComponentId}.", root.ComponentId);
+            }
+        }
+
+        var truncated = roots.Count > toCheck.Count;
+        var uninstalled = false;
+
+        if (!dryRun)
+        {
+            await _client.DeleteAsync(orgUrl, $"api/data/v9.2/solutions({solutionId:D})", ct);
+            uninstalled = true;
+        }
+
+        return new SolutionUninstallReport(
+            UniqueName: uniqueName,
+            SolutionId: solutionId,
+            IsManaged: isManaged,
+            DryRun: dryRun,
+            Uninstalled: uninstalled,
+            ComponentCount: components.Count,
+            RootComponentCount: roots.Count,
+            ComponentsChecked: toCheck.Count,
+            CheckTruncated: truncated,
+            Summary: BuildUninstallSummary(uniqueName, dryRun, uninstalled, blockers, toCheck.Count, truncated),
+            Blockers: blockers);
+    }
+
+    public static string BuildUninstallSummary(
+        string uniqueName,
+        bool dryRun,
+        bool uninstalled,
+        IReadOnlyList<ComponentDependencyReport> blockers,
+        int checkedCount,
+        bool truncated)
+    {
+        var caveat = truncated
+            ? $" Only the first {checkedCount} root components were checked, so this is not a complete picture."
+            : string.Empty;
+
+        if (uninstalled)
+        {
+            return blockers.Count == 0
+                ? $"'{uniqueName}' was uninstalled."
+                : $"'{uniqueName}' was uninstalled despite {blockers.Count} component(s) with external "
+                  + "dependencies.";
+        }
+
+        if (blockers.Count == 0)
+        {
+            return $"Dry run: nothing outside '{uniqueName}' depends on its {checkedCount} checked root "
+                   + $"component(s).{caveat} Pass dryRun=false to uninstall.";
+        }
+
+        return $"Dry run: {blockers.Count} of {checkedCount} checked root component(s) of '{uniqueName}' "
+               + "are required by something else and would block the uninstall — "
+               + string.Join("; ", blockers.Take(5).Select(b =>
+                   $"{b.ComponentTypeName} {b.ComponentName ?? b.ComponentId.ToString("D")} "
+                   + $"({b.DependentCount} dependent(s))"))
+               + (blockers.Count > 5 ? ", …" : string.Empty)
+               + $".{caveat} Nothing was changed.";
     }
 
     /// <summary>
@@ -1131,6 +1247,8 @@ public sealed class SolutionService
     /// (see <see cref="TryResolveFrameworkComponentTypesAsync"/>). Unknown codes fall back to
     /// <c>Type&lt;code&gt;</c> rather than guessing.
     /// </summary>
+    public static string MapComponentTypeName(int type) => MapComponentType(type);
+
     private static string MapComponentType(int type) => type switch
     {
         1 => "Entity",

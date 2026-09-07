@@ -90,6 +90,48 @@ Updates properties of an existing column.
 
 ---
 
+### `column_delete`
+
+Deletes a column. **Irreversible — it takes the stored data with it.**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tableLogicalName` | string | Yes | The table |
+| `columnLogicalName` | string | Yes | The column to delete |
+| `force` | bool | No | Delete even when other components depend on the column (default `false`) |
+| `publish` | bool | No | Publish the table afterwards (default `false`) |
+
+**Example prompt:** "Delete the new_projectcode column from account"
+
+By default the column's dependencies are checked first with
+[`component_dependencies`](analysis.md#component_dependencies) and the delete is **refused** when a
+form, view or workflow still uses it. The blockers come back in the result, named:
+
+```json
+{
+  "success": false,
+  "deleted": false,
+  "reason": "Other components depend on this column. Review them and pass force=true to delete anyway.",
+  "dependencies": { "dependentCount": 9, "summary": "9 component(s) depend on Attribute
+                    xv_mcptest.xv_name …: 3× SystemForm, 6× SavedQuery", "dependents": [ … ] }
+}
+```
+
+---
+
+## Publishing
+
+`table_create`, `table_update`, `column_add`, `column_update` and `column_delete` take a `publish`
+flag (default `false`). Without it the change is real but clients keep seeing the old definition, so
+every unpublished write says so in its result.
+
+Reading back is a separate matter: `EntityDefinitions` is eventually consistent and catches up on
+its own within seconds — no publish involved. A stale read straight after a write is therefore not
+evidence of a failed write. See [When a publish is
+required](publish.md#when-a-publish-is-required-and-when-it-only-looks-like-it) for the measurements.
+
+---
+
 ## How updates work
 
 The metadata endpoint does **not** support `PATCH`. Sending one fails with

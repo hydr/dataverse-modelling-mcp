@@ -69,17 +69,24 @@ Ein `$select=modifiedon` quittiert Dataverse mit
 fehlen ebenfalls. Zum Vergleichen von Ständen gibt es `versionnumber` (BigInt), `version`,
 `overwritetime` und `publishedon`.
 
-### Metadaten und Formulare lesen sich nach dem Schreiben veraltet zurück
+### Ein Rücklesen direkt nach dem Schreiben beweist nichts
 
-*Mehrfach in einer echten Session beobachtet, nicht doku-belegt — die Ursachenschicht ist offen,
-plausibel ist der Metadaten-Cache der Organisation.*
+Ein Schreibvorgang auf Formulare oder Metadaten quittiert mit 204, aber ein unmittelbar folgendes
+`GET` kann noch den alten Stand liefern — inklusive alter `versionnumber`. **Ein Rücklesen ohne
+Wartezeit ist also kein Beweis dafür, dass der Schreibvorgang verworfen wurde.**
 
-Ein `PATCH` auf `systemforms` oder ein `DELETE` einer Spalte quittiert mit 204, aber ein direktes
-`GET` liefert danach weiter den alten Stand — inklusive alter `versionnumber`. Erst
-`publish_customizations` macht den Schreibvorgang sichtbar. Ein Rücklesen ohne Publish ist also kein
-Beweis dafür, dass der Schreibvorgang verworfen wurde. Kein Tool publiziert derzeit automatisch;
-nach jedem Schreiben auf Formulare oder Metadaten selbst publizieren, bevor man das Ergebnis
-beurteilt.
+Wie lange das anhält, ist unklar. Belegt sind zwei Beobachtungen, die sich nicht deckten:
+
+- In einer echten Session blieb der alte Stand bestehen, bis `publish_customizations` lief
+  (Formular-`formxml` und `versionnumber`, sowie eine gelöschte Spalte, die in
+  `EntityDefinitions/Attributes` weiter auftauchte).
+- Bei einem `PUT` auf ein Attribut war der neue Wert zunächst nicht sichtbar, wenige Sekunden später
+  aber schon — **ohne** dass ein Publish dafür nötig war.
+
+Die Ursachenschicht ist damit offen; plausibel ist Eventual Consistency im Metadaten-Cache. Praktisch
+heißt das: nach einem Schreibvorgang kurz warten und erneut lesen, bevor man ihn für gescheitert
+erklärt. Ein `publish_customizations` ist davon unabhängig weiterhin nötig, damit Clients die
+Änderung überhaupt sehen — kein Tool publiziert automatisch.
 
 ## Lokales MCP
 

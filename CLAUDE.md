@@ -15,6 +15,21 @@ dotnet run --project src/Dataverse.Setup
 ## Pack (dotnet tool)
 dotnet pack src/Dataverse.Setup -c Release
 
+## Zwei Repositories
+
+Das Projekt liegt in zwei Repos, und beide Bäume sollen inhaltlich gleich sein:
+
+- **`hydr/dataverse-modelling-mcp`** (öffentlich) — die Veröffentlichung. Hier entstehen die
+  Releases samt Binary- und NuGet-Asset.
+- **`crossvertise/dataverse-modelling-mcp`** (privat) — internes Arbeitsrepo. Es trägt die
+  unbereinigte Commit-Historie und die PR-Diskussionen mit internen Bezügen; deshalb bleibt es
+  privat.
+
+**Releases werden nur im öffentlichen Repo gebaut.** `scripts/BINARY_VERSION` und der Default der
+`release_repo`-Option zeigen in **beiden** Repos auf das öffentliche, der Launcher lädt die Binary
+also immer von dort. Ein Tag im privaten Repo würde ein zweites, ungenutztes Release derselben
+Version erzeugen — dort also nicht taggen.
+
 ## Skills
 
 Skills gehören nach **`skills/`** — dieses Verzeichnis wird mit dem Plugin ausgeliefert und ist damit
@@ -57,7 +72,8 @@ Verlassen muss man sich also nur beim vierten Punkt auf Disziplin.
 
 ## Release-Prozess (bei jeder Änderung)
 
-Bei Änderungen am MCP-Server immer:
+Bei Änderungen am MCP-Server immer — Schritte 1 bis 3 in **beiden** Repos, Schritt 4 nur im
+öffentlichen (siehe [Zwei Repositories](#zwei-repositories)):
 1. Feature-Branch erstellen und PR öffnen (gegen `master`)
 2. Version erhöhen (minor bei neuen Features, patch bei Bugfixes) — in **allen drei** Dateien auf
    **exakt denselben** Wert, das ist gleichzeitig der Release-Tag:
@@ -67,7 +83,7 @@ Bei Änderungen am MCP-Server immer:
 
    Der Release-Workflow vergleicht alle drei mit dem Tag und bricht bei jeder Abweichung ab.
 3. PR mergen
-4. Git-Tag setzen (`git tag v<Version> && git push origin v<Version>`) → löst den Release-Workflow aus (NuGet-Publish + GitHub Release inkl. Server-Binary-Asset)
+4. Git-Tag **im öffentlichen Repo** setzen (`git tag v<Version> && git push origin v<Version>`) → löst den Release-Workflow aus (NuGet-Publish + GitHub Release inkl. Server-Binary-Asset)
 
 ## Neue Version in einer laufenden Session nutzen
 

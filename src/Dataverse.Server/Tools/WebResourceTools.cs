@@ -74,6 +74,37 @@ public sealed class WebResourceTools
         }
     }
 
+    [McpServerTool(Name = "webresource_usages")]
+    [Description("Find where a web resource is referenced — ask before deleting one. Searches the " +
+                 "platform's own dependency tracking plus the documents that name a web resource: " +
+                 "form XML, ribbon diffs, the site map, and the lookups on modern commands. Pass " +
+                 "`tables` to also search those tables' MERGED (compiled) ribbons: the stored ribbon " +
+                 "diff only holds this environment's own changes, so a button coming from a managed " +
+                 "solution is invisible without it. The result lists under notSearched what was not " +
+                 "covered — read it before concluding the resource can go.")]
+    public static async Task<string> WebResourceUsages(
+        WebResourceUsageService svc,
+        ConfigProvider config,
+        [Description("Web resource name (e.g. 'xv_purchaseinvoice_js') or its GUID")] string name,
+        [Description("Optional comma-separated table logical names whose merged ribbon should also be searched")] string? tables = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var tableList = string.IsNullOrWhiteSpace(tables)
+                ? Array.Empty<string>()
+                : tables.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var result = await svc.FindUsagesAsync(env.OrgUrl, name, tableList, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
     [McpServerTool(Name = "webresource_upsert")]
     [Description("Create or update a web resource. Pass either filePath (read from disk) or content " +
                  "(inline text); the payload is Base64-encoded for Dataverse. On create the " +

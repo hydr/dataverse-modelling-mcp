@@ -44,6 +44,7 @@ builder.Services.AddSingleton<CommandService>();
 builder.Services.AddSingleton<RibbonService>();
 builder.Services.AddSingleton<ComponentDependencyService>();
 builder.Services.AddSingleton<EntitySolutionMapService>();
+builder.Services.AddSingleton<WebResourceUsageService>();
 
 // Config provider — reads config.json and wires up the token provider
 builder.Services.AddSingleton<ConfigProvider>();

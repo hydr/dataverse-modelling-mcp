@@ -431,3 +431,29 @@ from a live org: library `31eaa81c-b8d7-4f9d-8e4d-900e1c81c301`, component
 you needing a valid `.msapp` document with a component exposing the output property. Libraries are
 created by the Command Designer, and only when it is opened **from an app**. This is a hard limitation,
 and it is exactly the app dependency that argues for the classic `SelectionCountRule`.
+
+---
+
+## `ribbon_get_merged` vs `ribbon_get`
+
+Two different questions, two different tools.
+
+| | `ribbon_get` | `ribbon_get_merged` |
+|---|---|---|
+| Source | the stored `ribbondiff` / `ribboncommand` / `ribbonrule` rows | `RetrieveEntityRibbon` |
+| Shows | **this environment's own changes** to the ribbon | the out-of-the-box ribbon with every solution's `RibbonDiffXml` applied — what the app actually renders |
+| Use it to | see or edit what you control | answer "is anything still hanging off this button or library?" |
+
+The distinction matters when deciding whether something can be removed. A button that arrives from a
+managed solution does not appear in the diff at all, so a clean `ribbon_get` is **not** evidence that
+nothing uses a library.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `table` | string | Yes | Table logical name |
+| `contains` | string | No | Return only matching lines, with line numbers |
+
+The compiled ribbon runs to hundreds of kilobytes (half a megabyte for a stock table is normal), so
+use `contains` unless you really want the whole document.
+
+**Example prompt:** "Does the merged ribbon of xv_purchaseinvoice still reference xv_purchaseinvoice_js?"

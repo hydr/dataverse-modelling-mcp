@@ -102,14 +102,22 @@ public sealed class SolutionService
         return results;
     }
 
+    /// <summary>
+    /// Read a solution with its complete component list.
+    /// </summary>
+    /// <param name="resolveComponentNames">
+    /// Resolve each component's GUID to a name (one bulk lookup per component type). Worth the extra
+    /// requests for a readable answer; pass false when only the ids matter.
+    /// </param>
     public async Task<SolutionDetail?> GetAsync(
         string orgUrl,
         string uniqueName,
+        bool resolveComponentNames = true,
         CancellationToken ct = default)
     {
         var url = $"api/data/v9.2/solutions?$filter=uniquename eq '{uniqueName}'" +
                   "&$select=solutionid,uniquename,friendlyname,version,ismanaged,description,installedon" +
-                  "&$expand=publisherid($select=friendlyname,uniquename),solution_solutioncomponent($select=objectid,componenttype,rootcomponentbehavior)";
+                  "&$expand=publisherid($select=friendlyname,uniquename)";
 
         var raw = await _client.GetRawAsync(orgUrl, url, ct: ct);
         var doc = JsonDocument.Parse(raw);
@@ -118,21 +126,8 @@ public sealed class SolutionService
             return null;
 
         var item = items[0];
-        var components = new List<SolutionComponent>();
-
-        if (item.TryGetProperty("solution_solutioncomponent", out var comps))
-        {
-            foreach (var comp in comps.EnumerateArray())
-            {
-                components.Add(new SolutionComponent(
-                    ComponentId: comp.TryGetGuid("objectid"),
-                    ComponentType: comp.GetInt32OrZero("componenttype"),
-                    ComponentTypeName: MapComponentType(comp.GetInt32OrZero("componenttype")),
-                    RootComponentId: comp.TryGetProperty("rootcomponentbehavior", out _)
-                        ? comp.TryGetGuid("rootsolutioncomponentid")
-                        : null));
-            }
-        }
+        var solutionId = item.TryGetGuid("solutionid");
+        var components = await ReadComponentsAsync(orgUrl, solutionId, ct);
 
         // Solution-Component-Framework types (>= 1000) carry environment-specific codes and are not part
         // of the documented componenttype choice — resolve those names once from the metadata instead of
@@ -154,6 +149,13 @@ public sealed class SolutionService
             }
         }
 
+        IReadOnlyList<SolutionComponent> resolved = components;
+        if (resolveComponentNames && components.Count > 0)
+        {
+            resolved = await new SolutionComponentNameResolver(_client, _logger)
+                .ResolveAsync(orgUrl, components, ct);
+        }
+
         string? detailPubName = null;
         if (item.TryGetProperty("publisherid", out var detailPubEl) && detailPubEl.ValueKind == JsonValueKind.Object)
             detailPubName = detailPubEl.GetStringOrNull("friendlyname");
@@ -167,7 +169,8 @@ public sealed class SolutionService
             PublisherName: detailPubName,
             Description: item.GetStringOrNull("description"),
             InstalledOn: item.GetDateTimeOrNull("installedon"),
-            Components: components);
+            ComponentCount: resolved.Count,
+            Components: resolved);
     }
 
     public async Task CreateAsync(
@@ -252,13 +255,27 @@ public sealed class SolutionService
         int pollIntervalSeconds = 5,
         CancellationToken ct = default)
     {
+        byte[]? zipBytes = null;
         if (!string.IsNullOrWhiteSpace(filePath))
         {
-            var bytes = await File.ReadAllBytesAsync(filePath, ct);
-            zipBase64 = Convert.ToBase64String(bytes);
+            zipBytes = await File.ReadAllBytesAsync(filePath, ct);
+            zipBase64 = Convert.ToBase64String(zipBytes);
         }
         if (string.IsNullOrWhiteSpace(zipBase64))
             throw new ArgumentException("Either zipBase64 or filePath must be provided.");
+
+        if (zipBytes is null)
+        {
+            try
+            {
+                zipBytes = Convert.FromBase64String(zipBase64);
+            }
+            catch (FormatException)
+            {
+                // Let the platform reject the payload — the post-import control check is the only
+                // thing that needs the bytes, and it is optional.
+            }
+        }
 
         var importJobId = Guid.NewGuid();
         var parameters = new
@@ -329,6 +346,22 @@ public sealed class SolutionService
             _logger.LogWarning(ex, "Could not read importjob {ImportJobId} detail after import.", importJobId);
         }
 
+        // A reported success is not proof that a PCF control was applied, so every control in the
+        // zip is compared against what the environment stores now.
+        IReadOnlyList<CustomControlVersionCheck> controlVersions = [];
+        var controlWarnings = new List<string>();
+        if (success && zipBytes is not null)
+        {
+            var manifests = CustomControlManifestReader.Read(zipBytes);
+            if (manifests.Count > 0)
+            {
+                controlVersions = await CheckCustomControlVersionsAsync(orgUrl, manifests, ct);
+                controlWarnings.AddRange(CustomControlManifestReader.BuildWarnings(controlVersions));
+                foreach (var warning in controlWarnings)
+                    _logger.LogWarning("Solution import: {Warning}", warning);
+            }
+        }
+
         return new SolutionImportResult(
             Success: success,
             AsyncOperationId: asyncOperationId,
@@ -336,7 +369,9 @@ public sealed class SolutionService
             StatusReason: statusReason,
             ProgressPercent: progress,
             ErrorMessage: success ? null : asyncMessage,
-            ComponentErrors: componentErrors);
+            ComponentErrors: componentErrors,
+            CustomControlWarnings: controlWarnings,
+            CustomControlVersions: controlVersions);
     }
 
     /// <summary>
@@ -372,7 +407,202 @@ public sealed class SolutionService
         return errors;
     }
 
-    public async Task AddComponentAsync(
+    /// <summary>
+    /// Read a solution's component rows from <c>solutioncomponent</c> as a paged top-level query.
+    /// </summary>
+    /// <remarks>
+    /// This used to ride along on the solution read as
+    /// <c>$expand=solution_solutioncomponent(...)</c>. An expanded collection cannot be paged — there
+    /// is no <c>@odata.nextLink</c> inside an expand — so that read had no way to prove it was
+    /// complete, and it could not return <c>solutioncomponentid</c> or a reliable
+    /// <c>rootcomponentbehavior</c> either. A top-level query pages properly and carries both.
+    /// The solution lookup is a <c>LookupType</c>, hence <c>_solutionid_value</c> in the filter
+    /// (filtering on <c>solutionid</c> fails).
+    /// </remarks>
+    private async Task<List<SolutionComponent>> ReadComponentsAsync(
+        string orgUrl,
+        Guid solutionId,
+        CancellationToken ct)
+    {
+        if (solutionId == Guid.Empty)
+            return [];
+
+        var rows = await _client.GetAllPagesAsync(
+            orgUrl,
+            $"api/data/v9.2/solutioncomponents?$filter=_solutionid_value eq {solutionId:D}"
+            + "&$select=solutioncomponentid,objectid,componenttype,rootcomponentbehavior,rootsolutioncomponentid",
+            ct: ct);
+
+        var components = new List<SolutionComponent>(rows.Count);
+        foreach (var row in rows)
+        {
+            var type = row.GetInt32OrZero("componenttype");
+
+            // rootcomponentbehavior is genuinely absent on many subcomponent rows — 0 ("include
+            // subcomponents") is a meaningful value there, so a missing one must stay null rather
+            // than defaulting to it.
+            int? behavior = row.TryGetProperty("rootcomponentbehavior", out var rb)
+                            && rb.ValueKind == JsonValueKind.Number
+                ? rb.GetInt32()
+                : null;
+
+            var rootId = row.TryGetGuid("rootsolutioncomponentid");
+            var rowId = row.TryGetGuid("solutioncomponentid");
+
+            components.Add(new SolutionComponent(
+                ComponentId: row.TryGetGuid("objectid"),
+                ComponentType: type,
+                ComponentTypeName: MapComponentType(type),
+                RootComponentBehavior: behavior,
+                RootComponentBehaviorName: MapRootComponentBehavior(behavior),
+                RootComponentId: rootId == Guid.Empty ? null : rootId,
+                SolutionComponentId: rowId == Guid.Empty ? null : rowId));
+        }
+
+        return components;
+    }
+
+    /// <summary>
+    /// Label for <c>solutioncomponent.rootcomponentbehavior</c> (global choice
+    /// <c>solutioncomponent_rootcomponentbehavior</c>). Which solution carries a form or column
+    /// hangs entirely on this value, so it is worth spelling out rather than returning a bare code.
+    /// </summary>
+    internal static string? MapRootComponentBehavior(int? behavior) => behavior switch
+    {
+        null => null,
+        0 => "IncludeSubcomponents",
+        1 => "DoNotIncludeSubcomponents",
+        2 => "IncludeAsShellOnly",
+        _ => $"Behavior{behavior}"
+    };
+
+    private async Task<Guid> ResolveSolutionIdAsync(
+        string orgUrl,
+        string solutionUniqueName,
+        CancellationToken ct)
+    {
+        var raw = await _client.GetRawAsync(
+            orgUrl,
+            $"api/data/v9.2/solutions?$filter=uniquename eq '{solutionUniqueName}'&$select=solutionid",
+            ct: ct);
+        using var doc = JsonDocument.Parse(raw);
+
+        if (doc.RootElement.TryGetProperty("value", out var items) && items.GetArrayLength() > 0)
+        {
+            var id = items[0].TryGetGuid("solutionid");
+            if (id != Guid.Empty)
+                return id;
+        }
+
+        throw new InvalidOperationException($"Solution '{solutionUniqueName}' not found.");
+    }
+
+    /// <summary>
+    /// Find the membership row of a component in a solution, or null when there is none.
+    /// </summary>
+    private async Task<Guid?> FindMembershipAsync(
+        string orgUrl,
+        Guid solutionId,
+        Guid componentId,
+        int componentType,
+        CancellationToken ct)
+    {
+        var rows = await _client.GetAllPagesAsync(
+            orgUrl,
+            $"api/data/v9.2/solutioncomponents?$filter=_solutionid_value eq {solutionId:D}"
+            + $" and objectid eq {componentId:D} and componenttype eq {componentType}"
+            + "&$select=solutioncomponentid",
+            ct: ct);
+
+        if (rows.Count == 0)
+            return null;
+
+        var id = rows[0].TryGetGuid("solutioncomponentid");
+        return id == Guid.Empty ? null : id;
+    }
+
+    /// <summary>
+    /// Work out which root component already covers a component that has no membership row of its own.
+    /// </summary>
+    /// <remarks>
+    /// A table in a solution with <c>rootcomponentbehavior = 0</c> (include subcomponents) carries its
+    /// forms and columns along, and those subcomponents get no <c>solutioncomponent</c> row. So the
+    /// candidates are exactly the solution's behavior-0 tables. For a column (component type 2) the
+    /// owning table can be pinned down exactly by asking each candidate whether it owns that
+    /// MetadataId — worth the extra requests, because "covered by table x" is an answer and "one of
+    /// these five tables" is not.
+    /// </remarks>
+    private async Task<(string? Owner, IReadOnlyList<string> Candidates)> FindCoveringRootsAsync(
+        string orgUrl,
+        Guid solutionId,
+        Guid componentId,
+        int componentType,
+        CancellationToken ct)
+    {
+        try
+        {
+            var rows = await _client.GetAllPagesAsync(
+                orgUrl,
+                $"api/data/v9.2/solutioncomponents?$filter=_solutionid_value eq {solutionId:D}"
+                + " and componenttype eq 1 and rootcomponentbehavior eq 0"
+                + "&$select=objectid",
+                ct: ct);
+
+            if (rows.Count == 0)
+                return (null, []);
+
+            var tableNames = await new SolutionComponentNameResolver(_client, _logger)
+                .GetTableNamesAsync(orgUrl, ct);
+
+            var candidates = rows
+                .Select(r => r.TryGetGuid("objectid"))
+                .Where(id => id != Guid.Empty)
+                .Select(id => tableNames.TryGetValue(id, out var n) ? n : id.ToString("D"))
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (componentType != 2)
+                return (null, candidates);
+
+            foreach (var table in candidates)
+            {
+                try
+                {
+                    await _client.GetRawAsync(
+                        orgUrl,
+                        $"api/data/v9.2/EntityDefinitions(LogicalName='{table}')/Attributes({componentId:D})"
+                        + "?$select=LogicalName",
+                        ct: ct);
+                    return (table, candidates);
+                }
+                catch (HttpRequestException)
+                {
+                    // Not this table's column — try the next candidate.
+                }
+            }
+
+            return (null, candidates);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not determine covering root components in solution {SolutionId}.", solutionId);
+            return (null, []);
+        }
+    }
+
+    /// <summary>
+    /// Add a component to a solution and verify afterwards that a membership row really exists.
+    /// </summary>
+    /// <remarks>
+    /// <c>AddSolutionComponent</c> reports success even when it changes nothing. Adding a column to a
+    /// solution that already contains the owning table with <c>rootcomponentbehavior = 0</c> creates
+    /// no row: the column is covered by the table and travels with it. A bare "success" there reads as
+    /// "the column is now explicitly in this solution", which is wrong and sends the caller looking
+    /// for a row that will never appear — so the membership is read back and reported for what it is.
+    /// The interplay of the action with <c>rootcomponentbehavior</c> is not documented; this behaviour
+    /// was observed on a live environment.
+    /// </remarks>
+    public async Task<AddComponentResult> AddComponentAsync(
         string orgUrl,
         string solutionUniqueName,
         Guid componentId,
@@ -388,23 +618,139 @@ public sealed class SolutionService
         };
 
         await _client.ExecuteActionAsync(orgUrl, "AddSolutionComponent", parameters, ct);
+
+        var typeName = MapComponentType(componentType);
+        var solutionId = await ResolveSolutionIdAsync(orgUrl, solutionUniqueName, ct);
+        var membership = await FindMembershipAsync(orgUrl, solutionId, componentId, componentType, ct);
+
+        if (membership is not null)
+        {
+            return new AddComponentResult(
+                Success: true,
+                SolutionUniqueName: solutionUniqueName,
+                ComponentId: componentId,
+                ComponentType: componentType,
+                ComponentTypeName: typeName,
+                ExplicitMembership: true,
+                SolutionComponentId: membership);
+        }
+
+        var (owner, candidates) = await FindCoveringRootsAsync(
+            orgUrl, solutionId, componentId, componentType, ct);
+
+        var note = owner is not null
+            ? $"AddSolutionComponent reported success but created no solutioncomponent row: this "
+              + $"{typeName} is already covered by table '{owner}', which is in '{solutionUniqueName}' "
+              + "with rootcomponentbehavior 0 (include subcomponents). Subcomponents of such a table "
+              + "travel with it and never get a membership row of their own. Nothing further to do."
+            : candidates.Count > 0
+                ? $"AddSolutionComponent reported success but created no solutioncomponent row. That is "
+                  + "expected when the component is covered by a table held with rootcomponentbehavior 0 "
+                  + $"(include subcomponents) — '{solutionUniqueName}' holds {candidates.Count} such "
+                  + "table(s), listed in coveringRootComponents. If the component does not belong to any "
+                  + "of them, verify componentId and componentType: the add then really did nothing."
+                : "AddSolutionComponent reported success but created no solutioncomponent row, and "
+                  + $"'{solutionUniqueName}' holds no table with rootcomponentbehavior 0 that could cover "
+                  + "it. The add most likely did nothing — verify componentId and componentType.";
+
+        return new AddComponentResult(
+            Success: owner is not null,
+            SolutionUniqueName: solutionUniqueName,
+            ComponentId: componentId,
+            ComponentType: componentType,
+            ComponentTypeName: typeName,
+            ExplicitMembership: false,
+            SolutionComponentId: null,
+            Note: note,
+            CoveringRootComponents: candidates.Count > 0 ? candidates : null);
     }
 
-    public async Task RemoveComponentAsync(
+    /// <summary>
+    /// Remove a component from a solution.
+    /// </summary>
+    /// <remarks>
+    /// The Web API action does <b>not</b> take a <c>ComponentId</c> the way the SDK message does — its
+    /// documented parameters are <c>SolutionComponent</c> (an entity reference, hence the
+    /// <c>@odata.type</c> and the nested id), <c>ComponentType</c> and <c>SolutionUniqueName</c>.
+    /// Sending <c>ComponentId</c> fails with
+    /// <c>0x80048d19 … The parameter 'ComponentId' … is not a valid parameter for the operation</c>.
+    /// <para>
+    /// Which GUID belongs in <c>solutioncomponentid</c> is documented contradictorily: the SDK
+    /// property reference calls it "the primary key for the SolutionComponent entity", while the
+    /// official ALM sample passes an <c>EntityMetadata.MetadataId</c>. Empirically the component's own
+    /// <c>objectid</c> (a table's or column's MetadataId) is what works; the membership row's
+    /// <c>solutioncomponentid</c> fails with
+    /// <c>0x8004f021 Cannot find solution component</c>. That is why this method takes the objectid,
+    /// and why it checks the membership up front — an unhelpful platform error for "not a member"
+    /// becomes a sentence that says so.
+    /// </para>
+    /// </remarks>
+    public async Task<RemoveComponentResult> RemoveComponentAsync(
         string orgUrl,
         string solutionUniqueName,
         Guid componentId,
         int componentType,
         CancellationToken ct = default)
     {
-        var parameters = new
+        var typeName = MapComponentType(componentType);
+        var solutionId = await ResolveSolutionIdAsync(orgUrl, solutionUniqueName, ct);
+        var before = await FindMembershipAsync(orgUrl, solutionId, componentId, componentType, ct);
+
+        if (before is null)
         {
-            ComponentId = componentId,
-            ComponentType = componentType,
-            SolutionUniqueName = solutionUniqueName
+            var (owner, candidates) = await FindCoveringRootsAsync(
+                orgUrl, solutionId, componentId, componentType, ct);
+
+            var missingNote = owner is not null
+                ? $"No solutioncomponent row for this {typeName} in '{solutionUniqueName}' — it is "
+                  + $"covered by table '{owner}', held with rootcomponentbehavior 0 (include "
+                  + "subcomponents). A covered subcomponent cannot be removed on its own; change the "
+                  + "table's behaviour or remove the table."
+                : $"No solutioncomponent row for {typeName} {componentId:D} in "
+                  + $"'{solutionUniqueName}' — nothing to remove. Note that componentId must be the "
+                  + "component's own objectid (for a table or column its MetadataId), not the "
+                  + "solutioncomponentid of the membership row.";
+
+            return new RemoveComponentResult(
+                Success: false,
+                SolutionUniqueName: solutionUniqueName,
+                ComponentId: componentId,
+                ComponentType: componentType,
+                ComponentTypeName: typeName,
+                Removed: false,
+                Note: missingNote,
+                CoveringRootComponents: candidates.Count > 0 ? candidates : null);
+        }
+
+        // An anonymous type cannot carry the "@odata.type" annotation, so the payload is built as
+        // dictionaries. Dictionary keys bypass the camelCase naming policy and stay verbatim, which
+        // the case-sensitive action parameters require.
+        var parameters = new Dictionary<string, object?>
+        {
+            ["SolutionComponent"] = new Dictionary<string, object?>
+            {
+                ["@odata.type"] = "Microsoft.Dynamics.CRM.solutioncomponent",
+                ["solutioncomponentid"] = componentId.ToString("D")
+            },
+            ["ComponentType"] = componentType,
+            ["SolutionUniqueName"] = solutionUniqueName
         };
 
         await _client.ExecuteActionAsync(orgUrl, "RemoveSolutionComponent", parameters, ct);
+
+        var after = await FindMembershipAsync(orgUrl, solutionId, componentId, componentType, ct);
+        var removed = after is null;
+
+        return new RemoveComponentResult(
+            Success: removed,
+            SolutionUniqueName: solutionUniqueName,
+            ComponentId: componentId,
+            ComponentType: componentType,
+            ComponentTypeName: typeName,
+            Removed: removed,
+            Note: removed
+                ? null
+                : "RemoveSolutionComponent returned success but the membership row is still there.");
     }
 
     /// <summary>
@@ -916,5 +1262,62 @@ public sealed class SolutionService
             _logger.LogDebug(ex, "Could not resolve solutioncomponentdefinitions for component-type labels.");
         }
         return map;
+    }
+
+    /// <summary>
+    /// Compare each control in the imported zip against the version the environment stores now.
+    /// </summary>
+    private async Task<IReadOnlyList<CustomControlVersionCheck>> CheckCustomControlVersionsAsync(
+        string orgUrl,
+        IReadOnlyList<PcfControlManifest> manifests,
+        CancellationToken ct)
+    {
+        var results = new List<CustomControlVersionCheck>(manifests.Count);
+
+        foreach (var manifest in manifests)
+        {
+            string? storedName = null;
+            string? storedVersion = null;
+            try
+            {
+                var suffix = manifest.QualifiedName.Replace("'", "''");
+                var rows = await _client.GetAllPagesAsync(
+                    orgUrl,
+                    $"api/data/v9.2/customcontrols?$select=name,version&$filter=endswith(name,'{suffix}')",
+                    ct: ct);
+
+                // Prefer the "<prefix>_<namespace>.<constructor>" hit; endswith alone could also
+                // match a longer namespace that happens to end the same way.
+                var match = rows.FirstOrDefault(r =>
+                    (r.GetStringOrNull("name") ?? string.Empty)
+                        .EndsWith("_" + manifest.QualifiedName, StringComparison.OrdinalIgnoreCase));
+                if (match.ValueKind != JsonValueKind.Object && rows.Count == 1)
+                    match = rows[0];
+
+                if (match.ValueKind == JsonValueKind.Object)
+                {
+                    storedName = match.GetStringOrNull("name");
+                    storedVersion = match.GetStringOrNull("version");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(
+                    ex, "Could not read the stored version of custom control {Control}.", manifest.QualifiedName);
+            }
+
+            bool? matches = storedVersion is null || manifest.Version is null
+                ? null
+                : string.Equals(storedVersion, manifest.Version, StringComparison.OrdinalIgnoreCase);
+
+            results.Add(new CustomControlVersionCheck(
+                ManifestName: manifest.QualifiedName,
+                StoredName: storedName,
+                ManifestVersion: manifest.Version,
+                StoredVersion: storedVersion,
+                Matches: matches));
+        }
+
+        return results;
     }
 }

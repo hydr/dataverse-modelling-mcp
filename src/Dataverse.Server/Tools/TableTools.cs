@@ -78,7 +78,12 @@ public sealed class TableTools
     }
 
     [McpServerTool(Name = "table_update")]
-    [Description("Update metadata properties of an existing Dataverse table.")]
+    [Description("Update metadata properties of an existing Dataverse table. Pass only the " +
+                 "properties you want to change: the metadata endpoint rejects PATCH and only " +
+                 "accepts a PUT of the complete definition, so the tool reads the current " +
+                 "definition and lays your properties over it. Managed properties may be given as " +
+                 "a plain true/false; note that IsValidForAdvancedFind is a plain boolean on a " +
+                 "TABLE (unlike on a column).")]
     public static async Task<string> TableUpdate(
         TableService svc,
         ConfigProvider config,
@@ -91,8 +96,13 @@ public sealed class TableTools
             var props = JsonSerializer.Deserialize<Dictionary<string, object?>>(propertiesJson)
                         ?? throw new ArgumentException("propertiesJson could not be parsed.");
             var env = config.GetActiveEnvironment();
-            await svc.UpdateAsync(env.OrgUrl, logicalName, props, ct);
-            return JsonSerializer.Serialize(new { success = true, logicalName });
+            var normalized = await svc.UpdateAsync(env.OrgUrl, logicalName, props, ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                logicalName,
+                normalizedManagedProperties = normalized.Count > 0 ? normalized : null
+            }, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -101,7 +111,12 @@ public sealed class TableTools
     }
 
     [McpServerTool(Name = "column_add")]
-    [Description("Add a new column (attribute) to a Dataverse table.")]
+    [Description("Add a new column (attribute) to a Dataverse table. Managed properties " +
+                 "(IsValidForAdvancedFind, IsAuditEnabled, IsCustomizable, IsRenameable, " +
+                 "CanModifyAdditionalSettings, IsGlobalFilterEnabled, IsSortableEnabled, " +
+                 "RequiredLevel) may be given as a plain true/false or string — they are rewritten " +
+                 "into the BooleanManagedProperty object the metadata endpoint requires, and the " +
+                 "result lists what was rewritten under normalizedManagedProperties.")]
     public static async Task<string> ColumnAdd(
         TableService svc,
         ConfigProvider config,
@@ -114,8 +129,13 @@ public sealed class TableTools
             var attribute = JsonSerializer.Deserialize<Dictionary<string, object?>>(attributeJson)
                             ?? throw new ArgumentException("attributeJson could not be parsed.");
             var env = config.GetActiveEnvironment();
-            await svc.AddColumnAsync(env.OrgUrl, tableLogicalName, attribute, ct);
-            return JsonSerializer.Serialize(new { success = true, tableLogicalName });
+            var normalized = await svc.AddColumnAsync(env.OrgUrl, tableLogicalName, attribute, ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                tableLogicalName,
+                normalizedManagedProperties = normalized.Count > 0 ? normalized : null
+            }, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -124,7 +144,12 @@ public sealed class TableTools
     }
 
     [McpServerTool(Name = "column_update")]
-    [Description("Update properties of a column on a Dataverse table.")]
+    [Description("Update properties of a column on a Dataverse table. Pass only the properties you " +
+                 "want to change: the metadata endpoint rejects PATCH and only accepts a PUT of the " +
+                 "complete definition, so the tool reads the current definition and lays your " +
+                 "properties over it. The overlay is shallow — a whole object you pass (e.g. " +
+                 "DisplayName) replaces the old one. Managed properties may be given as a plain " +
+                 "true/false or string and are reported under normalizedManagedProperties.")]
     public static async Task<string> ColumnUpdate(
         TableService svc,
         ConfigProvider config,
@@ -138,8 +163,15 @@ public sealed class TableTools
             var props = JsonSerializer.Deserialize<Dictionary<string, object?>>(propertiesJson)
                         ?? throw new ArgumentException("propertiesJson could not be parsed.");
             var env = config.GetActiveEnvironment();
-            await svc.UpdateColumnAsync(env.OrgUrl, tableLogicalName, columnLogicalName, props, ct);
-            return JsonSerializer.Serialize(new { success = true, tableLogicalName, columnLogicalName });
+            var normalized = await svc.UpdateColumnAsync(
+                env.OrgUrl, tableLogicalName, columnLogicalName, props, ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                tableLogicalName,
+                columnLogicalName,
+                normalizedManagedProperties = normalized.Count > 0 ? normalized : null
+            }, JsonOptions);
         }
         catch (Exception ex)
         {

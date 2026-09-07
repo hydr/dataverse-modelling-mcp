@@ -212,39 +212,145 @@ public sealed class TableService
         await _client.PostAsync(orgUrl, "api/data/v9.2/EntityDefinitions", body, ct);
     }
 
-    public async Task UpdateAsync(
+    /// <summary>
+    /// Labels in languages the payload does not mention are kept instead of being dropped by the
+    /// replace. Without this a round-trip through one locale silently deletes the others.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> MergeLabels =
+        new Dictionary<string, string> { ["MSCRM.MergeLabels"] = "true" };
+
+    /// <summary>Update table metadata.</summary>
+    /// <returns>
+    /// The managed properties that were rewritten from a plain value into their object shape — see
+    /// <see cref="ManagedPropertyNormalizer"/>.
+    /// </returns>
+    public async Task<IReadOnlyList<string>> UpdateAsync(
         string orgUrl,
         string logicalName,
         Dictionary<string, object?> properties,
         CancellationToken ct = default)
     {
-        await _client.PatchAsync(orgUrl, $"api/data/v9.2/EntityDefinitions(LogicalName='{logicalName}')", properties, ct);
+        var normalized = ManagedPropertyNormalizer.Normalize(properties, ManagedPropertyScope.Entity);
+
+        var current = await ReadDefinitionAsync(
+            orgUrl, $"api/data/v9.2/EntityDefinitions(LogicalName='{logicalName}')", ct);
+        var (body, metadataId) = MergeIntoDefinition(current, properties);
+
+        await _client.PutAsync(
+            orgUrl, $"api/data/v9.2/EntityDefinitions({metadataId:D})", body, MergeLabels, ct);
+
+        return normalized;
     }
 
-    public async Task AddColumnAsync(
+    /// <summary>Add a column to a table.</summary>
+    /// <returns>The managed properties that were rewritten into their object shape.</returns>
+    public async Task<IReadOnlyList<string>> AddColumnAsync(
         string orgUrl,
         string tableLogicalName,
         Dictionary<string, object?> attributeDefinition,
         CancellationToken ct = default)
     {
+        var normalized = ManagedPropertyNormalizer.Normalize(
+            attributeDefinition, ManagedPropertyScope.Attribute);
+
         await _client.PostAsync(
             orgUrl,
             $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes",
             attributeDefinition,
             ct);
+
+        return normalized;
     }
 
-    public async Task UpdateColumnAsync(
+    /// <summary>Update a column's metadata.</summary>
+    /// <returns>The managed properties that were rewritten into their object shape.</returns>
+    public async Task<IReadOnlyList<string>> UpdateColumnAsync(
         string orgUrl,
         string tableLogicalName,
         string columnLogicalName,
         Dictionary<string, object?> properties,
         CancellationToken ct = default)
     {
-        await _client.PatchAsync(
+        var normalized = ManagedPropertyNormalizer.Normalize(properties, ManagedPropertyScope.Attribute);
+
+        var current = await ReadDefinitionAsync(
             orgUrl,
-            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes(LogicalName='{columnLogicalName}')",
-            properties,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')"
+            + $"/Attributes(LogicalName='{columnLogicalName}')",
             ct);
+        var (body, metadataId) = MergeIntoDefinition(current, properties);
+
+        await _client.PutAsync(
+            orgUrl,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes({metadataId:D})",
+            body,
+            MergeLabels,
+            ct);
+
+        return normalized;
+    }
+
+    /// <summary>
+    /// Read a metadata definition as a plain property bag, ready to be merged and written back.
+    /// </summary>
+    private async Task<Dictionary<string, JsonElement>> ReadDefinitionAsync(
+        string orgUrl,
+        string relativeUrl,
+        CancellationToken ct)
+    {
+        var raw = await _client.GetRawAsync(orgUrl, relativeUrl, ct: ct);
+        using var doc = JsonDocument.Parse(raw);
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException($"Unexpected metadata response for {relativeUrl}.");
+
+        var bag = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var property in doc.RootElement.EnumerateObject())
+        {
+            // The context URL describes the response, not the definition — echoing it back is
+            // meaningless and Dataverse has no use for it.
+            if (property.NameEquals("@odata.context"))
+                continue;
+            bag[property.Name] = property.Value.Clone();
+        }
+
+        return bag;
+    }
+
+    /// <summary>
+    /// Lay the caller's properties over the current definition and pull out the MetadataId.
+    /// </summary>
+    /// <remarks>
+    /// A metadata update is a full replace: the endpoint takes the whole definition and keeps only
+    /// what the body contains. Sending just the changed properties would therefore wipe everything
+    /// else, so the current definition is read first and the caller's values are laid over it.
+    /// The overlay is deliberately shallow — a caller who passes <c>DisplayName</c> means to replace
+    /// that whole object, not to merge into it.
+    /// <para>
+    /// <c>@odata.type</c> survives from the current definition unless the caller sets it: for a
+    /// column it names the concrete metadata type (e.g. <c>StringAttributeMetadata</c>) and the
+    /// request is rejected without it.
+    /// </para>
+    /// </remarks>
+    private static (Dictionary<string, object?> Body, Guid MetadataId) MergeIntoDefinition(
+        Dictionary<string, JsonElement> current,
+        Dictionary<string, object?> properties)
+    {
+        if (!current.TryGetValue("MetadataId", out var idElement)
+            || idElement.ValueKind != JsonValueKind.String
+            || !Guid.TryParse(idElement.GetString(), out var metadataId))
+        {
+            throw new InvalidOperationException(
+                "The metadata definition carries no MetadataId — cannot address it for the update.");
+        }
+
+        var body = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, value) in current)
+            body[key] = value;
+
+        foreach (var (key, value) in properties)
+            body[key] = value;
+
+        return (body, metadataId);
     }
 }

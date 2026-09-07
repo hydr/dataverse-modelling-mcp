@@ -24,6 +24,70 @@ und zu veraendern. Default-Vorgehen: erst lesen, dann aendern.
 - Neue Tabellen sollten in einer dedizierten Standard-Solution landen, nicht im Default Solution.
 - `picklist`-Felder (Choices) global anlegen, nicht lokal pro Tabelle, wenn Wiederverwendung absehbar.
 
+## Fallen, die Zeit kosten
+
+Alles hier gegen eine echte Umgebung oder die Microsoft-Doku belegt.
+
+### Managed Properties sind keine Booleans
+
+`IsValidForAdvancedFind`, `IsAuditEnabled`, `IsCustomizable`, `IsRenameable`,
+`CanModifyAdditionalSettings`, `IsGlobalFilterEnabled`, `IsSortableEnabled` und `RequiredLevel` sind
+auf einer **Spalte** Managed Properties und erwarten ein Objekt. `column_add`, `column_update` und
+`table_update` normalisieren einen nackten Wert inzwischen selbst und melden das unter
+`normalizedManagedProperties` — die Tabelle mit den `ManagedPropertyLogicalName`-Werten steht in
+[`docs/tools/tables.md`](../../docs/tools/tables.md#managed-properties).
+
+Der Unterschied, der leicht übersehen wird: `IsValidForAdvancedFind` ist auf einer **Spalte** eine
+Managed Property, auf einer **Tabelle** ein gewöhnliches `Edm.Boolean`.
+
+### `componentId` ist immer die `objectid`, nie die `solutioncomponentid`
+
+Für Tabellen und Spalten also die `MetadataId`. Die `solutioncomponentid` ist der Primärschlüssel der
+Mitgliedschaftszeile und führt in `solution_remove_component` zu
+`0x8004f021 Cannot find solution component`. `solution_get` liefert beides getrennt.
+
+### `rootcomponentbehavior` entscheidet, welche Solution die Änderung trägt
+
+0 = Unterkomponenten einbinden (Formulare und Spalten reisen automatisch mit und bekommen **keine**
+eigene Mitgliedschaftszeile), 1 = nicht einbinden, 2 = nur als Shell. Dieselbe Tabelle liegt
+regelmäßig in mehreren Solutions mit unterschiedlichem Verhalten — deshalb ist „die Spalte der
+Solution hinzufügen" in der einen ein No-op und in der nächsten nötig. `solution_get` gibt den Wert
+pro Root-Komponente aus, `solution_add_component` sagt hinterher, ob wirklich eine Zeile entstanden
+ist.
+
+### Ein PCF-Update braucht einen Versionssprung
+
+Ein Solution-Import übernimmt ein Code-Component nur, wenn die Version im `ControlManifest`
+**höher** ist als die gespeicherte — und meldet in beiden Fällen Erfolg. `solution_import` vergleicht
+das nach dem Import und warnt (`customControlWarnings`). `pac pcf push` umgeht die Versionsprüfung
+bewusst, deshalb „funktioniert" es in genau dieser Lage.
+
+### `systemform` hat kein `modifiedon`
+
+Ein `$select=modifiedon` quittiert Dataverse mit
+`0x80060888 Could not find a property named 'modifiedon'`. `modifiedby` und `_modifiedby_value`
+fehlen ebenfalls. Zum Vergleichen von Ständen gibt es `versionnumber` (BigInt), `version`,
+`overwritetime` und `publishedon`.
+
+### Ein Rücklesen direkt nach dem Schreiben beweist nichts
+
+Ein Schreibvorgang auf Formulare oder Metadaten quittiert mit 204, aber ein unmittelbar folgendes
+`GET` kann noch den alten Stand liefern — inklusive alter `versionnumber`. **Ein Rücklesen ohne
+Wartezeit ist also kein Beweis dafür, dass der Schreibvorgang verworfen wurde.**
+
+Wie lange das anhält, ist unklar. Belegt sind zwei Beobachtungen, die sich nicht deckten:
+
+- In einer echten Session blieb der alte Stand bestehen, bis `publish_customizations` lief
+  (Formular-`formxml` und `versionnumber`, sowie eine gelöschte Spalte, die in
+  `EntityDefinitions/Attributes` weiter auftauchte).
+- Bei einem `PUT` auf ein Attribut war der neue Wert zunächst nicht sichtbar, wenige Sekunden später
+  aber schon — **ohne** dass ein Publish dafür nötig war.
+
+Die Ursachenschicht ist damit offen; plausibel ist Eventual Consistency im Metadaten-Cache. Praktisch
+heißt das: nach einem Schreibvorgang kurz warten und erneut lesen, bevor man ihn für gescheitert
+erklärt. Ein `publish_customizations` ist davon unabhängig weiterhin nötig, damit Clients die
+Änderung überhaupt sehen — kein Tool publiziert automatisch.
+
 ## Lokales MCP
 
 Dieses MCP laeuft als lokale C#-Konsolenanwendung. Die Binary wird nicht direkt

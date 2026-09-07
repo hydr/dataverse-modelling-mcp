@@ -212,39 +212,59 @@ public sealed class TableService
         await _client.PostAsync(orgUrl, "api/data/v9.2/EntityDefinitions", body, ct);
     }
 
-    public async Task UpdateAsync(
+    /// <summary>Update table metadata.</summary>
+    /// <returns>
+    /// The managed properties that were rewritten from a plain value into their object shape — see
+    /// <see cref="ManagedPropertyNormalizer"/>.
+    /// </returns>
+    public async Task<IReadOnlyList<string>> UpdateAsync(
         string orgUrl,
         string logicalName,
         Dictionary<string, object?> properties,
         CancellationToken ct = default)
     {
+        var normalized = ManagedPropertyNormalizer.Normalize(properties, ManagedPropertyScope.Entity);
         await _client.PatchAsync(orgUrl, $"api/data/v9.2/EntityDefinitions(LogicalName='{logicalName}')", properties, ct);
+        return normalized;
     }
 
-    public async Task AddColumnAsync(
+    /// <summary>Add a column to a table.</summary>
+    /// <returns>The managed properties that were rewritten into their object shape.</returns>
+    public async Task<IReadOnlyList<string>> AddColumnAsync(
         string orgUrl,
         string tableLogicalName,
         Dictionary<string, object?> attributeDefinition,
         CancellationToken ct = default)
     {
+        var normalized = ManagedPropertyNormalizer.Normalize(
+            attributeDefinition, ManagedPropertyScope.Attribute);
+
         await _client.PostAsync(
             orgUrl,
             $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes",
             attributeDefinition,
             ct);
+
+        return normalized;
     }
 
-    public async Task UpdateColumnAsync(
+    /// <summary>Update a column's metadata.</summary>
+    /// <returns>The managed properties that were rewritten into their object shape.</returns>
+    public async Task<IReadOnlyList<string>> UpdateColumnAsync(
         string orgUrl,
         string tableLogicalName,
         string columnLogicalName,
         Dictionary<string, object?> properties,
         CancellationToken ct = default)
     {
+        var normalized = ManagedPropertyNormalizer.Normalize(properties, ManagedPropertyScope.Attribute);
+
         await _client.PatchAsync(
             orgUrl,
             $"api/data/v9.2/EntityDefinitions(LogicalName='{tableLogicalName}')/Attributes(LogicalName='{columnLogicalName}')",
             properties,
             ct);
+
+        return normalized;
     }
 }

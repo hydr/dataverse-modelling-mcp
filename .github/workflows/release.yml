@@ -4,6 +4,13 @@ on:
   push:
     tags: ['v*']
 
+# Creating the release and uploading its assets needs write access to repository
+# contents. Declared here rather than relying on the repository default, which is
+# read-only for new repositories - the job then builds fine and fails at the last
+# step with 403 'Resource not accessible by integration'.
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest

@@ -30,6 +30,42 @@ Das Projekt liegt in zwei Repos, und beide Bäume sollen inhaltlich gleich sein:
 also immer von dort. Ein Tag im privaten Repo würde ein zweites, ungenutztes Release derselben
 Version erzeugen — dort also nicht taggen.
 
+## Keine Firmen-interna im öffentlichen Repo
+
+Das öffentliche Repo ist bewusst anonymisiert (`#26`, `#35`). **Kein Bezeichner aus einer echten
+Umgebung darf hinein** — weder in Doku, Code-Kommentare und Tool-Beschreibungen noch in Tests,
+Commit-Messages oder PR-Texte. Das ist schon einmal passiert (v1.19.0 trug 77 `xv_*`- und 46
+`Crossvertise*`-Vorkommen, bereinigt in 1.20.0), und ein Release ist danach nicht mehr
+zurückzuholen.
+
+| Statt | Nimm |
+|---|---|
+| Publisher-Prefix einer echten Org, z. B. `xv_` | `sample_` |
+| Echte Solution-Namen | `Contoso…` (z. B. `ContosoForms`, `ContosoOrders`) |
+| Echte Tabellen und Spalten | `sample_widget`, `sample_score`, … |
+| Echte Namespaces von Code-Components | `Contoso.DocumentViewer` |
+| GUIDs aus einer Umgebung | erkennbar synthetische (`11111111-1111-1111-1111-111111110001`) |
+| Echte `versionnumber`-Werte, Abhängigkeitszahlen, Solution-Landschaften | synthetische Werte oder gar keine Zahl |
+
+Standard-Dataverse-Tabellen (`account`, `contact`, `invoice`, `salesorder`, `product`) sind
+unverfänglich und bleiben. Ebenso die **Publisher-Identität** des Repos in `LICENSE`, `SECURITY.md`,
+`README.md`, `.claude-plugin/plugin.json` und `Dataverse.Setup.csproj` — die ist gewollt.
+
+Vor dem Commit prüfen:
+
+```bash
+git grep -I -i -E "xv_|crossvertise|xvdev|xvstaging" -- docs src tests skills README.md
+```
+
+Treffer außerhalb der oben genannten Identitätsdateien sind ein Fehler. Dasselbe gilt für
+`git log -p` auf die eigenen Commits, weil Commit-Messages nicht mehr korrigierbar sind, sobald
+getaggt wurde.
+
+Für Live-Tests gegen eine echte Umgebung heißt das: **Ergebnisse anonymisieren, bevor sie in eine
+Datei wandern.** Die Testumgebung selbst darf natürlich echt sein — nur ihre Bezeichner gehören
+nicht ins Repo. Eine Ausnahme ist der vorbestehende Integrationstest
+`SolutionIntegrationTests.cs`, der eine echte MetadataId als Fixture braucht.
+
 ## Skills
 
 Skills gehören nach **`skills/`** — dieses Verzeichnis wird mit dem Plugin ausgeliefert und ist damit

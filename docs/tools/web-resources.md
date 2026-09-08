@@ -80,10 +80,10 @@ Finds where a web resource is referenced — ask this before deleting one.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `name` | string | Yes | Web resource name (e.g. `xv_purchaseinvoice_js`) or its GUID |
+| `name` | string | Yes | Web resource name (e.g. `sample_order_js`) or its GUID |
 | `tables` | string | No | Comma-separated table logical names whose **merged** ribbon should also be searched |
 
-**Example prompt:** "Is xv_msalbrowsermin still used anywhere?"
+**Example prompt:** "Is sample_helper_js still used anywhere?"
 
 No single place records where a web resource is used, so the answer is assembled from several:
 

@@ -53,14 +53,14 @@ the component's name appears at the cell where it lives.
 
 ```json
 {
-  "customControlName": "xv_Crossvertise.SharePointDocumentViewer",
-  "dataFieldName": "xv_documentviewer",
+  "customControlName": "sample_Contoso.DocumentViewer",
+  "dataFieldName": "sample_documentviewer",
   "label": "Dokumente",
   "rowSpan": 8,
   "colSpan": 2,
   "parameters": {
     "authMode": { "value": "auto", "static": true, "type": "Enum" },
-    "boundField": { "value": "xv_documentviewer", "static": false }
+    "boundField": { "value": "sample_documentviewer", "static": false }
   }
 }
 ```
@@ -94,11 +94,11 @@ Each of these produces an error a long way from its cause. The first three were 
 forms the Maker portal generated; the fourth is as reported from a live session.
 
 **1. A code component's name in FormXML carries the publisher prefix.** The manifest says
-`Crossvertise.SharePointDocumentViewer`; `customcontrol.name` — and therefore FormXML — says
-`xv_Crossvertise.SharePointDocumentViewer`. The manifest name alone gives:
+`Contoso.DocumentViewer`; `customcontrol.name` — and therefore FormXML — says
+`sample_Contoso.DocumentViewer`. The manifest name alone gives:
 
 ```
-0x80160007 Custom control with name Crossvertise.SharePointDocumentViewer does not exist.
+0x80160007 Custom control with name Contoso.DocumentViewer does not exist.
 ```
 
 **2. The control description must declare all three form factors** (0 web, 1 tablet, 2 phone), or
@@ -112,10 +112,20 @@ with `forControl`. An unbound control additionally carries `isunbound="true"`.
 
 ```
 0x80160051 Property boundField is bound to a non-existent attribute
-xv_documentviewer in current entity SalesOrder
+sample_documentviewer in current entity SalesOrder
 ```
 
 `column_add` takes a `publish` flag for exactly this sequence.
+
+**5. A component whose manifest declares a required bound property cannot go on a form unbound.**
+Read the manifest (`customcontrol.manifest`) and look for a property with `usage="bound"` and
+`required="true"`; pass `dataFieldName` plus the matching parameter. Otherwise:
+
+```
+0x80160032 Property boundField is required, but the declaration is missing.
+```
+
+The platform validates before writing, so a form that fails any of these is left untouched.
 
 ---
 

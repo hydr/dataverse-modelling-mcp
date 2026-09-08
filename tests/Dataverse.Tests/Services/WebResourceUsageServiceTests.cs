@@ -23,8 +23,8 @@ using NUnit.Framework;
 public sealed class WebResourceUsageServiceTests
 {
     private const string OrgUrl = "https://test.crm4.dynamics.com";
-    private static readonly Guid WebResourceId = Guid.Parse("beb1af8b-1c05-f011-bae3-7c1e52873506");
-    private static readonly Guid FormId = Guid.Parse("2c488b41-1405-f011-bae3-7c1e52873506");
+    private static readonly Guid WebResourceId = Guid.Parse("44444444-4444-4444-4444-444444440001");
+    private static readonly Guid FormId = Guid.Parse("33333333-3333-3333-3333-333333330002");
 
     private Mock<HttpMessageHandler> _handlerMock = null!;
     private WebResourceUsageService _svc = null!;
@@ -80,7 +80,7 @@ public sealed class WebResourceUsageServiceTests
                     {
                         value = new[]
                         {
-                            new { webresourceid = WebResourceId.ToString(), name = "xv_purchaseinvoice_js" }
+                            new { webresourceid = WebResourceId.ToString(), name = "sample_order_js" }
                         }
                     });
                 }
@@ -94,7 +94,7 @@ public sealed class WebResourceUsageServiceTests
                             {
                                 formid = FormId.ToString(),
                                 name = "Informationen",
-                                objecttypecode = "xv_purchaseinvoice",
+                                objecttypecode = "sample_orderline",
                                 type = 2
                             }
                         }
@@ -117,14 +117,14 @@ public sealed class WebResourceUsageServiceTests
     {
         Route();
 
-        var report = await _svc.FindUsagesAsync(OrgUrl, "xv_purchaseinvoice_js");
+        var report = await _svc.FindUsagesAsync(OrgUrl, "sample_order_js");
 
         Assert.Multiple(() =>
         {
             Assert.That(report.IsUsed, Is.True);
             Assert.That(report.Forms, Has.Count.EqualTo(1));
             Assert.That(report.Forms[0].Name, Is.EqualTo("Informationen"));
-            Assert.That(report.Forms[0].Context, Is.EqualTo("xv_purchaseinvoice"));
+            Assert.That(report.Forms[0].Context, Is.EqualTo("sample_orderline"));
             Assert.That(report.Summary, Does.Contain("1 form(s)"));
         });
     }
@@ -138,7 +138,7 @@ public sealed class WebResourceUsageServiceTests
     {
         Route();
 
-        await _svc.FindUsagesAsync(OrgUrl, "xv_purchaseinvoice_js");
+        await _svc.FindUsagesAsync(OrgUrl, "sample_order_js");
 
         var call = _urls.Single(u => u.Contains("appactions", StringComparison.Ordinal));
         Assert.Multiple(() =>
@@ -158,7 +158,7 @@ public sealed class WebResourceUsageServiceTests
     {
         Route();
 
-        var report = await _svc.FindUsagesAsync(OrgUrl, "xv_purchaseinvoice_js");
+        var report = await _svc.FindUsagesAsync(OrgUrl, "sample_order_js");
 
         Assert.That(
             report.NotSearched.Any(n => n.Contains("merged", StringComparison.OrdinalIgnoreCase)),
@@ -170,7 +170,7 @@ public sealed class WebResourceUsageServiceTests
     {
         Route();
 
-        var report = await _svc.FindUsagesAsync(OrgUrl, "xv_purchaseinvoice_js", ["xv_purchaseinvoice"]);
+        var report = await _svc.FindUsagesAsync(OrgUrl, "sample_order_js", ["sample_orderline"]);
 
         Assert.That(
             report.NotSearched.Any(n => n.Contains("merged", StringComparison.OrdinalIgnoreCase)),
@@ -183,7 +183,7 @@ public sealed class WebResourceUsageServiceTests
     {
         Route();
 
-        var report = await _svc.FindUsagesAsync(OrgUrl, "xv_purchaseinvoice_js", ["xv_purchaseinvoice"]);
+        var report = await _svc.FindUsagesAsync(OrgUrl, "sample_order_js", ["sample_orderline"]);
 
         Assert.That(
             report.NotSearched.Any(n => n.Contains("base64", StringComparison.OrdinalIgnoreCase)),

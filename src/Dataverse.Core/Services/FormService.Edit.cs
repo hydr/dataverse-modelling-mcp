@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 /// </summary>
 /// <param name="CustomControlName">
 /// The <c>customcontrol.name</c> as stored, <b>including</b> the publisher prefix — the manifest's
-/// <c>Crossvertise.SharePointDocumentViewer</c> is <c>xv_Crossvertise.SharePointDocumentViewer</c>
+/// <c>Contoso.DocumentViewer</c> is <c>sample_Contoso.DocumentViewer</c>
 /// here. Null for a plain field control.
 /// </param>
 /// <param name="DataFieldName">

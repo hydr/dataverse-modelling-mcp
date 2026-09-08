@@ -88,7 +88,7 @@ gegen eine echte Umgebung gemessen:
 | Schreibvorgang | Rücklesen ohne Publish |
 |---|---|
 | `systemform.formxml` (`PATCH`, HTTP 204) | **wird nie aktuell** — nach 120 s noch alte `formxml` und alte `versionnumber` |
-| dasselbe Formular nach `publish_customizations` | sofort aktuell, `versionnumber` sprang 55888235 → 64095408 |
+| dasselbe Formular nach `publish_customizations` | sofort aktuell, `versionnumber` sprang 12345678 → 23456789 |
 | Metadaten anlegen | sichtbar nach ~3 s |
 | Metadaten ändern (`PUT`) | aktuell nach ~3 s |
 | Metadaten löschen | verschwunden nach ~16 s |

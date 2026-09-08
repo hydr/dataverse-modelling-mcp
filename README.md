@@ -188,6 +188,7 @@ parts of the docs above surface without anyone having to know they exist.
 | [`solution-pipelines`](skills/solution-pipelines/SKILL.md) | promoting a solution dev → staging → prod |
 | [`modeling-patterns`](skills/modeling-patterns/SKILL.md) | designing tables, columns or relationships |
 | [`command-bar-buttons`](skills/command-bar-buttons/SKILL.md) | adding, changing or debugging a button on a table's command bar |
+| [`form-authoring`](skills/form-authoring/SKILL.md) | seeing or changing what sits on a model-driven form, placing a code component |
 
 They ship in **`skills/`**, which travels with the plugin and is therefore active in every repo the
 plugin is installed in — as opposed to `.claude/skills/`, which would scope them to *this* repository,

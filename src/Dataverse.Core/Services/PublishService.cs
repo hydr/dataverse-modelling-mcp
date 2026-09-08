@@ -16,7 +16,7 @@ using Microsoft.Extensions.Logging;
 /// returns the published one, so a read straight after the write keeps returning the old XML and the
 /// old <c>versionnumber</c> indefinitely. Measured on a live org: still the old value after 120
 /// seconds, then current immediately after <c>PublishXml</c>, with <c>versionnumber</c> jumping from
-/// 55888235 to 64095408.
+/// 12345678 to 23456789.
 /// <para>
 /// Table and column metadata behaves differently and is <b>not</b> publish-gated for reading back:
 /// <c>EntityDefinitions</c> is eventually consistent and catches up on its own (measured: ~3s after

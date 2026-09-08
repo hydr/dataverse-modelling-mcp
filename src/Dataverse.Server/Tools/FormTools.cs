@@ -72,7 +72,7 @@ public sealed class FormTools
     [McpServerTool(Name = "form_add_control")]
     [Description("Add a control to a section of a form. For a code component (PCF) pass " +
                  "customControlName — the STORED customcontrol.name including the publisher prefix " +
-                 "(e.g. 'xv_Crossvertise.SharePointDocumentViewer'); the manifest name without the " +
+                 "(e.g. 'sample_Contoso.DocumentViewer'); the manifest name without the " +
                  "prefix fails with 0x80160007. The tool writes the generic custom-control classid, " +
                  "a uniqueid, and a controlDescription declaring all three form factors (a missing " +
                  "one makes the designer reject the form). For a plain field control pass " +
@@ -85,7 +85,7 @@ public sealed class FormTools
         [Description("GUID of the form")] string formId,
         [Description("Tab id, name or label")] string tab,
         [Description("Section id, name or label")] string section,
-        [Description("Control spec as JSON: {\"customControlName\":\"xv_Ns.Ctrl\", \"dataFieldName\":\"xv_col\", \"label\":\"Documents\", \"classId\":\"{...}\", \"rowSpan\":8, \"colSpan\":2, \"parameters\":{\"authMode\":{\"value\":\"auto\",\"static\":true,\"type\":\"Enum\"}}}. A parameter with static=false is bound to a column instead of being a fixed value.")] string controlJson,
+        [Description("Control spec as JSON: {\"customControlName\":\"sample_Ns.Ctrl\", \"dataFieldName\":\"sample_col\", \"label\":\"Documents\", \"classId\":\"{...}\", \"rowSpan\":8, \"colSpan\":2, \"parameters\":{\"authMode\":{\"value\":\"auto\",\"static\":true,\"type\":\"Enum\"}}}. A parameter with static=false is bound to a column instead of being a fixed value.")] string controlJson,
         [Description("true (default) to publish the table afterwards")] bool publish = true,
         CancellationToken ct = default)
     {

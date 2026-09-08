@@ -56,7 +56,7 @@ environment:
 | Write | Read-back without a publish |
 |---|---|
 | `systemform.formxml` (`PATCH`, HTTP 204) | **Never becomes current.** Still the old `formxml` and old `versionnumber` after 120 seconds. |
-| the same form after `publish_customizations` | current immediately; `versionnumber` jumped 55888235 → 64095408 |
+| the same form after `publish_customizations` | current immediately; `versionnumber` jumped 12345678 → 23456789 |
 | table/column metadata — create | visible after ~3 s |
 | table/column metadata — update (`PUT`) | current after ~3 s |
 | table/column metadata — delete | gone after ~16 s |

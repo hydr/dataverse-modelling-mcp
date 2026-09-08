@@ -340,8 +340,8 @@ public sealed class TableServiceTests
         Assert.That(capturedUri!.ToString(), Does.Contain("EntityDefinitions(LogicalName='sample_mcptest')/Attributes"));
     }
 
-    private static readonly Guid TableMetadataId = Guid.Parse("a0e66081-6242-f111-bec6-7c1e528730f7");
-    private static readonly Guid ColumnMetadataId = Guid.Parse("070a7c6e-6542-f111-bec6-7ced8d4a3a5d");
+    private static readonly Guid TableMetadataId = Guid.Parse("11111111-1111-1111-1111-111111110005");
+    private static readonly Guid ColumnMetadataId = Guid.Parse("11111111-1111-1111-1111-111111110003");
 
     private sealed record CapturedRequest(HttpMethod Method, string Url, string? Body, HttpRequestHeaders Headers);
 
@@ -380,8 +380,8 @@ public sealed class TableServiceTests
         ["@odata.context"] = "https://test.crm4.dynamics.com/api/data/v9.2/$metadata#…",
         ["@odata.type"] = "#Microsoft.Dynamics.CRM.StringAttributeMetadata",
         ["MetadataId"] = ColumnMetadataId.ToString(),
-        ["LogicalName"] = "xv_score",
-        ["SchemaName"] = "xv_score",
+        ["LogicalName"] = "sample_score",
+        ["SchemaName"] = "sample_score",
         ["MaxLength"] = 100,
         ["IsCustomAttribute"] = true,
         ["IsValidForAdvancedFind"] = new Dictionary<string, object?>
@@ -447,7 +447,7 @@ public sealed class TableServiceTests
         var captured = SetupMetadataRoundTrip(ColumnDefinition());
 
         await _svc.UpdateColumnAsync(
-            OrgUrl, "xv_mcptest", "xv_score",
+            OrgUrl, "sample_widget", "sample_score",
             new Dictionary<string, object?> { ["MaxLength"] = 250 },
             CancellationToken.None);
 
@@ -458,8 +458,8 @@ public sealed class TableServiceTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("MaxLength").GetInt32(), Is.EqualTo(250), "the caller's value wins");
-            Assert.That(root.GetProperty("SchemaName").GetString(), Is.EqualTo("xv_score"));
-            Assert.That(root.GetProperty("LogicalName").GetString(), Is.EqualTo("xv_score"));
+            Assert.That(root.GetProperty("SchemaName").GetString(), Is.EqualTo("sample_score"));
+            Assert.That(root.GetProperty("LogicalName").GetString(), Is.EqualTo("sample_score"));
 
             // Without the concrete metadata type the endpoint rejects an attribute write.
             Assert.That(
@@ -477,14 +477,14 @@ public sealed class TableServiceTests
         var captured = SetupMetadataRoundTrip(ColumnDefinition());
 
         await _svc.UpdateColumnAsync(
-            OrgUrl, "xv_mcptest", "xv_score",
+            OrgUrl, "sample_widget", "sample_score",
             new Dictionary<string, object?> { ["MaxLength"] = 250 },
             CancellationToken.None);
 
         var write = captured.Single(r => r.Method == HttpMethod.Put);
         Assert.That(
             write.Url,
-            Does.Contain($"EntityDefinitions(LogicalName='xv_mcptest')/Attributes({ColumnMetadataId:D})"));
+            Does.Contain($"EntityDefinitions(LogicalName='sample_widget')/Attributes({ColumnMetadataId:D})"));
     }
 
     /// <summary>
@@ -497,7 +497,7 @@ public sealed class TableServiceTests
         var captured = SetupMetadataRoundTrip(ColumnDefinition());
 
         await _svc.UpdateColumnAsync(
-            OrgUrl, "xv_mcptest", "xv_score",
+            OrgUrl, "sample_widget", "sample_score",
             new Dictionary<string, object?> { ["MaxLength"] = 250 },
             CancellationToken.None);
 
@@ -513,7 +513,7 @@ public sealed class TableServiceTests
         var captured = SetupMetadataRoundTrip(ColumnDefinition());
 
         await _svc.UpdateColumnAsync(
-            OrgUrl, "xv_mcptest", "xv_score",
+            OrgUrl, "sample_widget", "sample_score",
             new Dictionary<string, object?> { ["IsValidForAdvancedFind"] = false },
             CancellationToken.None);
 
@@ -538,7 +538,7 @@ public sealed class TableServiceTests
         SetupMetadataRoundTrip(ColumnDefinition());
 
         var normalized = await _svc.UpdateColumnAsync(
-            OrgUrl, "xv_mcptest", "xv_score",
+            OrgUrl, "sample_widget", "sample_score",
             new Dictionary<string, object?> { ["IsValidForAdvancedFind"] = false },
             CancellationToken.None);
 

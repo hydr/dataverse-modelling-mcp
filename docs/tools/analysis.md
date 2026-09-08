@@ -12,7 +12,7 @@ GUIDs and type codes it returns into names.
 | `objectId` | GUID string | Yes | The component's own `objectid` — for a table or column its `MetadataId`, the same id `solution_get` reports as `componentId` |
 | `componentType` | int | Yes | Component type code (1=Entity, 2=Attribute, 26=SavedQuery, 29=Workflow, 60=SystemForm, 61=WebResource, 66=CustomControl, 91=PluginAssembly) |
 
-**Example prompt:** "What depends on the xv_score column of xv_mcptest?"
+**Example prompt:** "What depends on the sample_score column of sample_widget?"
 
 `canDelete: true` means nothing in the environment requires the component. That plain statement is
 the point of the tool: the raw function answers with an empty collection, which reads exactly like a
@@ -31,8 +31,8 @@ A column can only be named through its owning table, and the dependency response
 — so both the dependents and the component under examination come back with real names:
 
 ```
-"componentName": "xv_mcptest.xv_name",
-"summary": "9 component(s) depend on Attribute xv_mcptest.xv_name and would break if it were
+"componentName": "sample_widget.sample_name",
+"summary": "9 component(s) depend on Attribute sample_widget.sample_name and would break if it were
             deleted: 3× SystemForm, 6× SavedQuery"
 ```
 
@@ -69,6 +69,9 @@ and owning entity is involved.
 
 The `summary` states the consequence rather than the codes:
 
-> Forms and columns of 'invoice' travel automatically with Accounting, Crossvertise, Default
-> (rootcomponentbehavior 0). Subcomponents must be added explicitly in CrossvertiseInvoicing
-> (behaviour 1, 19 held explicitly), CrossvertiseForms (behaviour 2, 1 held explicitly), …
+> Forms and columns of 'invoice' travel automatically with ContosoBase, ContosoSales
+> (rootcomponentbehavior 0). Subcomponents must be added explicitly in ContosoInvoicing
+> (behaviour 1, 19 held explicitly), ContosoForms (behaviour 2, 1 held explicitly), …
+
+A table in a couple of dozen solutions is normal in a grown environment, and the point of the
+summary is that you no longer have to work out which of them matters.

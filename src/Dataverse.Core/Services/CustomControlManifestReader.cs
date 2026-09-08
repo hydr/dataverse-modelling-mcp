@@ -9,8 +9,8 @@ public sealed record PcfControlManifest(string Namespace, string Constructor, st
 {
     /// <summary>
     /// The manifest name, without the publisher prefix. The stored <c>customcontrol.name</c>
-    /// prepends that prefix — the manifest's <c>Crossvertise.SharePointDocumentViewer</c> is
-    /// stored as <c>xv_Crossvertise.SharePointDocumentViewer</c> — so a lookup has to match on
+    /// prepends that prefix — the manifest's <c>Contoso.DocumentViewer</c> is
+    /// stored as <c>sample_Contoso.DocumentViewer</c> — so a lookup has to match on
     /// this as a suffix.
     /// </summary>
     public string QualifiedName => $"{Namespace}.{Constructor}";

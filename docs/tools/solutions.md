@@ -202,7 +202,7 @@ Uninstalls a solution by deleting it. For a managed solution this removes its co
 | `uniqueName` | string | Yes | Solution unique name |
 | `dryRun` | bool | No | `true` (default) reports what would block the uninstall and changes nothing; `false` actually uninstalls |
 
-**Example prompt:** "What would block uninstalling the CrossvertiseControls solution?"
+**Example prompt:** "What would block uninstalling the ContosoControls solution?"
 
 The dry run checks every root component with
 [`component_dependencies`](analysis.md#component_dependencies) and reports the ones something else

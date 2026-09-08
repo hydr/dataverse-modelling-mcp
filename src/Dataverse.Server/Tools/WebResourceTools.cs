@@ -85,7 +85,7 @@ public sealed class WebResourceTools
     public static async Task<string> WebResourceUsages(
         WebResourceUsageService svc,
         ConfigProvider config,
-        [Description("Web resource name (e.g. 'xv_purchaseinvoice_js') or its GUID")] string name,
+        [Description("Web resource name (e.g. 'sample_order_js') or its GUID")] string name,
         [Description("Optional comma-separated table logical names whose merged ribbon should also be searched")] string? tables = null,
         CancellationToken ct = default)
     {

@@ -19,7 +19,7 @@ using NUnit.Framework;
 public sealed class SolutionComponentMembershipTests
 {
     private const string OrgUrl = "https://test.crm4.dynamics.com";
-    private static readonly Guid SolutionId = Guid.Parse("3412eb29-2a50-4c33-9f99-f67e53fb865a");
+    private static readonly Guid SolutionId = Guid.Parse("22222222-2222-2222-2222-222222220001");
     private static readonly Guid ColumnId = Guid.Parse("456ea321-0000-0000-0000-000000000001");
     private static readonly Guid TableId = Guid.Parse("2c974c35-0000-0000-0000-000000000002");
 
@@ -86,7 +86,7 @@ public sealed class SolutionComponentMembershipTests
             return Ok(Value(new { solutioncomponentid = rowId.ToString() }));
         });
 
-        var result = await _svc.AddComponentAsync(OrgUrl, "CrossvertiseForms", ColumnId, 2);
+        var result = await _svc.AddComponentAsync(OrgUrl, "ContosoForms", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
@@ -120,25 +120,25 @@ public sealed class SolutionComponentMembershipTests
                 return Ok(Value());
 
             if (url.Contains("EntityDefinitions?", StringComparison.Ordinal))
-                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "xv_purchaseorder" }));
+                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "sample_order" }));
 
             // The column belongs to that table — this is what pins the owner down exactly.
             if (url.Contains("/Attributes(", StringComparison.Ordinal))
-                return Ok(JsonSerializer.Serialize(new { LogicalName = "xv_documentviewer" }));
+                return Ok(JsonSerializer.Serialize(new { LogicalName = "sample_documentviewer" }));
 
             return Ok(Value());
         });
 
-        var result = await _svc.AddComponentAsync(OrgUrl, "CrossvertisePurchaseOrders", ColumnId, 2);
+        var result = await _svc.AddComponentAsync(OrgUrl, "ContosoOrders", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
             Assert.That(result.ExplicitMembership, Is.False,
                 "No row exists, so the result must not claim an explicit membership.");
             Assert.That(result.Success, Is.True, "Covered by the parent is a fine outcome, not a failure.");
-            Assert.That(result.Note, Does.Contain("xv_purchaseorder"));
+            Assert.That(result.Note, Does.Contain("sample_order"));
             Assert.That(result.Note, Does.Contain("rootcomponentbehavior 0"));
-            Assert.That(result.CoveringRootComponents, Does.Contain("xv_purchaseorder"));
+            Assert.That(result.CoveringRootComponents, Does.Contain("sample_order"));
         });
     }
 
@@ -154,7 +154,7 @@ public sealed class SolutionComponentMembershipTests
             return Ok(Value());
         });
 
-        var result = await _svc.AddComponentAsync(OrgUrl, "CrossvertiseForms", ColumnId, 2);
+        var result = await _svc.AddComponentAsync(OrgUrl, "ContosoForms", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
@@ -189,7 +189,7 @@ public sealed class SolutionComponentMembershipTests
                 : Value(new { solutioncomponentid = Guid.NewGuid().ToString() }));
         });
 
-        var result = await _svc.RemoveComponentAsync(OrgUrl, "CrossvertiseForms", ColumnId, 2);
+        var result = await _svc.RemoveComponentAsync(OrgUrl, "ContosoForms", ColumnId, 2);
 
         Assert.That(result.Removed, Is.True);
         Assert.That(result.Success, Is.True);
@@ -215,7 +215,7 @@ public sealed class SolutionComponentMembershipTests
                 Is.EqualTo(ColumnId.ToString("D")));
 
             Assert.That(root.GetProperty("ComponentType").GetInt32(), Is.EqualTo(2));
-            Assert.That(root.GetProperty("SolutionUniqueName").GetString(), Is.EqualTo("CrossvertiseForms"));
+            Assert.That(root.GetProperty("SolutionUniqueName").GetString(), Is.EqualTo("ContosoForms"));
         });
     }
 
@@ -225,7 +225,7 @@ public sealed class SolutionComponentMembershipTests
         Route((method, url) =>
             url.Contains("/solutions?", StringComparison.Ordinal) ? Ok(SolutionIdRow) : Ok(Value()));
 
-        var result = await _svc.RemoveComponentAsync(OrgUrl, "CrossvertiseForms", ColumnId, 2);
+        var result = await _svc.RemoveComponentAsync(OrgUrl, "ContosoForms", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
@@ -254,18 +254,18 @@ public sealed class SolutionComponentMembershipTests
             if (url.Contains("/solutioncomponents?", StringComparison.Ordinal))
                 return Ok(Value());
             if (url.Contains("EntityDefinitions?", StringComparison.Ordinal))
-                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "xv_purchaseorder" }));
+                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "sample_order" }));
             if (url.Contains("/Attributes(", StringComparison.Ordinal))
-                return Ok(JsonSerializer.Serialize(new { LogicalName = "xv_documentviewer" }));
+                return Ok(JsonSerializer.Serialize(new { LogicalName = "sample_documentviewer" }));
             return Ok(Value());
         });
 
-        var result = await _svc.RemoveComponentAsync(OrgUrl, "CrossvertisePurchaseOrders", ColumnId, 2);
+        var result = await _svc.RemoveComponentAsync(OrgUrl, "ContosoOrders", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
             Assert.That(result.Removed, Is.False);
-            Assert.That(result.Note, Does.Contain("xv_purchaseorder"));
+            Assert.That(result.Note, Does.Contain("sample_order"));
             Assert.That(result.Note, Does.Contain("cannot be removed on its own"));
         });
     }
@@ -282,7 +282,7 @@ public sealed class SolutionComponentMembershipTests
             return Ok(Value(new { solutioncomponentid = Guid.NewGuid().ToString() }));
         });
 
-        var result = await _svc.RemoveComponentAsync(OrgUrl, "CrossvertiseForms", ColumnId, 2);
+        var result = await _svc.RemoveComponentAsync(OrgUrl, "ContosoForms", ColumnId, 2);
 
         Assert.Multiple(() =>
         {
@@ -310,7 +310,7 @@ public sealed class SolutionComponentMembershipTests
                         new
                         {
                             solutionid = SolutionId.ToString(),
-                            uniquename = "CrossvertisePurchaseOrders",
+                            uniquename = "ContosoOrders",
                             friendlyname = "Purchase Orders",
                             version = "1.0",
                             ismanaged = false
@@ -335,7 +335,7 @@ public sealed class SolutionComponentMembershipTests
             return Ok(Value());
         });
 
-        var detail = await _svc.GetAsync(OrgUrl, "CrossvertisePurchaseOrders", resolveComponentNames: false);
+        var detail = await _svc.GetAsync(OrgUrl, "ContosoOrders", resolveComponentNames: false);
 
         Assert.That(detail, Is.Not.Null);
         Assert.That(detail!.ComponentCount, Is.EqualTo(2));
@@ -435,10 +435,10 @@ public sealed class SolutionComponentMembershipTests
                     new { solutioncomponentid = Guid.NewGuid().ToString(), objectid = webResourceId.ToString(), componenttype = 61 }));
 
             if (url.Contains("EntityDefinitions?", StringComparison.Ordinal))
-                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "xv_purchaseorder" }));
+                return Ok(Value(new { MetadataId = TableId.ToString(), LogicalName = "sample_order" }));
 
             if (url.Contains("webresourceset", StringComparison.Ordinal))
-                return Ok(Value(new { webresourceid = webResourceId.ToString(), name = "xv_msalbrowsermin" }));
+                return Ok(Value(new { webresourceid = webResourceId.ToString(), name = "sample_helper_js" }));
 
             return Ok(Value());
         });
@@ -447,7 +447,7 @@ public sealed class SolutionComponentMembershipTests
 
         Assert.That(
             detail!.Components.Select(c => c.Name),
-            Is.EquivalentTo(new[] { "xv_purchaseorder", "xv_msalbrowsermin" }));
+            Is.EquivalentTo(new[] { "sample_order", "sample_helper_js" }));
     }
 
     /// <summary>

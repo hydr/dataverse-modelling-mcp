@@ -24,12 +24,12 @@ using NUnit.Framework;
 public sealed class EntitySolutionMapServiceTests
 {
     private const string OrgUrl = "https://test.crm4.dynamics.com";
-    private static readonly Guid TableId = Guid.Parse("4c0e7f31-a9de-45ea-b983-363b946f18c5");
+    private static readonly Guid TableId = Guid.Parse("11111111-1111-1111-1111-111111110001");
     private static readonly Guid RowInFormsSolution = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid RowInPurchaseSolution = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid FormsSolutionId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
     private static readonly Guid PurchaseSolutionId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002");
-    private static readonly Guid ColumnId = Guid.Parse("06145688-ca2a-f011-8c4d-002248a42c4e");
+    private static readonly Guid ColumnId = Guid.Parse("11111111-1111-1111-1111-111111110004");
 
     private Mock<HttpMessageHandler> _handlerMock = null!;
     private EntitySolutionMapService _svc = null!;
@@ -93,10 +93,10 @@ public sealed class EntitySolutionMapServiceTests
             });
 
         if (url.Contains($"solutions({FormsSolutionId:D})", StringComparison.Ordinal))
-            return JsonSerializer.Serialize(new { uniquename = "CrossvertiseForms", ismanaged = false });
+            return JsonSerializer.Serialize(new { uniquename = "ContosoForms", ismanaged = false });
 
         if (url.Contains($"solutions({PurchaseSolutionId:D})", StringComparison.Ordinal))
-            return JsonSerializer.Serialize(new { uniquename = "CrossvertisePurchaseOrders", ismanaged = false });
+            return JsonSerializer.Serialize(new { uniquename = "ContosoOrders", ismanaged = false });
 
         // Only the behaviour-1 solution holds a subcomponent explicitly.
         if (url.Contains($"rootsolutioncomponentid eq {RowInPurchaseSolution:D}", StringComparison.Ordinal))
@@ -125,8 +125,8 @@ public sealed class EntitySolutionMapServiceTests
 
         Assert.That(map.SolutionCount, Is.EqualTo(2));
 
-        var forms = map.Solutions.Single(s => s.SolutionUniqueName == "CrossvertiseForms");
-        var purchase = map.Solutions.Single(s => s.SolutionUniqueName == "CrossvertisePurchaseOrders");
+        var forms = map.Solutions.Single(s => s.SolutionUniqueName == "ContosoForms");
+        var purchase = map.Solutions.Single(s => s.SolutionUniqueName == "ContosoOrders");
 
         Assert.Multiple(() =>
         {
@@ -148,8 +148,8 @@ public sealed class EntitySolutionMapServiceTests
 
         var map = await _svc.GetAsync(OrgUrl, "invoice", resolveComponentNames: false);
 
-        var forms = map.Solutions.Single(s => s.SolutionUniqueName == "CrossvertiseForms");
-        var purchase = map.Solutions.Single(s => s.SolutionUniqueName == "CrossvertisePurchaseOrders");
+        var forms = map.Solutions.Single(s => s.SolutionUniqueName == "ContosoForms");
+        var purchase = map.Solutions.Single(s => s.SolutionUniqueName == "ContosoOrders");
 
         Assert.Multiple(() =>
         {
@@ -239,12 +239,12 @@ public sealed class EntitySolutionMapServiceTests
     public void Summary_NamesTheSolutionThatCarriesSubcomponentsAutomatically()
     {
         var summary = EntitySolutionMapService.BuildSummary("invoice",
-            [Membership("CrossvertiseForms", 0), Membership("CrossvertisePurchaseOrders", 1, 3)]);
+            [Membership("ContosoForms", 0), Membership("ContosoOrders", 1, 3)]);
 
         Assert.Multiple(() =>
         {
-            Assert.That(summary, Does.Contain("travel automatically with CrossvertiseForms"));
-            Assert.That(summary, Does.Contain("added explicitly in CrossvertisePurchaseOrders"));
+            Assert.That(summary, Does.Contain("travel automatically with ContosoForms"));
+            Assert.That(summary, Does.Contain("added explicitly in ContosoOrders"));
             Assert.That(summary, Does.Contain("3 held explicitly"));
         });
     }
@@ -253,7 +253,7 @@ public sealed class EntitySolutionMapServiceTests
     public void Summary_SaysSoWhenNoSolutionPicksUpSubcomponents()
     {
         var summary = EntitySolutionMapService.BuildSummary("invoice",
-            [Membership("CrossvertiseForms", 2), Membership("CrossvertiseInvoicing", 1)]);
+            [Membership("ContosoForms", 2), Membership("ContosoInvoicing", 1)]);
 
         Assert.That(summary, Does.Contain("No solution holds 'invoice' with rootcomponentbehavior 0"));
     }

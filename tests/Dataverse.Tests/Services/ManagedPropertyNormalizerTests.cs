@@ -35,7 +35,7 @@ public sealed class ManagedPropertyNormalizerTests
         var payload = Parse("""
             {
               "@odata.type": "Microsoft.Dynamics.CRM.StringAttributeMetadata",
-              "SchemaName": "xv_test",
+              "SchemaName": "sample_test",
               "IsValidForAdvancedFind": false
             }
             """);

@@ -21,8 +21,8 @@ public sealed class SolutionUninstallTests
 {
     private const string OrgUrl = "https://test.crm4.dynamics.com";
     private static readonly Guid SolutionId = Guid.Parse("bf401562-6242-f111-bec6-7ced8d4a3a5d");
-    private static readonly Guid TableId = Guid.Parse("a0e66081-6242-f111-bec6-7c1e528730f7");
-    private static readonly Guid FormId = Guid.Parse("8016761a-2c24-484c-905e-efdca6af5347");
+    private static readonly Guid TableId = Guid.Parse("11111111-1111-1111-1111-111111110005");
+    private static readonly Guid FormId = Guid.Parse("33333333-3333-3333-3333-333333330001");
 
     private Mock<HttpMessageHandler> _handlerMock = null!;
     private SolutionService _svc = null!;

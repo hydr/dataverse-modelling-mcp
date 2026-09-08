@@ -456,4 +456,4 @@ nothing uses a library.
 The compiled ribbon runs to hundreds of kilobytes (half a megabyte for a stock table is normal), so
 use `contains` unless you really want the whole document.
 
-**Example prompt:** "Does the merged ribbon of xv_purchaseinvoice still reference xv_purchaseinvoice_js?"
+**Example prompt:** "Does the merged ribbon of sample_orderline still reference sample_order_js?"

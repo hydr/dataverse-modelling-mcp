@@ -113,7 +113,7 @@ form, view or workflow still uses it. The blockers come back in the result, name
   "deleted": false,
   "reason": "Other components depend on this column. Review them and pass force=true to delete anyway.",
   "dependencies": { "dependentCount": 9, "summary": "9 component(s) depend on Attribute
-                    xv_mcptest.xv_name …: 3× SystemForm, 6× SavedQuery", "dependents": [ … ] }
+                    sample_widget.sample_name …: 3× SystemForm, 6× SavedQuery", "dependents": [ … ] }
 }
 ```
 

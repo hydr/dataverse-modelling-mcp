@@ -37,7 +37,7 @@ public sealed class CustomControlManifestReaderTests
     private const string Manifest = """
         <?xml version="1.0" encoding="utf-8"?>
         <manifest>
-          <control namespace="Crossvertise" constructor="SharePointDocumentViewer" version="1.0.0"
+          <control namespace="Contoso" constructor="DocumentViewer" version="1.0.0"
                    display-name-key="Viewer" description-key="Viewer_Desc" control-type="standard">
             <property name="boundField" of-type="SingleLine.Text" usage="bound" required="true" />
           </control>
@@ -49,20 +49,20 @@ public sealed class CustomControlManifestReaderTests
     {
         var zip = BuildZip(
             ("solution.xml", "<ImportExportXml />"),
-            ("Controls/xv_Crossvertise.SharePointDocumentViewer/ControlManifest.xml", Manifest));
+            ("Controls/sample_Contoso.DocumentViewer/ControlManifest.xml", Manifest));
 
         var manifests = CustomControlManifestReader.Read(zip);
 
         Assert.That(manifests, Has.Count.EqualTo(1));
         Assert.Multiple(() =>
         {
-            Assert.That(manifests[0].Namespace, Is.EqualTo("Crossvertise"));
-            Assert.That(manifests[0].Constructor, Is.EqualTo("SharePointDocumentViewer"));
+            Assert.That(manifests[0].Namespace, Is.EqualTo("Contoso"));
+            Assert.That(manifests[0].Constructor, Is.EqualTo("DocumentViewer"));
             Assert.That(manifests[0].Version, Is.EqualTo("1.0.0"));
 
             // The stored customcontrol.name carries a publisher prefix that the manifest does not,
             // so the qualified name is only ever usable as a suffix.
-            Assert.That(manifests[0].QualifiedName, Is.EqualTo("Crossvertise.SharePointDocumentViewer"));
+            Assert.That(manifests[0].QualifiedName, Is.EqualTo("Contoso.DocumentViewer"));
         });
     }
 
@@ -120,8 +120,8 @@ public sealed class CustomControlManifestReaderTests
             : manifestVersion == storedVersion;
 
         return new CustomControlVersionCheck(
-            ManifestName: "Crossvertise.SharePointDocumentViewer",
-            StoredName: "xv_Crossvertise.SharePointDocumentViewer",
+            ManifestName: "Contoso.DocumentViewer",
+            StoredName: "sample_Contoso.DocumentViewer",
             ManifestVersion: manifestVersion,
             StoredVersion: storedVersion,
             Matches: matches);

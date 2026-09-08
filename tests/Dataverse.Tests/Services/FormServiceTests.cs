@@ -25,24 +25,24 @@ public sealed class FormServiceTests
     private const string FormXmlWithCustomControl = """
         <form>
           <tabs>
-            <tab verticallayout="true" id="{091448fb-7861-4b91-b39e-6346e58c8c5a}" name="general">
+            <tab verticallayout="true" id="{55555555-5555-5555-5555-555555550001}" name="general">
               <labels><label description="Allgemein" languagecode="1031" /></labels>
               <columns>
                 <column width="100%">
                   <sections>
-                    <section showlabel="false" id="{5d51218b-95a6-4516-8e98-5a82c0f116df}" name="main">
+                    <section showlabel="false" id="{55555555-5555-5555-5555-555555550002}" name="main">
                       <labels><label description="Hauptbereich" languagecode="1031" /></labels>
                       <rows>
                         <row>
-                          <cell id="{483ab192-107a-4e04-b329-d767a9f44f35}">
+                          <cell id="{55555555-5555-5555-5555-555555550003}">
                             <labels><label description="Name" languagecode="1031" /></labels>
-                            <control id="xv_name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="xv_name" />
+                            <control id="sample_name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="sample_name" />
                           </cell>
                         </row>
                         <row>
-                          <cell id="{2eec0dee-f02c-40eb-aa7a-9465aef35ae4}" rowspan="8" colspan="2">
+                          <cell id="{55555555-5555-5555-5555-555555550004}" rowspan="8" colspan="2">
                             <labels><label description="Dokumente" languagecode="1031" /></labels>
-                            <control id="viewer" classid="{F9A8A302-114E-466A-B582-6771B2AE0D92}" isunbound="true" uniqueid="{c65ef1a3-ebe5-4aa9-8501-51748a9d3121}" />
+                            <control id="viewer" classid="{F9A8A302-114E-466A-B582-6771B2AE0D92}" isunbound="true" uniqueid="{66666666-6666-6666-6666-666666660001}" />
                           </cell>
                         </row>
                       </rows>
@@ -53,12 +53,12 @@ public sealed class FormServiceTests
             </tab>
           </tabs>
           <controlDescriptions>
-            <controlDescription forControl="{c65ef1a3-ebe5-4aa9-8501-51748a9d3121}">
-              <customControl name="xv_Crossvertise.SharePointDocumentViewer" formFactor="0">
+            <controlDescription forControl="{66666666-6666-6666-6666-666666660001}">
+              <customControl name="sample_Contoso.DocumentViewer" formFactor="0">
                 <parameters><authMode static="true" type="Enum">auto</authMode></parameters>
               </customControl>
-              <customControl name="xv_Crossvertise.SharePointDocumentViewer" formFactor="1" />
-              <customControl name="xv_Crossvertise.SharePointDocumentViewer" formFactor="2" />
+              <customControl name="sample_Contoso.DocumentViewer" formFactor="1" />
+              <customControl name="sample_Contoso.DocumentViewer" formFactor="2" />
             </controlDescription>
           </controlDescriptions>
         </form>
@@ -80,7 +80,7 @@ public sealed class FormServiceTests
             Assert.That(tabs[0].Name, Is.EqualTo("general"));
             Assert.That(section.Label, Is.EqualTo("Hauptbereich"));
             Assert.That(section.Cells, Has.Count.EqualTo(2));
-            Assert.That(section.Cells[0].Controls[0].DataFieldName, Is.EqualTo("xv_name"));
+            Assert.That(section.Cells[0].Controls[0].DataFieldName, Is.EqualTo("sample_name"));
         });
     }
 
@@ -112,9 +112,9 @@ public sealed class FormServiceTests
         {
             Assert.That(control.IsCustomControl, Is.True);
             Assert.That(control.IsUnbound, Is.True);
-            Assert.That(control.UniqueId, Is.EqualTo("{c65ef1a3-ebe5-4aa9-8501-51748a9d3121}"));
+            Assert.That(control.UniqueId, Is.EqualTo("{66666666-6666-6666-6666-666666660001}"));
             Assert.That(control.CustomControlNames,
-                Is.EquivalentTo(new[] { "xv_Crossvertise.SharePointDocumentViewer" }));
+                Is.EquivalentTo(new[] { "sample_Contoso.DocumentViewer" }));
 
             Assert.That(descriptions, Has.Count.EqualTo(1));
             Assert.That(descriptions[0].CustomControls, Has.Count.EqualTo(3));
@@ -168,7 +168,7 @@ public sealed class FormServiceTests
     public void BuildCell_UsesTheGenericClassIdAndAUniqueId_ForACodeComponent()
     {
         var (cell, uniqueId) = FormService.BuildCell(
-            new FormControlSpec(CustomControlName: "xv_Ns.Ctrl", Label: "Docs"), 1031);
+            new FormControlSpec(CustomControlName: "sample_Ns.Ctrl", Label: "Docs"), 1031);
 
         var control = cell.Elements().Single(e => e.Name.LocalName == "control");
 
@@ -186,15 +186,15 @@ public sealed class FormServiceTests
     public void BuildCell_BindsTheControl_WhenAColumnWasGiven()
     {
         var (cell, _) = FormService.BuildCell(
-            new FormControlSpec(DataFieldName: "xv_documentviewer", CustomControlName: "xv_Ns.Ctrl"), 1031);
+            new FormControlSpec(DataFieldName: "sample_documentviewer", CustomControlName: "sample_Ns.Ctrl"), 1031);
 
         var control = cell.Elements().Single(e => e.Name.LocalName == "control");
 
         Assert.Multiple(() =>
         {
-            Assert.That((string?)control.Attribute("datafieldname"), Is.EqualTo("xv_documentviewer"));
+            Assert.That((string?)control.Attribute("datafieldname"), Is.EqualTo("sample_documentviewer"));
             Assert.That(control.Attribute("isunbound"), Is.Null);
-            Assert.That((string?)control.Attribute("id"), Is.EqualTo("xv_documentviewer"));
+            Assert.That((string?)control.Attribute("id"), Is.EqualTo("sample_documentviewer"));
         });
     }
 
@@ -202,7 +202,7 @@ public sealed class FormServiceTests
     public void BuildCell_UsesTheFormsOwnLanguage_ForTheLabel()
     {
         var (cell, _) = FormService.BuildCell(
-            new FormControlSpec(CustomControlName: "xv_Ns.Ctrl", Label: "Dokumente"), 1031);
+            new FormControlSpec(CustomControlName: "sample_Ns.Ctrl", Label: "Dokumente"), 1031);
 
         var label = cell.Descendants().Single(e => e.Name.LocalName == "label");
 
@@ -223,7 +223,7 @@ public sealed class FormServiceTests
     public void BuildCell_Throws_WhenAPlainFieldControlHasNoClassId()
     {
         Assert.Throws<ArgumentException>(() =>
-            FormService.BuildCell(new FormControlSpec(DataFieldName: "xv_name"), 1033));
+            FormService.BuildCell(new FormControlSpec(DataFieldName: "sample_name"), 1033));
     }
 
     /// <summary>
@@ -237,7 +237,7 @@ public sealed class FormServiceTests
 
         FormService.AddControlDescription(
             doc, "{11111111-1111-1111-1111-111111111111}",
-            new FormControlSpec(CustomControlName: "xv_Ns.Ctrl"));
+            new FormControlSpec(CustomControlName: "sample_Ns.Ctrl"));
 
         var controls = doc.Descendants().Where(e => e.Name.LocalName == "customControl").ToList();
 
@@ -253,12 +253,12 @@ public sealed class FormServiceTests
         var doc = XDocument.Parse("<form><tabs /></form>");
 
         FormService.AddControlDescription(
-            doc, "{1}", new FormControlSpec(CustomControlName: "xv_Crossvertise.SharePointDocumentViewer"));
+            doc, "{1}", new FormControlSpec(CustomControlName: "sample_Contoso.DocumentViewer"));
 
         Assert.That(
             doc.Descendants().Where(e => e.Name.LocalName == "customControl")
                 .Select(c => (string?)c.Attribute("name")).Distinct().Single(),
-            Is.EqualTo("xv_Crossvertise.SharePointDocumentViewer"),
+            Is.EqualTo("sample_Contoso.DocumentViewer"),
             "The prefixed name is what customcontrol.name holds; the manifest name fails with 0x80160007.");
     }
 
@@ -272,11 +272,11 @@ public sealed class FormServiceTests
         var doc = XDocument.Parse("<form><tabs /></form>");
 
         FormService.AddControlDescription(doc, "{1}", new FormControlSpec(
-            CustomControlName: "xv_Ns.Ctrl",
+            CustomControlName: "sample_Ns.Ctrl",
             Parameters: new Dictionary<string, FormControlParameter>
             {
                 ["authMode"] = new("auto", Static: true, Type: "Enum"),
-                ["boundField"] = new("xv_documentviewer", Static: false)
+                ["boundField"] = new("sample_documentviewer", Static: false)
             }));
 
         var parameters = doc.Descendants().First(e => e.Name.LocalName == "parameters");
@@ -290,7 +290,7 @@ public sealed class FormServiceTests
             Assert.That(authMode.Value, Is.EqualTo("auto"));
 
             Assert.That(boundField.Attribute("static"), Is.Null);
-            Assert.That(boundField.Value, Is.EqualTo("xv_documentviewer"));
+            Assert.That(boundField.Value, Is.EqualTo("sample_documentviewer"));
         });
     }
 
@@ -302,7 +302,7 @@ public sealed class FormServiceTests
     public void RemoveOrphanedControlDescriptions_DropsOnlyTheDanglingOnes()
     {
         var doc = XDocument.Parse(FormXmlWithCustomControl);
-        FormService.AddControlDescription(doc, "{dead-beef}", new FormControlSpec(CustomControlName: "xv_Gone"));
+        FormService.AddControlDescription(doc, "{dead-beef}", new FormControlSpec(CustomControlName: "sample_Gone"));
 
         FormService.RemoveOrphanedControlDescriptions(doc);
 
@@ -311,15 +311,15 @@ public sealed class FormServiceTests
             .Select(e => (string?)e.Attribute("forControl"))
             .ToList();
 
-        Assert.That(remaining, Is.EquivalentTo(new[] { "{c65ef1a3-ebe5-4aa9-8501-51748a9d3121}" }));
+        Assert.That(remaining, Is.EquivalentTo(new[] { "{66666666-6666-6666-6666-666666660001}" }));
     }
 
     /// <summary>
     /// A tab whose id, name and label all differ should be findable by any of them — a caller has
     /// whichever one they happened to read.
     /// </summary>
-    [TestCase("{091448fb-7861-4b91-b39e-6346e58c8c5a}")]
-    [TestCase("091448fb-7861-4b91-b39e-6346e58c8c5a")]
+    [TestCase("{55555555-5555-5555-5555-555555550001}")]
+    [TestCase("55555555-5555-5555-5555-555555550001")]
     [TestCase("general")]
     [TestCase("Allgemein")]
     [TestCase("ALLGEMEIN")]
@@ -344,7 +344,7 @@ public sealed class FormServiceTests
     public void ParseSpec_AcceptsABareStringAsAStaticParameter()
     {
         var spec = FormControlSpec.Parse("""
-            { "customControlName": "xv_Ns.Ctrl", "parameters": { "authMode": "auto" } }
+            { "customControlName": "sample_Ns.Ctrl", "parameters": { "authMode": "auto" } }
             """);
 
         Assert.Multiple(() =>
@@ -360,18 +360,18 @@ public sealed class FormServiceTests
     {
         var spec = FormControlSpec.Parse("""
             {
-              "customControlName": "xv_Ns.Ctrl",
-              "dataFieldName": "xv_col",
+              "customControlName": "sample_Ns.Ctrl",
+              "dataFieldName": "sample_col",
               "label": "Docs",
               "rowSpan": 8,
               "colSpan": 2,
-              "parameters": { "boundField": { "value": "xv_col", "static": false } }
+              "parameters": { "boundField": { "value": "sample_col", "static": false } }
             }
             """);
 
         Assert.Multiple(() =>
         {
-            Assert.That(spec.DataFieldName, Is.EqualTo("xv_col"));
+            Assert.That(spec.DataFieldName, Is.EqualTo("sample_col"));
             Assert.That(spec.Label, Is.EqualTo("Docs"));
             Assert.That(spec.RowSpan, Is.EqualTo(8));
             Assert.That(spec.ColSpan, Is.EqualTo(2));

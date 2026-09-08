@@ -24,9 +24,9 @@ using NUnit.Framework;
 public sealed class ComponentDependencyServiceTests
 {
     private const string OrgUrl = "https://test.crm4.dynamics.com";
-    private static readonly Guid ColumnId = Guid.Parse("a1e66081-6242-f111-bec6-7c1e528730f7");
-    private static readonly Guid TableId = Guid.Parse("a0e66081-6242-f111-bec6-7c1e528730f7");
-    private static readonly Guid FormId = Guid.Parse("8016761a-2c24-484c-905e-efdca6af5347");
+    private static readonly Guid ColumnId = Guid.Parse("11111111-1111-1111-1111-111111110002");
+    private static readonly Guid TableId = Guid.Parse("11111111-1111-1111-1111-111111110005");
+    private static readonly Guid FormId = Guid.Parse("33333333-3333-3333-3333-333333330001");
 
     private Mock<HttpMessageHandler> _handlerMock = null!;
     private ComponentDependencyService _svc = null!;
@@ -184,13 +184,13 @@ public sealed class ComponentDependencyServiceTests
             if (url.Contains("EntityDefinitions?", StringComparison.Ordinal))
                 return JsonSerializer.Serialize(new
                 {
-                    value = new[] { new { MetadataId = TableId.ToString(), LogicalName = "xv_mcptest" } }
+                    value = new[] { new { MetadataId = TableId.ToString(), LogicalName = "sample_widget" } }
                 });
 
             if (url.Contains("/Attributes", StringComparison.Ordinal))
                 return JsonSerializer.Serialize(new
                 {
-                    value = new[] { new { MetadataId = ColumnId.ToString(), LogicalName = "xv_name" } }
+                    value = new[] { new { MetadataId = ColumnId.ToString(), LogicalName = "sample_name" } }
                 });
 
             return Empty;
@@ -200,9 +200,9 @@ public sealed class ComponentDependencyServiceTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(report.Dependents[0].Name, Is.EqualTo("xv_mcptest.xv_name"));
+            Assert.That(report.Dependents[0].Name, Is.EqualTo("sample_widget.sample_name"));
             Assert.That(report.Dependents[0].ParentId, Is.EqualTo(TableId));
-            Assert.That(report.Dependents[0].ParentName, Is.EqualTo("xv_mcptest"));
+            Assert.That(report.Dependents[0].ParentName, Is.EqualTo("sample_widget"));
         });
     }
 

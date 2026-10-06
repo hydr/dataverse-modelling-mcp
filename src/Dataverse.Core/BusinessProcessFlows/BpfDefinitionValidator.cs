@@ -141,8 +141,7 @@ public static class BpfDefinitionValidator
                         "Use the key, name or id of the stage the process comes from — or leave it out.");
 
                 if (resolved.Stages[i].Relationship is { } r
-                    && resolved.Stages.FirstOrDefault(s => s.StageId == r.FromStageId) is { } from
-                    && string.Equals(from.Entity, entity, StringComparison.OrdinalIgnoreCase))
+                    && string.Equals(resolved.Stages[r.FromIndex].Entity, entity, StringComparison.OrdinalIgnoreCase))
                     Warning("BPF043", $"{path}.relationship",
                         $"The stage is entered from a stage on the same table ('{entity}'); the relationship is not used.",
                         "Remove 'relationship', or set 'fromStage' to the stage on the other table.");

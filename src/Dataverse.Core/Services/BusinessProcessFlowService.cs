@@ -199,9 +199,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
             if (stage.Source.Relationship is { } rel && !string.IsNullOrWhiteSpace(rel.Name))
             {
-                var from = stage.Relationship is { } r
-                    ? resolved.Stages.FirstOrDefault(s => s.StageId == r.FromStageId)?.Entity
-                    : null;
+                var from = stage.Relationship is { } r ? resolved.Stages[r.FromIndex].Entity : null;
                 var checkedRel = await CheckRelationshipAsync(orgUrl, rel, from, stage.Entity, $"{path}.relationship", issues, ct);
                 if (checkedRel is not null)
                     stages[i] = stages[i] with { Relationship = checkedRel };
@@ -337,14 +335,19 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         try
         {
             var raw = await client.GetRawAsync(orgUrl,
-                $"api/data/v9.2/workflows({id})?$select=workflowid,name,uniquename,category,primaryentity,statecode,ondemand,type"
-                + "&$expand=sdkmessageid($select=name)", ct: ct);
+                $"api/data/v9.2/workflows({id})?$select=workflowid,name,uniquename,category,primaryentity,statecode,ondemand,type,_sdkmessageid_value",
+                ct: ct);
             var r = JsonDocument.Parse(raw).RootElement;
 
-            // An action is called by its message name, which is what the process stores.
-            var uniqueName = r.TryGetProperty("sdkmessageid", out var message) && message.ValueKind == JsonValueKind.Object
-                ? message.GetStringOrNull("name")
-                : r.GetStringOrNull("uniquename");
+            // An action is called by its message name, which is what the process stores — not the
+            // workflow's uniquename, which lacks the publisher prefix. workflow has no navigation
+            // property to sdkmessage, hence the second read.
+            var uniqueName = r.GetStringOrNull("uniquename");
+            if (r.GetInt32OrZero("category") == 3 && Guid.TryParse(r.GetStringOrNull("_sdkmessageid_value"), out var messageId))
+            {
+                var messageRaw = await client.GetRawAsync(orgUrl, $"api/data/v9.2/sdkmessages({messageId})?$select=name", ct: ct);
+                uniqueName = JsonDocument.Parse(messageRaw).RootElement.GetStringOrNull("name") ?? uniqueName;
+            }
 
             return new BpfProcessInfo(
                 id,
@@ -775,20 +778,17 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             $"api/data/v9.2/RetrieveProcessInstances(EntityLogicalName=@e,EntityId=@id)?@e='{Uri.EscapeDataString(entity)}'&@id={recordId}",
             ct: ct);
 
+        // The function answers with a plain collection of businessprocessflowinstance rows.
         var root = JsonDocument.Parse(raw).RootElement;
-        if (!root.TryGetProperty("Processes", out var processes))
+        if (!root.TryGetProperty("value", out var items) || items.ValueKind != JsonValueKind.Array)
             return [];
-
-        var items = processes.ValueKind == JsonValueKind.Object && processes.TryGetProperty("Entities", out var ents)
-            ? ents.EnumerateArray()
-            : processes.EnumerateArray();
 
         var stageNames = new Dictionary<Guid, string>();
         var result = new List<BpfInstance>();
 
-        foreach (var item in items)
+        foreach (var item in items.EnumerateArray())
         {
-            var attributes = item.TryGetProperty("Attributes", out var attrs) ? Flatten(attrs) : Flatten(item);
+            var attributes = Flatten(item);
 
             var processId = GuidOf(attributes, "processid");
             var stageId = GuidOf(attributes, "processstageid");
@@ -804,7 +804,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             }
 
             result.Add(new BpfInstance(
-                GuidOf(attributes, "businessprocessflowinstanceid") ?? GuidOf(attributes, "processinstanceid") ?? Guid.Empty,
+                GuidOf(attributes, "businessprocessflowinstanceid") ?? Guid.Empty,
                 processId ?? Guid.Empty,
                 attributes.GetValueOrDefault("name"),
                 stageId,
@@ -901,6 +901,14 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             ["traversedpath"] = string.Join(",", newPath)
         };
 
+        var currentEntity = resolved.Stages.FirstOrDefault(s => string.Equals(s.StageId, active, StringComparison.OrdinalIgnoreCase))?.Entity;
+        if (recordId is null && back < 0 && currentEntity is not null
+            && !string.Equals(currentEntity, targetStage.Entity, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Stage '{targetStage.Source.Name}' is on '{targetStage.Entity}', the active stage on '{currentEntity}'. "
+                + $"Pass recordId: the {targetStage.Entity} record the process continues on (the platform answers "
+                + "\"Participating entity record of stage … is not valid\" otherwise).");
+
         if (recordId is { } rid)
         {
             if (!table.RecordLookups.TryGetValue(targetStage.Entity, out var navigation))
@@ -939,7 +947,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     /// Copies the ids of existing stages and steps onto those of a new definition that have none, by
     /// name and table (steps: by attribute within the matched stage).
     /// </summary>
-    internal static BpfDefinition AdoptExistingIds(BpfDefinition definition, BpfDefinition existing)
+    public static BpfDefinition AdoptExistingIds(BpfDefinition definition, BpfDefinition existing)
     {
         var existingResolved = BpfStageResolver.Resolve(existing, assignMissingIds: false).Stages;
         var newResolved = BpfStageResolver.Resolve(definition, assignMissingIds: false).Stages;

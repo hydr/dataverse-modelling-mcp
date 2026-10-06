@@ -12,7 +12,9 @@ public sealed record BpfResolvedStage(
     string? NextStageId,
     BpfResolvedRelationship? Relationship);
 
-public sealed record BpfResolvedRelationship(string Name, string? Attribute, string FromStageId);
+/// <param name="FromStageId">Id of the source stage; empty while the definition has no ids yet.</param>
+/// <param name="FromIndex">Position of the source stage in the definition.</param>
+public sealed record BpfResolvedRelationship(string Name, string? Attribute, string FromStageId, int FromIndex);
 
 public sealed record BpfResolvedDefinition(IReadOnlyList<BpfResolvedStage> Stages)
 {
@@ -75,8 +77,9 @@ public static class BpfStageResolver
                     ? Find(stages, rel.FromStage!)
                     : PredecessorOf(stages, i);
 
-                if (from?.StageId is not null)
-                    relationship = new BpfResolvedRelationship(rel.Name, rel.Attribute, from.StageId);
+                if (from is not null)
+                    relationship = new BpfResolvedRelationship(
+                        rel.Name, rel.Attribute, from.StageId ?? string.Empty, stages.IndexOf(from));
             }
 
             resolved.Add(new BpfResolvedStage(stage, i, stage.StageId ?? string.Empty, entities[i], nextIds[i], relationship));

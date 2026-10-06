@@ -20,7 +20,17 @@ public sealed class BusinessProcessFlowTools
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        // Definitions read back are meant to be edited and written again; nulls and false flags are noise.
+        // Only nulls: a false canSave/applied/created must reach the caller.
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    /// <summary>
+    /// For a definition handed back for editing: unset fields and false flags are noise there, and
+    /// leaving them out keeps the JSON close to what a caller would write by hand.
+    /// </summary>
+    private static readonly JsonSerializerOptions DefinitionOutputOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
     };
 
@@ -92,7 +102,7 @@ public sealed class BusinessProcessFlowTools
                 fullyUnderstood = parsed.FullyUnderstood,
                 unrecognised = parsed.Unrecognised,
                 notes = parsed.Notes,
-                definition = parsed.Definition
+                definition = JsonSerializer.SerializeToElement(parsed.Definition, DefinitionOutputOptions)
             }, JsonOptions);
         }
         catch (Exception ex)

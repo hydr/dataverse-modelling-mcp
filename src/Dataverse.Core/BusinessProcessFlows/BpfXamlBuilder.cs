@@ -36,22 +36,26 @@ public static class BpfXamlBuilder
     private static readonly string RelationshipCollection =
         $"Microsoft.Crm.Workflow.BusinessProcessFlowActivities.StageRelationshipCollectionComposite, Microsoft.Crm.Workflow, {CrmWfVersion}";
 
-    /// <param name="fields">
-    /// Attribute types and display names, for the control class and its caption. Without it every
-    /// field is written as a text control, which the form still renders by attribute type.
+    /// <param name="catalog">
+    /// Attribute types and display names, for the control class and its caption — without them every
+    /// field is written as a text control, which the form still renders by attribute type. And the
+    /// workflows, actions and flows the definition refers to, whose names the XAML has to carry.
     /// </param>
     /// <param name="languageCode">Language of all labels; the organisation's base language.</param>
     public static BpfBuildResult Build(
         BpfDefinition definition,
         Guid? workflowId = null,
-        BpfFieldCatalog? fields = null,
+        BpfCatalog? catalog = null,
         int languageCode = 1033)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        fields ??= BpfFieldCatalog.Empty;
+        catalog ??= BpfCatalog.Empty;
+        var processId = workflowId ?? Guid.Empty;
         var language = definition.LanguageCode ?? languageCode;
 
         var resolved = BpfStageResolver.Resolve(definition, assignMissingIds: true);
+        foreach (var trigger in definition.Workflows.Concat(definition.Stages.SelectMany(s => s.Workflows)))
+            trigger.TriggerId ??= Guid.NewGuid().ToString("D");
         var counter = 0;
         int Next() => ++counter;
 
@@ -83,9 +87,18 @@ public static class BpfXamlBuilder
 
             foreach (var step in stage.Source.Steps)
             {
-                inner.Append(BuildStep(step, stage.Entity, fields, language, Next));
+                inner.Append(BuildStep(step, stage.Entity, catalog, language, Next));
                 stepIds.Add(step.StepId!);
             }
+
+            // Workflows run on entering or leaving this stage.
+            foreach (var trigger in stage.Source.Workflows)
+                inner.Append(BuildTrigger(trigger, stage.StageId, processId, catalog, Next));
+
+            // The designer keeps the process-level workflows in the first stage.
+            if (stage.Index == 0)
+                foreach (var trigger in definition.Workflows)
+                    inner.Append(BuildTrigger(trigger, stage.StageId, processId, catalog, Next));
 
             if (stage.Source.Branch is { Branches.Count: > 0 } branching)
                 inner.Append(BuildBranching(branching, stage, resolved, Next));
@@ -110,29 +123,38 @@ public static class BpfXamlBuilder
             built.Add(new BpfBuiltStage(stage.Source.Name, stage.Entity, stage.StageId, stepIds));
         }
 
-        return new BpfBuildResult(Envelope(workflowId ?? Guid.Empty, body.ToString()), built);
+        return new BpfBuildResult(Envelope(processId, body.ToString()), built);
     }
 
     private static string BuildStep(
-        BpfStep step, string entity, BpfFieldCatalog fields, int language, Func<int> next)
+        BpfStep step, string entity, BpfCatalog catalog, int language, Func<int> next)
     {
         var stepNumber = next();
-        var controlNumber = next();
 
-        if (step.Kind != BpfStepKind.Field)
-            throw new NotSupportedException(
-                $"Step kind '{step.Kind}' cannot be generated yet. Writable kinds: {BpfStepKind.Field}.");
+        return step.Kind switch
+        {
+            BpfStepKind.Field => BuildFieldStep(step, entity, catalog, language, stepNumber, next()),
+            BpfStepKind.Action => BuildActionStep(step, catalog, language, stepNumber, next(), next()),
+            BpfStepKind.Flow => BuildFlowStep(step, catalog, language, stepNumber, next(), next()),
+            _ => throw new NotSupportedException(
+                $"Step kind '{step.Kind}' cannot be generated. Kinds: {string.Join(", ", BpfStepKind.All)}.")
+        };
+    }
 
+    private static string BuildFieldStep(
+        BpfStep step, string entity, BpfCatalog catalog, int language, int stepNumber, int controlNumber)
+    {
         var attribute = step.Attribute!;
-        var info = fields.Find(entity, attribute);
+        var info = catalog.Find(entity, attribute);
         var label = string.IsNullOrWhiteSpace(step.Label) ? info?.DisplayName ?? attribute : step.Label!;
         var caption = info?.DisplayName ?? label;
         var classId = step.ClassId ?? BpfControlClass.For(info?.AttributeType);
 
+        // The control needs its Parameters, even empty: without them the platform's UiData generation
+        // dereferences null (0x80045037 "Error generating UiData").
         var parameters = string.IsNullOrEmpty(step.Parameters)
             ? " IsSystemControl=\"False\" IsUnbound=\"False\" SystemStepType=\"0\">"
-              + "<mcwb:Control.Parameters><InArgument x:TypeArguments=\"x:String\">"
-              + "<Literal x:TypeArguments=\"x:String\" Value=\"\" /></InArgument></mcwb:Control.Parameters>"
+              + "<mcwb:Control.Parameters>" + EmptyString + "</mcwb:Control.Parameters>"
               + "</mcwb:Control>"
             : $" IsSystemControl=\"{(step.SystemControl ? "True" : "False")}\" IsUnbound=\"False\" "
               + $"Parameters=\"{Xml(step.Parameters!)}\" SystemStepType=\"0\" />";
@@ -143,11 +165,120 @@ public static class BpfXamlBuilder
                       + parameters
                       + "</Sequence>";
 
-        return Reference(Activity("StepComposite"), $"StepStep{stepNumber}: {label}",
-            Collections(control)
+        return StepComposite(stepNumber, label, label, step, language, control);
+    }
+
+    /// <summary>
+    /// A button running a workflow or an action. The designer stores the process id and — for an
+    /// action — its message name; the button's control id is derived from that name.
+    /// </summary>
+    private static string BuildActionStep(
+        BpfStep step, BpfCatalog catalog, int language, int stepNumber, int actionNumber, int controlNumber)
+    {
+        var target = Process(catalog, step.ProcessId);
+        var isAction = target.Category == 3;
+        var uniqueName = isAction ? target.UniqueName ?? string.Empty : string.Empty;
+        var label = string.IsNullOrWhiteSpace(step.Label) ? target.Name : step.Label!;
+
+        var action = Reference(Activity("ActionComposite"), $"ActionStep{actionNumber}: Step_{actionNumber}",
+            EmptyCollections
+            + $"<x:String x:Key=\"ActionId\">{step.StepId}</x:String>"
+            // 3 = classic workflow, 0 = custom process action.
+            + $"<x:Int32 x:Key=\"ActionType\">{(isAction ? 0 : 3)}</x:Int32>"
+            + $"<s:Guid x:Key=\"ProcessId\">{target.Id:D}</s:Guid>"
+            + $"<x:String x:Key=\"UniqueName\">{Xml(uniqueName)}</x:String>"
+            + "<x:Null x:Key=\"TriggerEvents\" />"
+            + $"<Sequence x:Key=\"ActionControl\" DisplayName=\"ControlStep{controlNumber}\">"
+            + ButtonControl(label, $"{uniqueName}_Step_{controlNumber}")
+            + "</Sequence>");
+
+        // An action step cannot be required; the designer offers no such option.
+        return StepComposite(stepNumber, target.Name, label, step with { Required = false }, language, action);
+    }
+
+    private static string BuildFlowStep(
+        BpfStep step, BpfCatalog catalog, int language, int stepNumber, int flowNumber, int controlNumber)
+    {
+        var flow = Process(catalog, step.ProcessId);
+        var label = string.IsNullOrWhiteSpace(step.Label) ? flow.Name : step.Label!;
+        var stepId = Guid.Parse(step.StepId!);
+
+        var composite = Reference(Activity("FlowComposite"), $"FlowStep{flowNumber}: Step_{flowNumber}",
+            EmptyCollections
+            + $"<s:Guid x:Key=\"WorkflowId\">{flow.Id:D}</s:Guid>"
+            + $"<s:Guid x:Key=\"ActionId\">{stepId:D}</s:Guid>"
+            + $"<x:String x:Key=\"UniqueName\">FlowStep_{flow.Id:N}_{stepId:N}</x:String>"
+            + $"<Sequence x:Key=\"FlowControl\" DisplayName=\"ControlStep{controlNumber}\">"
+            + ButtonControl(label, $"Step_{controlNumber}")
+            + "</Sequence>");
+
+        return StepComposite(stepNumber, flow.Name, label, step, language, composite);
+    }
+
+    /// <summary>A workflow started by a stage or process event — an ActionComposite without a button.</summary>
+    private static string BuildTrigger(
+        BpfWorkflowTrigger trigger, string stageId, Guid processId, BpfCatalog catalog, Func<int> next)
+    {
+        var number = next();
+        var workflow = Process(catalog, trigger.WorkflowId);
+
+        var (eventName, filterId, pipelineStage) = trigger.On switch
+        {
+            BpfTriggerEvent.StageEnter => ("STAGEENTER", stageId, 40),
+            BpfTriggerEvent.StageExit => ("STAGEEXIT", stageId, 20),
+            BpfTriggerEvent.Applied => ("PROCESSAPPLIED", processId.ToString("D").ToUpperInvariant(), 40),
+            BpfTriggerEvent.Reactivated => ("PROCESSSTATUSCHANGE", "1", 40),
+            BpfTriggerEvent.Finished => ("PROCESSSTATUSCHANGE", "2", 40),
+            BpfTriggerEvent.Abandoned => ("PROCESSSTATUSCHANGE", "3", 40),
+            _ => throw new NotSupportedException($"Unknown trigger '{trigger.On}'.")
+        };
+
+        return Reference(Activity("ActionComposite"), $"ActionStep{number}: Step_{number}",
+            EmptyCollections
+            + $"<x:String x:Key=\"ActionId\">{trigger.TriggerId}</x:String>"
+            + "<x:Int32 x:Key=\"ActionType\">3</x:Int32>"
+            + $"<s:Guid x:Key=\"ProcessId\">{workflow.Id:D}</s:Guid>"
+            // For a triggered workflow the designer stores its display name here.
+            + $"<x:String x:Key=\"UniqueName\">{Xml(workflow.Name)}</x:String>"
+            + "<x:Array x:Key=\"TriggerEvents\" Type=\"mcwo:ProcessTriggerData\">"
+            + $"<mcwo:ProcessTriggerData Event=\"{eventName}\" FilterId=\"{filterId}\" PipelineStageId=\"{pipelineStage}\" />"
+            + "</x:Array>"
+            + "<x:Null x:Key=\"ActionControl\" />");
+    }
+
+    /// <param name="displayDescription">Part of the DisplayName ("StepStep7: …"); the designer puts the target's name there.</param>
+    /// <param name="label">The label shown in the stage.</param>
+    private static string StepComposite(
+        int stepNumber, string displayDescription, string label, BpfStep step, int language, string activity) =>
+        Reference(Activity("StepComposite"), $"StepStep{stepNumber}: {displayDescription}",
+            Collections(activity)
             + Labels(step.StepId!, label, language)
             + $"<x:String x:Key=\"ProcessStepId\">{step.StepId}</x:String>"
             + $"<x:Boolean x:Key=\"IsProcessRequired\">{(step.Required ? "True" : "False")}</x:Boolean>");
+
+    /// <summary>The unbound button control of an action or flow step.</summary>
+    private static string ButtonControl(string caption, string controlId) =>
+        $"<mcwb:Control ClassId=\"{BpfControlClass.Button}\" ControlDisplayName=\"{Xml(caption)}\" "
+        + $"ControlId=\"{Xml(controlId)}\" IsSystemControl=\"False\" IsUnbound=\"True\" SystemStepType=\"0\">"
+        + "<mcwb:Control.DataFieldName>" + EmptyString + "</mcwb:Control.DataFieldName>"
+        + "<mcwb:Control.Parameters>" + EmptyString + "</mcwb:Control.Parameters>"
+        + "</mcwb:Control>";
+
+    private const string EmptyString =
+        "<InArgument x:TypeArguments=\"x:String\"><Literal x:TypeArguments=\"x:String\" Value=\"\" /></InArgument>";
+
+    private const string EmptyCollections =
+        "<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\" />"
+        + "<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\" />";
+
+    private static BpfProcessInfo Process(BpfCatalog catalog, string? id)
+    {
+        if (!Guid.TryParse(id, out var guid))
+            throw new InvalidOperationException($"'{id}' is not a process id.");
+
+        return catalog.FindProcess(guid)
+               ?? throw new InvalidOperationException(
+                   $"Process {guid} is not in the catalog; its name is needed for the XAML. Validate first.");
     }
 
     private static string BuildBranching(

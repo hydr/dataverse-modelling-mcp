@@ -32,6 +32,13 @@ public sealed record BpfDefinition
     /// writing; the designer writes every label in exactly one language.
     /// </summary>
     public int? LanguageCode { get; init; }
+
+    /// <summary>
+    /// Classic workflows run when an instance of the process changes state ("global workflows" in the
+    /// designer): applied, reactivated, finished or abandoned. Each must be an activated, on-demand
+    /// workflow on the primary table.
+    /// </summary>
+    public List<BpfWorkflowTrigger> Workflows { get; init; } = [];
 }
 
 /// <summary>One stage of the process bar.</summary>
@@ -84,6 +91,52 @@ public sealed record BpfStage
     /// on a new table: the platform follows this relationship to find (or create) the record.
     /// </summary>
     public BpfRelationship? Relationship { get; init; }
+
+    /// <summary>
+    /// Classic workflows run when an instance enters or leaves this stage ("triggered process" in the
+    /// designer). Each must be an activated, on-demand workflow on this stage's table.
+    /// </summary>
+    public List<BpfWorkflowTrigger> Workflows { get; init; } = [];
+}
+
+/// <summary>When a <see cref="BpfWorkflowTrigger"/> fires.</summary>
+public static class BpfTriggerEvent
+{
+    /// <summary>Stage level: the instance moves onto the stage.</summary>
+    public const string StageEnter = "stageEnter";
+
+    /// <summary>Stage level: the instance moves off the stage.</summary>
+    public const string StageExit = "stageExit";
+
+    /// <summary>Process level: the process is applied to a record.</summary>
+    public const string Applied = "applied";
+
+    /// <summary>Process level: a finished or abandoned instance is reactivated.</summary>
+    public const string Reactivated = "reactivated";
+
+    /// <summary>Process level: the instance is finished on its last stage.</summary>
+    public const string Finished = "finished";
+
+    /// <summary>Process level: the instance is abandoned.</summary>
+    public const string Abandoned = "abandoned";
+
+    public static readonly string[] StageEvents = [StageEnter, StageExit];
+    public static readonly string[] ProcessEvents = [Applied, Reactivated, Finished, Abandoned];
+}
+
+/// <summary>A classic workflow started by the process.</summary>
+public sealed record BpfWorkflowTrigger
+{
+    /// <summary>Id of the classic workflow (category 0, on-demand, activated).</summary>
+    public string WorkflowId { get; init; } = string.Empty;
+
+    /// <summary>One of <see cref="BpfTriggerEvent"/>; stage or process events depending on where it sits.</summary>
+    public string On { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Id of the trigger inside the process (<c>ActionId</c>). Kept when rewriting; assigned when absent.
+    /// </summary>
+    public string? TriggerId { get; set; }
 }
 
 /// <summary>Step kinds a stage can hold.</summary>
@@ -93,14 +146,15 @@ public static class BpfStepKind
     public const string Field = "field";
 
     /// <summary>
-    /// A classic on-demand workflow run from a button in the stage (the designer's "Action Step").
+    /// A button that runs an on-demand classic workflow or a custom process action on the record
+    /// (the designer's "Action Step").
     /// </summary>
-    public const string Workflow = "workflow";
+    public const string Action = "action";
 
-    /// <summary>An instant Power Automate flow run from a button in the stage ("Flow Step").</summary>
+    /// <summary>A button that runs an instant Power Automate flow (the designer's "Flow Step").</summary>
     public const string Flow = "flow";
 
-    public static readonly string[] All = [Field, Workflow, Flow];
+    public static readonly string[] All = [Field, Action, Flow];
 }
 
 /// <summary>One step inside a stage.</summary>
@@ -120,12 +174,16 @@ public sealed record BpfStep
     /// <summary>For <c>field</c>: logical name of the attribute on the stage's table.</summary>
     public string? Attribute { get; init; }
 
-    /// <summary>For <c>field</c>: the stage cannot be left while the field is empty.</summary>
+    /// <summary>
+    /// For <c>field</c>: the stage cannot be left while the field is empty. For <c>flow</c>: the flow
+    /// must have run. Not available for <c>action</c>.
+    /// </summary>
     public bool Required { get; init; }
 
     /// <summary>
-    /// For <c>workflow</c>: id of an activated, on-demand classic workflow on the stage's table.
-    /// For <c>flow</c>: id of the flow's <c>workflow</c> row (category 5).
+    /// For <c>action</c>: id of an activated, on-demand classic workflow or of a custom process action
+    /// on the stage's table. For <c>flow</c>: id of the flow's <c>workflow</c> row (category 5, an
+    /// instant flow).
     /// </summary>
     public string? ProcessId { get; init; }
 

@@ -4,17 +4,42 @@ namespace Dataverse.Core.BusinessProcessFlows;
 /// <param name="AttributeType">The metadata <c>AttributeType</c>, e.g. "String", "Lookup", "Picklist".</param>
 public sealed record BpfFieldInfo(string AttributeType, string? DisplayName);
 
-/// <summary>Attributes of the tables a definition touches, keyed by table and attribute.</summary>
+/// <summary>A workflow, action or flow a process refers to.</summary>
+/// <param name="Category">0 classic workflow, 3 custom process action, 5 cloud flow.</param>
+/// <param name="UniqueName">The message name of an action; what the XAML stores as its <c>UniqueName</c>.</param>
+public sealed record BpfProcessInfo(
+    Guid Id,
+    string Name,
+    string? UniqueName,
+    int Category,
+    string? PrimaryEntity,
+    bool IsActivated,
+    bool OnDemand);
+
+/// <summary>
+/// What builder and validator know about the environment: the attributes of the tables a definition
+/// touches, and the workflows, actions and flows it refers to.
+/// </summary>
 /// <remarks>
 /// An <see cref="Empty"/> catalog is valid: the builder then writes text controls and the attribute
 /// names as captions, and the validator skips the existence checks. That keeps both usable offline.
+/// A step or trigger that refers to a process does need it, though — its name goes into the XAML.
 /// </remarks>
-public sealed class BpfFieldCatalog
+public sealed class BpfCatalog
 {
     private readonly Dictionary<string, Dictionary<string, BpfFieldInfo>?> _tables =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public static BpfFieldCatalog Empty { get; } = new();
+    private readonly Dictionary<Guid, BpfProcessInfo?> _processes = [];
+
+    /// <summary>Registers a process; null means it does not exist.</summary>
+    public void AddProcess(Guid id, BpfProcessInfo? info) => _processes[id] = info;
+
+    public bool KnowsProcess(Guid id) => _processes.ContainsKey(id);
+
+    public BpfProcessInfo? FindProcess(Guid id) => _processes.GetValueOrDefault(id);
+
+    public static BpfCatalog Empty { get; } = new();
 
     /// <summary>Registers a table; <paramref name="attributes"/> null means the table does not exist.</summary>
     public void Add(string entity, IReadOnlyDictionary<string, BpfFieldInfo>? attributes) =>
@@ -57,6 +82,9 @@ public static class BpfControlClass
     public const string Decimal = "C3EFE0C3-0EC6-42BE-8349-CBD9079DFD8E";
     public const string Float = "0D2C745A-E5A8-4C8F-BA63-C6D3BB604660";
     public const string MultiSelectOptionSet = "4AA28AB7-9C13-4F57-A73D-AD894D048B5F";
+
+    /// <summary>The unbound button of an action or flow step.</summary>
+    public const string Button = "00ad73da-bd4d-49c6-88a8-2f4f4cad4a20";
 
     public static string For(string? attributeType) => attributeType switch
     {

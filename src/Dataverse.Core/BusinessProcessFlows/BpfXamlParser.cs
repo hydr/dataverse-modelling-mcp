@@ -60,6 +60,7 @@ public static class BpfXamlParser
         var legacyLinks = new List<(int LastStageIndex, string Name, string? Attribute)>();
         var hasExplicitPath = false;
         int? language = null;
+        var processWorkflows = new List<BpfWorkflowTrigger>();
 
         foreach (var element in workflow.Elements())
         {
@@ -89,7 +90,7 @@ public static class BpfXamlParser
 
                 if (childAqn.Contains(".StageComposite"))
                 {
-                    var (stage, nextId, explicitPath) = ParseStage(child, entity, unrecognised, ref language);
+                    var (stage, nextId, explicitPath) = ParseStage(child, entity, unrecognised, processWorkflows, ref language);
                     hasExplicitPath |= explicitPath;
                     stages.Add(stage);
                     storedNext.Add(nextId);
@@ -147,7 +148,8 @@ public static class BpfXamlParser
         {
             PrimaryEntity = primaryEntity,
             Stages = simplified,
-            LanguageCode = language
+            LanguageCode = language,
+            Workflows = processWorkflows
         };
 
         return new BpfParseResult(definition, unrecognised.Count == 0, unrecognised, notes);
@@ -156,8 +158,10 @@ public static class BpfXamlParser
     // ---------------------------------------------------------------- stages and steps
 
     /// <returns>The stage, its stored next-stage id, and whether the stage stores one at all.</returns>
+    /// <param name="processWorkflows">Receives the process-level workflows the designer keeps in a stage.</param>
     private static (BpfStage Stage, string? NextId, bool ExplicitPath) ParseStage(
-        XElement element, string entity, List<string> unrecognised, ref int? language)
+        XElement element, string entity, List<string> unrecognised, List<BpfWorkflowTrigger> processWorkflows,
+        ref int? language)
     {
         var (_, displayDescription) = WorkflowXamlParser.SplitDisplayName(Attr(element, "DisplayName"));
         var stageId = NormaliseId(PropertyString(element, "StageId"));
@@ -168,6 +172,7 @@ public static class BpfXamlParser
         var nextId = nextElement?.Name.LocalName == "String" ? NormaliseId(nextElement.Value) : null;
 
         var steps = new List<BpfStep>();
+        var stageWorkflows = new List<BpfWorkflowTrigger>();
         BpfBranching? branching = null;
 
         foreach (var child in ActivitiesOf(element))
@@ -179,6 +184,12 @@ public static class BpfXamlParser
                 var step = ParseStep(child, unrecognised, ref language);
                 if (step is not null)
                     steps.Add(step);
+            }
+            else if (aqn.Contains(".ActionComposite"))
+            {
+                var trigger = ParseTrigger(child, label, unrecognised);
+                if (trigger is not null)
+                    (BpfTriggerEvent.StageEvents.Contains(trigger.On) ? stageWorkflows : processWorkflows).Add(trigger);
             }
             else if (aqn.Contains(".ConditionSequence"))
             {
@@ -200,7 +211,8 @@ public static class BpfXamlParser
             Entity = entity,
             Category = BpfStageCategory.FromNumber(PropertyString(element, "StageCategory")),
             Steps = steps,
-            Branch = branching
+            Branch = branching,
+            Workflows = stageWorkflows
         };
 
         return (stage, nextId, explicitPath);
@@ -211,6 +223,35 @@ public static class BpfXamlParser
         var label = FirstLabel(element, ref language);
         var stepId = NormaliseId(PropertyString(element, "ProcessStepId"));
         var required = string.Equals(PropertyString(element, "IsProcessRequired"), "True", StringComparison.OrdinalIgnoreCase);
+
+        var inner = ActivitiesOf(element).FirstOrDefault();
+        var innerAqn = Attr(inner, "AssemblyQualifiedName") ?? string.Empty;
+
+        if (innerAqn.Contains(".ActionComposite"))
+        {
+            if (ActivitiesOf(inner!).Any())
+                unrecognised.Add($"Action step '{label}' passes input parameters, which this server does not author.");
+
+            return new BpfStep
+            {
+                Kind = BpfStepKind.Action,
+                StepId = stepId,
+                Label = label,
+                ProcessId = NormaliseId(PropertyString(inner!, "ProcessId"))
+            };
+        }
+
+        if (innerAqn.Contains(".FlowComposite"))
+        {
+            return new BpfStep
+            {
+                Kind = BpfStepKind.Flow,
+                StepId = stepId,
+                Label = label,
+                Required = required,
+                ProcessId = NormaliseId(PropertyString(inner!, "WorkflowId"))
+            };
+        }
 
         var control = element.Descendants().FirstOrDefault(e => e.Name.LocalName == "Control");
         if (control is null)
@@ -237,6 +278,38 @@ public static class BpfXamlParser
             ClassId = Attr(control, "ClassId")?.ToUpperInvariant(),
             Parameters = NullIfEmpty(Attr(control, "Parameters")),
             SystemControl = string.Equals(Attr(control, "IsSystemControl"), "True", StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    /// <summary>A workflow started by a stage or process event.</summary>
+    private static BpfWorkflowTrigger? ParseTrigger(XElement element, string? stageLabel, List<string> unrecognised)
+    {
+        var data = element.Descendants().FirstOrDefault(e => e.Name.LocalName == "ProcessTriggerData");
+        var eventName = Attr(data, "Event");
+        var filter = Attr(data, "FilterId");
+
+        var on = eventName switch
+        {
+            "STAGEENTER" => BpfTriggerEvent.StageEnter,
+            "STAGEEXIT" => BpfTriggerEvent.StageExit,
+            "PROCESSAPPLIED" => BpfTriggerEvent.Applied,
+            "PROCESSSTATUSCHANGE" when filter == "1" => BpfTriggerEvent.Reactivated,
+            "PROCESSSTATUSCHANGE" when filter == "2" => BpfTriggerEvent.Finished,
+            "PROCESSSTATUSCHANGE" when filter == "3" => BpfTriggerEvent.Abandoned,
+            _ => null
+        };
+
+        if (on is null)
+        {
+            unrecognised.Add($"A workflow in stage '{stageLabel}' has an unknown trigger ({eventName} {filter}).");
+            return null;
+        }
+
+        return new BpfWorkflowTrigger
+        {
+            WorkflowId = NormaliseId(PropertyString(element, "ProcessId")) ?? string.Empty,
+            On = on,
+            TriggerId = NormaliseId(PropertyString(element, "ActionId"))
         };
     }
 

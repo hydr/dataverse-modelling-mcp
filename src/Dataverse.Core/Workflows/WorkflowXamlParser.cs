@@ -1164,7 +1164,9 @@ public static class WorkflowXamlParser
         return match.Groups[1].Value switch
         {
             "String" => "String",
-            "Int" => "Integer",
+            // The enum member is "Integer" — what the builder writes and the designer too; "Int" is
+            // kept for whatever wrote it that way before.
+            "Integer" or "Int" => "Integer",
             "Boolean" => "Boolean",
             "DateTime" => "DateTime",
             "Decimal" => "Decimal",

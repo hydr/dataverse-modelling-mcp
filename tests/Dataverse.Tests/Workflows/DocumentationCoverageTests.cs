@@ -116,4 +116,76 @@ public sealed class DocumentationCoverageTests
                 "tools missing from docs/tools/workflows.md");
         });
     }
+
+    // ---------------------------------------------------------------- business process flows
+
+    [Test]
+    public void EveryBpfValidationCode_IsMentionedInTheSkill()
+    {
+        var used = new[]
+            {
+                Read("src", "Dataverse.Core", "BusinessProcessFlows", "BpfDefinitionValidator.cs"),
+                Read("src", "Dataverse.Core", "Services", "BusinessProcessFlowService.cs"),
+                Read("src", "Dataverse.Server", "Tools", "BusinessProcessFlowTools.cs")
+            }
+            .SelectMany(s => Regex.Matches(s, @"""(BPF\d{3})""").Cast<Match>())
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var skill = Read("skills", "business-process-flows", "SKILL.md");
+        var documented = Regex.Matches(skill, @"BPF\d{3}").Cast<Match>().Select(m => m.Value).ToHashSet();
+        var missing = used.Except(documented).OrderBy(c => c).ToList();
+
+        Assert.That(used, Is.Not.Empty, "no codes found — have the files moved?");
+        Assert.That(missing, Is.Empty,
+            "These validation codes exist in the code but are not in the business-process-flows skill: "
+            + string.Join(", ", missing));
+    }
+
+    [Test]
+    public void EveryBpfModelField_IsMentionedInTheSkill()
+    {
+        var model = Read("src", "Dataverse.Core", "BusinessProcessFlows", "BpfDefinition.cs");
+
+        var fields = Regex.Matches(model, @"public\s+[\w<>?,\[\]\s]+?\s(\w+)\s*\{\s*get")
+            .Cast<Match>()
+            .Select(m => m.Groups[1].Value)
+            .Select(n => char.ToLowerInvariant(n[0]) + n[1..])
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var skill = Read("skills", "business-process-flows", "SKILL.md");
+        var missing = fields
+            .Where(f => !Regex.IsMatch(skill, $@"\b{Regex.Escape(f)}\b"))
+            .OrderBy(f => f)
+            .ToList();
+
+        Assert.That(missing, Is.Empty,
+            "These fields of the business-process-flow model are not documented in the skill: "
+            + string.Join(", ", missing));
+    }
+
+    [Test]
+    public void EveryBpfTool_IsMentionedInTheSkillAndTheToolDoc()
+    {
+        var tools = Regex.Matches(
+                Read("src", "Dataverse.Server", "Tools", "BusinessProcessFlowTools.cs"),
+                @"McpServerTool\(Name = ""(bpf_\w+)""\)")
+            .Cast<Match>()
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+
+        Assert.That(tools, Is.Not.Empty, "no tools found — has the file moved?");
+
+        var skill = Read("skills", "business-process-flows", "SKILL.md");
+        var toolDoc = Read("docs", "tools", "business-process-flows.md");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tools.Where(t => !skill.Contains(t, StringComparison.Ordinal)), Is.Empty,
+                "tools missing from the business-process-flows skill");
+            Assert.That(tools.Where(t => !toolDoc.Contains(t, StringComparison.Ordinal)), Is.Empty,
+                "tools missing from docs/tools/business-process-flows.md");
+        });
+    }
 }

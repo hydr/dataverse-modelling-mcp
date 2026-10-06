@@ -28,7 +28,7 @@
 │  Services/                                                  │
 │    WorkflowService, CloudFlowService, TableService,         │
 │    ViewService, SolutionService, SecurityRoleService,       │
-│    EnvironmentVariableService                               │
+│    EnvironmentVariableService, BusinessProcessFlowService   │
 │                                                             │
 │  Config/                                                    │
 │    ConfigProvider          — reads config.json              │

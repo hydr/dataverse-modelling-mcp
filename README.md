@@ -2,7 +2,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI clients (Claude Code, GitHub Copilot, etc.) first-class access to Dataverse and Power Platform.
 
-Covers 84 tools across Classic Workflows, Cloud Flows, Tables & Columns, Records, Views, Security Roles, Environment Variables, Solutions/ALM, Solution Pipelines, Web Resources, Publishing, Modern Commands, Classic Ribbons and Auth — all via delegated user auth (no secrets, no service accounts).
+Covers 111 tools across Classic Workflows, Business Process Flows, Cloud Flows, Tables & Columns, Records, Views, Security Roles, Environment Variables, Solutions/ALM, Solution Pipelines, Web Resources, Publishing, Modern Commands, Classic Ribbons and Auth — all via delegated user auth (no secrets, no service accounts).
 
 ---
 
@@ -11,6 +11,7 @@ Covers 84 tools across Classic Workflows, Cloud Flows, Tables & Columns, Records
 | Group | Tools |
 |-------|-------|
 | **Classic Workflows** | `workflow_list`, `workflow_get`, `workflow_export_xaml`, `workflow_create`, `workflow_update`, `workflow_set_state`, `workflow_delete`, `workflow_assign`, `workflow_list_activities`, `workflow_get_activity_parameters`, `workflow_explain`, `workflow_get_definition`, `workflow_validate_definition`, `workflow_set_definition`, `workflow_diagnose_activation`, `workflow_restore_xaml`, `workflow_validate` |
+| **Business Process Flows** | `bpf_list`, `bpf_get_definition`, `bpf_validate_definition`, `bpf_create`, `bpf_set_definition`, `bpf_update`, `bpf_set_state`, `bpf_delete`, `bpf_set_order`, `bpf_grant_access`, `bpf_export_xaml`, `bpf_restore_xaml`, `bpf_instance_list`, `bpf_instance_start`, `bpf_instance_move`, `bpf_instance_set_status` |
 | **Cloud Flows** | `flow_list`, `flow_get`, `flow_create`, `flow_set_state`, `flow_get_runs`, `flow_list_versions`, `flow_get_version`, `flow_publish`, `flow_save_draft`, `flow_restore_version`, `flow_get_clientdata`, `flow_patch_action_input`, `flow_save_draft_and_publish`, `fetchxml_validate`, `flow_trigger_run`, `flow_wait_for_run`, `flow_get_run_actions`, `flow_get_action_outputs`, `flow_describe` |
 | **Tables & Columns** | `table_list`, `table_get`, `table_create`, `table_update`, `column_add`, `column_update` |
 | **Records** | `record_upsert` |
@@ -184,6 +185,7 @@ parts of the docs above surface without anyone having to know they exist.
 | Skill | Loads when |
 |---|---|
 | [`classic-workflows`](skills/classic-workflows/SKILL.md) | reading, building or debugging a classic workflow / its XAML |
+| [`business-process-flows`](skills/business-process-flows/SKILL.md) | creating, changing or running a business process flow (process bar, stages, BPF instances) |
 | [`cloud-flows`](skills/cloud-flows/SKILL.md) | working with solution-aware Power Automate flows |
 | [`solution-pipelines`](skills/solution-pipelines/SKILL.md) | promoting a solution dev → staging → prod |
 | [`modeling-patterns`](skills/modeling-patterns/SKILL.md) | designing tables, columns or relationships |

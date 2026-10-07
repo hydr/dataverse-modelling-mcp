@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dataverse-modelling-mcp</ToolCommandName>
     <PackageId>Dataverse.ModellingMcp.Setup</PackageId>
-    <Version>1.22.0</Version>
+    <Version>1.23.0</Version>
     <Authors>crossvertise</Authors>
     <Description>Dataverse Modelling MCP server and its setup wizard: run "dataverse-modelling-mcp" to configure, "dataverse-modelling-mcp server" to start the MCP server.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

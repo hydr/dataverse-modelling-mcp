@@ -12,31 +12,30 @@ public sealed class FeedbackTool
 {
     [McpServerTool(Name = "dataverse_submit_feedback")]
     [Description(
-        "Optionales Telemetrie-Feedback zur aktuellen Session. Wird NUR übertragen, wenn der " +
-        "Server-Betreiber Application Insights konfiguriert hat (Umgebungsvariable " +
-        "APPLICATIONINSIGHTS_CONNECTION_STRING); andernfalls ist der Aufruf ein No-op und es wird " +
-        "nichts über das Netz gesendet. Kann am Ende einer Session aufgerufen werden, um Hinweise zu " +
-        "geben, wo der Agent nicht weiterkam, was verbessert werden könnte oder was gut funktioniert hat.")]
+        "Optional telemetry feedback on the current session. Sent ONLY if the server operator has " +
+        "configured Application Insights (environment variable APPLICATIONINSIGHTS_CONNECTION_STRING); " +
+        "otherwise the call is a no-op and nothing is sent over the network. Can be called at the end " +
+        "of a session to report where the agent got stuck, what could be improved or what worked well.")]
     public static Task<object> SubmitAsync(
         TelemetryClient telemetry,
         ILogger<FeedbackTool> logger,
         RequestContext<CallToolRequestParams> context,
         [Description(
-            "Das Feedback zur Session: Was lief gut? Wo ist der Agent nicht weitergekommen? " +
-            "Was an den Dataverse-Tools oder Skill-Anleitungen sollte verbessert werden?")]
+            "The feedback on the session: What went well? Where did the agent get stuck? " +
+            "What should be improved in the Dataverse tools or the skill instructions?")]
         string feedback,
         [Description(
-            "Kategorie des Feedbacks: 'improvement' (Verbesserungsvorschlag), " +
-            "'blocked' (Agent konnte nicht weitermachen), " +
-            "'success' (hat gut funktioniert), " +
-            "'bug' (Fehler im Tool oder den Daten), " +
-            "'general' (allgemeines Feedback).")]
+            "Category of the feedback: 'improvement' (a suggestion), " +
+            "'blocked' (the agent could not continue), " +
+            "'success' (worked well), " +
+            "'bug' (an error in a tool or in the data), " +
+            "'general' (general feedback).")]
         string category = "general",
         [Description(
-            "Optionale Kurzzusammenfassung der Session: was wurde versucht, was wurde erreicht.")]
+            "Optional short summary of the session: what was attempted, what was achieved.")]
         string? sessionSummary = null,
         [Description(
-            "Optional: wie stark hat es die Session beeinträchtigt? 'low', 'medium' oder 'high'.")]
+            "Optional: how much did it affect the session? 'low', 'medium' or 'high'.")]
         string? severity = null,
         CancellationToken ct = default)
     {
@@ -47,13 +46,13 @@ public sealed class FeedbackTool
                 feedback, category, sessionSummary, severity, client?.Name, client?.Version));
             telemetry.Flush();
 
-            logger.LogInformation("Session-Feedback empfangen [category={Category}, severity={Severity}]: {Feedback}", category, severity, feedback);
+            logger.LogInformation("Session feedback received [category={Category}, severity={Severity}]: {Feedback}", category, severity, feedback);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Feedback konnte nicht an Application Insights übermittelt werden.");
+            logger.LogWarning(ex, "Feedback could not be sent to Application Insights.");
         }
 
-        return Task.FromResult<object>(new { status = "ok", message = "Feedback empfangen. Danke!" });
+        return Task.FromResult<object>(new { status = "ok", message = "Feedback received. Thank you!" });
     }
 }

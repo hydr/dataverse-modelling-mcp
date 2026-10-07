@@ -325,8 +325,8 @@ This is the part that cost the most time, and it was a method problem, not a tec
 
 The button **was rendering the whole time** — but with an unresolved `$LocLabels:` reference, so its
 caption was the literal string `LabelText`. The check was a search for the expected caption
-("auflösen"), which found nothing, which led to the conclusion that classic ribbons no longer worked at
-all on this org. The verification method hid the success.
+("resolve"), which found nothing, which led to the conclusion that classic
+ribbons no longer worked at all on this org. The verification method hid the success.
 
 So:
 
@@ -391,7 +391,7 @@ could add a button to"
 | `validateLocation` | bool | no | Default true — turning it off re-enables failure 4 |
 | `publish` | bool | no | Default true |
 
-**Example prompt:** "Add a grid button 'EA-ER-Differenz auflösen' to sample_purchaseorder that calls
+**Example prompt:** "Add a grid button 'Resolve price difference' to sample_purchaseorder that calls
 Sample.PurchaseOrder.CorrectPrice.onGridButton in sample_purchaseorder_correct_price.js with
 SelectedControlSelectedItemIds and SelectedControl, enabled only when exactly one row is selected"
 

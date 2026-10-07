@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dataverse-modelling-mcp",
   "displayName": "Dataverse Modelling MCP",
-  "version": "1.21.1",
-  "description": "Lokales C#-MCP zur Modellierung von Dataverse-Tabellen, Spalten, Views, Cloud Flows und Command-Bar-Buttons. Plugin-, Binary- und Tool-Version sind identisch; der Launcher bringt die Binary bei jedem Serverstart auf die in scripts/BINARY_VERSION gepinnte Version.",
+  "version": "1.21.2",
+  "description": "Local C# MCP server for modelling Dataverse: tables, columns, views, classic workflows, business process flows, cloud flows and command bar buttons. Plugin, binary and tool versions are identical; on every server start the launcher brings the binary to the version pinned in scripts/BINARY_VERSION.",
   "author": {
     "name": "Crossvertise GmbH",
     "email": "it@crossvertise.com"
@@ -16,26 +16,26 @@
     "dataverse_url": {
       "type": "string",
       "title": "Dataverse Environment URL",
-      "description": "z. B. https://yourorg.crm4.dynamics.com — die URL der Dataverse-Umgebung, gegen die modelliert werden soll.",
+      "description": "e.g. https://yourorg.crm4.dynamics.com — the URL of the Dataverse environment to model against.",
       "required": true
     },
     "client_id": {
       "type": "string",
       "title": "Azure AD Application (Client) ID",
-      "description": "AppRegistration mit Dataverse-Berechtigung. Wird im OS-Keychain gespeichert.",
+      "description": "App registration with Dataverse permission. Stored in the OS keychain.",
       "sensitive": true,
       "required": true
     },
     "tenant_id": {
       "type": "string",
       "title": "Azure AD Tenant ID",
-      "description": "Optional. Default: Tenant der Plugin-Umgebung.",
+      "description": "Optional. Default: the tenant of the plugin environment.",
       "required": false
     },
     "release_repo": {
       "type": "string",
-      "title": "Release-Repo fuer die Binary",
-      "description": "GitHub-Repo mit Release-Assets, z. B. 'hydr/dataverse-modelling-mcp'. Default reicht in der Regel.",
+      "title": "Release repository for the binary",
+      "description": "GitHub repository with the release assets, e.g. 'hydr/dataverse-modelling-mcp'. The default is usually right.",
       "default": "hydr/dataverse-modelling-mcp",
       "required": false
     }

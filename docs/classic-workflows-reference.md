@@ -1,122 +1,122 @@
-# Klassische Workflows in Microsoft Dataverse: Architektur- und Formatreferenz
+# Classic Workflows in Microsoft Dataverse: Architecture and Format Reference
 
 > [!IMPORTANT]
-> **Dies ist kein offizielles Microsoft-Dokument.** Diese Referenz wurde durch systematisches
-> Reverse Engineering des klassischen Prozess-Designers auf einer Dataverse-Umgebung erstellt
-> (Netzwerk-Mitschnitt, XAML-Differenzanalyse, Web-API-Abfragen). Sie beschreibt **undokumentierte
-> interne Schnittstellen**, die Microsoft ohne Vorankündigung ändern kann. Die beschriebenen
-> SOAP-Endpunkte sind nicht für Drittanbieter freigegeben. Verwendung auf eigenes Risiko.
+> **This is not an official Microsoft document.** This reference was produced by systematic
+> reverse engineering of the classic process designer on a Dataverse environment
+> (network capture, XAML diff analysis, Web API queries). It describes **undocumented
+> internal interfaces** that Microsoft can change without notice. The SOAP endpoints described
+> here are not released for third parties. Use at your own risk.
 >
-> Erhebungsgrundlage: Dataverse 9.2 (`Microsoft.Crm.Workflow` 9.0.0.0), Erhebungsdatum 2026-07-29.
+> Basis of the investigation: Dataverse 9.2 (`Microsoft.Crm.Workflow` 9.0.0.0), investigated on 2026-07-29.
 
-## In diesem Artikel
+## In this article
 
-- [Übersicht](#übersicht)
-- [Datenmodell](#datenmodell)
-- [Architektur des Prozess-Designers](#architektur-des-prozess-designers)
-- [Der Workflow-Webservice](#der-workflow-webservice)
-- [Das Bedingungsformat conditionXml](#das-bedingungsformat-conditionxml)
-- [Aufbau des Workflow-XAML](#aufbau-des-workflow-xaml)
-- [Namenskonventionen](#namenskonventionen)
-- [Aktivitätsreferenz](#aktivitätsreferenz)
-- [Wertausdrücke](#wertausdrücke)
-- [Benutzerdefinierte Workflowaktivitäten](#benutzerdefinierte-workflowaktivitäten)
-- [Aktivierung und Kompilierung](#aktivierung-und-kompilierung)
-- [Programmatischer Zugriff](#programmatischer-zugriff)
-- [Fehlerreferenz](#fehlerreferenz)
-- [Einschränkungen und Hinweise](#einschränkungen-und-hinweise)
-- [Anhang: Untersuchungsmethodik](#anhang-untersuchungsmethodik)
+- [Overview](#overview)
+- [Data model](#data-model)
+- [Architecture of the process designer](#architecture-of-the-process-designer)
+- [The workflow web service](#the-workflow-web-service)
+- [The conditionXml condition format](#the-conditionxml-condition-format)
+- [Structure of the workflow XAML](#structure-of-the-workflow-xaml)
+- [Naming conventions](#naming-conventions)
+- [Activity reference](#activity-reference)
+- [Value expressions](#value-expressions)
+- [Custom workflow activities](#custom-workflow-activities)
+- [Activation and compilation](#activation-and-compilation)
+- [Programmatic access](#programmatic-access)
+- [Error reference](#error-reference)
+- [Limitations and notes](#limitations-and-notes)
+- [Appendix: Investigation methodology](#appendix-investigation-methodology)
 
-## Übersicht
+## Overview
 
-Klassische Workflows (in der Benutzeroberfläche „Prozesse" der Kategorie *Workflow*) sind die
-Vorgänger der modernen Cloud Flows. Sie werden in der Tabelle `workflow` gespeichert und tragen
-ihre Ablauflogik als **Windows Workflow Foundation 4 (WF4) XAML** in der Spalte `xaml`.
+Classic workflows (in the user interface, "Processes" of the category *Workflow*) are the
+predecessors of modern cloud flows. They are stored in the `workflow` table and carry
+their execution logic as **Windows Workflow Foundation 4 (WF4) XAML** in the `xaml` column.
 
-Zum Verständnis der Programmierbarkeit sind drei Aussagen zentral:
+Three statements are central to understanding their programmability:
 
-1. Der klassische Prozess-Designer ist **serverseitig gerendert**. Er erzeugt das XAML nicht im
-   Browser, sondern ruft für jede Bearbeitungsaktion einen internen SOAP-Dienst auf, der das XAML
-   in der Datenbank fortschreibt und ein HTML-Fragment für die Anzeige zurückliefert.
-2. Der Designer **speichert inkrementell**. Es gibt keinen Speichervorgang, der ein im Client
-   aufgebautes Modell überträgt. Jeder einzelne Bearbeitungsschritt ist bereits persistiert.
-3. Das XAML ist folglich **Ausgabe eines Generators**, nicht Eingabe. Seine Semantik hängt zu
-   einem erheblichen Teil an **Namenskonventionen** (Schritt-IDs, `DisplayName`, Variablennamen).
-   Wer XAML selbst erzeugt, muss diese Konventionen einhalten, sonst kann der Designer den
-   Workflow nicht mehr darstellen.
+1. The classic process designer is **rendered server-side**. It does not generate the XAML in the
+   browser; instead, for every editing action it calls an internal SOAP service that updates the XAML
+   in the database and returns an HTML fragment for display.
+2. The designer **saves incrementally**. There is no save operation that transmits a model built
+   up in the client. Every single editing step is already persisted.
+3. The XAML is therefore **the output of a generator**, not an input. Its semantics depend to a
+   considerable extent on **naming conventions** (step IDs, `DisplayName`, variable names).
+   Anyone who generates XAML themselves must follow these conventions, otherwise the designer can
+   no longer display the workflow.
 
-## Datenmodell
+## Data model
 
-### Tabelle `workflow`
+### Table `workflow`
 
-| Spalte | Typ | Beschreibung |
+| Column | Type | Description |
 |---|---|---|
-| `workflowid` | Uniqueidentifier | Primärschlüssel. Wird serverseitig erzeugt. |
-| `name` | String | Anzeigename des Prozesses. |
-| `category` | Picklist | `0` = Workflow, `1` = Dialog, `2` = Geschäftsregel, `3` = Aktion, `4` = Geschäftsprozessfluss, `5` = Moderner Fluss. |
-| `type` | Picklist | `1` = Definition, `2` = interne Aktivierungskopie, `3` = Vorlage. Abfragen sollten auf `type eq 1` filtern. |
-| `primaryentity` | String | Logischer Name der Primärentität. |
-| `xaml` | Memo | WF4-XAML der Ablauflogik. Siehe [Aufbau des Workflow-XAML](#aufbau-des-workflow-xaml). |
-| `clientdata` | Memo | **Bei klassischen Workflows immer `null`.** Siehe Hinweis unten. |
-| `statecode` / `statuscode` | State/Status | `0`/`1` = Entwurf, `1`/`2` = Aktiviert. |
-| `mode` | Picklist | `0` = Hintergrund (asynchron), `1` = Echtzeit (synchron). |
-| `scope` | Picklist | `1` = Benutzer, `2` = Geschäftseinheit, `3` = Über- und untergeordnete Geschäftseinheiten, `4` = Organisation. |
-| `runas` | Picklist | `0` = Besitzer, `1` = Aufrufender Benutzer. |
-| `ondemand` | Boolean | Als bedarfsabhängiger Prozess verfügbar. |
-| `subprocess` | Boolean | Als untergeordneter Prozess aufrufbar. |
-| `triggeroncreate` / `triggerondelete` | Boolean | Auslöser bei Erstellen/Löschen. |
-| `createstage` / `updatestage` / `deletestage` | Integer | `20` = Vor dem Vorgang, `40` = Nach dem Vorgang. `0`/`null` = kein Auslöser. |
-| `triggeronupdateattributelist` | String | Kommaseparierte Attributliste, die den Aktualisierungs-Auslöser einschränkt. |
-| `istransacted`, `asyncautodelete`, `syncworkflowlogonfailure`, `rank` | – | Ausführungsverhalten. |
+| `workflowid` | Uniqueidentifier | Primary key. Generated server-side. |
+| `name` | String | Display name of the process. |
+| `category` | Picklist | `0` = Workflow, `1` = Dialog, `2` = Business rule, `3` = Action, `4` = Business process flow, `5` = Modern flow. |
+| `type` | Picklist | `1` = Definition, `2` = internal activation copy, `3` = Template. Queries should filter on `type eq 1`. |
+| `primaryentity` | String | Logical name of the primary entity. |
+| `xaml` | Memo | WF4 XAML of the execution logic. See [Structure of the workflow XAML](#structure-of-the-workflow-xaml). |
+| `clientdata` | Memo | **Always `null` for classic workflows.** See the note below. |
+| `statecode` / `statuscode` | State/Status | `0`/`1` = Draft, `1`/`2` = Activated. |
+| `mode` | Picklist | `0` = Background (asynchronous), `1` = Real-time (synchronous). |
+| `scope` | Picklist | `1` = User, `2` = Business unit, `3` = Parent and child business units, `4` = Organization. |
+| `runas` | Picklist | `0` = Owner, `1` = Calling user. |
+| `ondemand` | Boolean | Available as an on-demand process. |
+| `subprocess` | Boolean | Callable as a child process. |
+| `triggeroncreate` / `triggerondelete` | Boolean | Trigger on create/delete. |
+| `createstage` / `updatestage` / `deletestage` | Integer | `20` = Before the operation, `40` = After the operation. `0`/`null` = no trigger. |
+| `triggeronupdateattributelist` | String | Comma-separated attribute list that restricts the update trigger. |
+| `istransacted`, `asyncautodelete`, `syncworkflowlogonfailure`, `rank` | – | Execution behavior. |
 
 > [!NOTE]
-> `clientdata` wird von klassischen Workflows nicht verwendet — geprüft an mehreren Workflows
-> unterschiedlichen Alters, einschließlich frisch im Designer erstellter. Die
-> Darstellungsinformationen des Designers stecken vollständig im XAML (siehe
-> [Namenskonventionen](#namenskonventionen)). Die Spalte wird von *modernen* Flows genutzt.
+> `clientdata` is not used by classic workflows — checked on several workflows
+> of different ages, including ones freshly created in the designer. The designer's
+> display information lives entirely in the XAML (see
+> [Naming conventions](#naming-conventions)). The column is used by *modern* flows.
 
-### Zugehörige Tabellen
+### Related tables
 
-| Tabelle | Verwendung |
+| Table | Usage |
 |---|---|
-| `plugintype` | Registrierte Typen, darunter benutzerdefinierte Workflowaktivitäten. Die Spalte `customworkflowactivityinfo` enthält deren Parametermetadaten. |
-| `pluginassembly` | Assemblys mit `publickeytoken`, `culture`, `version`. |
+| `plugintype` | Registered types, including custom workflow activities. The `customworkflowactivityinfo` column contains their parameter metadata. |
+| `pluginassembly` | Assemblies with `publickeytoken`, `culture`, `version`. |
 
-## Architektur des Prozess-Designers
+## Architecture of the process designer
 
-### Einstiegspunkte
+### Entry points
 
-Der klassische Designer ist Teil des Legacy-Webclients:
+The classic designer is part of the legacy web client:
 
-| Zweck | URL |
+| Purpose | URL |
 |---|---|
-| Prozessliste (klassisch, **ohne** Befehlsleiste) | `/_root/homepage.aspx?etc=4703` |
-| Lösungs-Explorer (klassisch, **mit** Befehlsleiste) | `/tools/solution/edit.aspx?id=%7BFD140AAF-4DF4-11DD-BD17-0019B9312238%7D` |
-| Prozess-Designer | `/sfa/workflow/edit.aspx?appSolutionId={solutionId}&id={workflowId}` |
-| Bedingungseditor | `/Condition/Condition.aspx?EntityId={workflowId}&StepId={branchStepId}` |
-| Feldwert-Editor | `/SFA/Workflow/entityform.aspx?workflowId={id}&entityname={e}&activityname={stepId}&stepId={stepId}&entityFullName={e}&primaryentity={e}&mode=1` |
-| Parametereditor für Codeaktivitäten | `/SFA/Workflow/customactivityform.aspx?workflowId={id}&activityname={stepId}&readonlymode=false&customstepcategory=CustomActivity&messageName=` |
+| Process list (classic, **without** command bar) | `/_root/homepage.aspx?etc=4703` |
+| Solution explorer (classic, **with** command bar) | `/tools/solution/edit.aspx?id=%7BFD140AAF-4DF4-11DD-BD17-0019B9312238%7D` |
+| Process designer | `/sfa/workflow/edit.aspx?appSolutionId={solutionId}&id={workflowId}` |
+| Condition editor | `/Condition/Condition.aspx?EntityId={workflowId}&StepId={branchStepId}` |
+| Field value editor | `/SFA/Workflow/entityform.aspx?workflowId={id}&entityname={e}&activityname={stepId}&stepId={stepId}&entityFullName={e}&primaryentity={e}&mode=1` |
+| Parameter editor for code activities | `/SFA/Workflow/customactivityform.aspx?workflowId={id}&activityname={stepId}&readonlymode=false&customstepcategory=CustomActivity&messageName=` |
 
 > [!TIP]
-> Die GUID `{FD140AAF-4DF4-11DD-BD17-0019B9312238}` ist die Standardlösung und in jeder
-> Organisation identisch. Die moderne Oberfläche entfernt die Befehlsleiste aus der Prozessliste;
-> zum Anlegen eines Prozesses ist der Lösungs-Explorer erforderlich.
+> The GUID `{FD140AAF-4DF4-11DD-BD17-0019B9312238}` is the default solution and is identical in every
+> organization. The modern interface removes the command bar from the process list;
+> creating a process requires the solution explorer.
 >
-> Der Aufruf von `/sfa/workflow/edit.aspx` ohne Kontextparameter erzeugt einen Serverfehler.
+> Calling `/sfa/workflow/edit.aspx` without context parameters produces a server error.
 
-### Verarbeitungsmodell
+### Processing model
 
-Jede Bearbeitungsaktion folgt demselben Muster:
+Every editing action follows the same pattern:
 
 ```
 Browser ──SOAP──▶ /AppWebServices/Workflow.asmx
                         │
-                        ├─▶ ändert workflow.xaml in der Datenbank
+                        ├─▶ changes workflow.xaml in the database
                         │
-                  ◀─HTML─┘  Fragment für die Designer-Anzeige
+                  ◀─HTML─┘  fragment for the designer display
 ```
 
-Die Antwort ist **HTML**, kein XAML. Beispielhaft für das Hinzufügen einer Bedingung:
+The response is **HTML**, not XAML. For example, when adding a condition:
 
 ```html
 <div id="WorkflowStep0DIV" style="display:block">
@@ -124,30 +124,30 @@ Die Antwort ist **HTML**, kein XAML. Beispielhaft für das Hinzufügen einer Bed
          stepname="ConditionStep" tabindex="0" onclick="OnWorkflowStepClick(...)">
 ```
 
-Das Anzeigemodell des Designers ist damit ein HTML-Baum, dessen Knoten über die Attribute `id`,
-`parent` und `stepname` verknüpft sind. Beim erneuten Öffnen rekonstruiert der Server dieses
-HTML aus dem gespeicherten XAML.
+The designer's display model is thus an HTML tree whose nodes are linked via the attributes `id`,
+`parent` and `stepname`. When the process is reopened, the server reconstructs this
+HTML from the stored XAML.
 
 > [!IMPORTANT]
-> Die Schaltfläche **Speichern** im Designer überträgt keine Ablauflogik. Sie pflegt nur
-> Metadaten des Prozesses (Name, Auslöser, Bereich). Wurden nur Schritte bearbeitet, erzeugt sie
-> keinen Netzwerkaufruf, weil die Änderungen bereits gespeichert sind.
+> The **Save** button in the designer does not transmit any execution logic. It only maintains
+> process metadata (name, triggers, scope). If only steps were edited, it produces
+> no network call, because the changes have already been saved.
 
-## Der Workflow-Webservice
+## The workflow web service
 
-**Endpunkt:** `POST /AppWebServices/Workflow.asmx`
+**Endpoint:** `POST /AppWebServices/Workflow.asmx`
 **Namespace:** `http://schemas.microsoft.com/crm/2009/WebServices`
 
 > [!WARNING]
-> **Dieser Dienst ist für API-Aufrufer nicht nutzbar.** Er verlangt das WRPC-Token des
-> Legacy-Webclients (Anti-Forgery-Schutz) und antwortet ohne dieses mit
-> `soap:Fault … INVALID_WRPC_TOKEN`, selbst bei gültigem Bearer-Token. Die folgende Beschreibung
-> dokumentiert das Protokoll des Designers zum Verständnis — zum Schreiben eigener Workflows ist
-> die Web API zu verwenden (siehe [Programmatischer Zugriff](#programmatischer-zugriff)).
+> **This service cannot be used by API callers.** It requires the WRPC token of the
+> legacy web client (anti-forgery protection) and, without it, responds with
+> `soap:Fault … INVALID_WRPC_TOKEN`, even with a valid bearer token. The following description
+> documents the designer's protocol for understanding only — to write your own workflows,
+> use the Web API (see [Programmatic access](#programmatic-access)).
 
 ### CreateWorkflow
 
-Erstellt einen Prozess samt XAML-Grundgerüst.
+Creates a process together with its XAML skeleton.
 
 ```xml
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -164,19 +164,19 @@ Erstellt einen Prozess samt XAML-Grundgerüst.
 </soap:Envelope>
 ```
 
-Antwort:
+Response:
 
 ```xml
 <CreateWorkflowResponse><CreateWorkflowResult>e784a882-c8ef-46b2-b6e4-00cbe9146360</CreateWorkflowResult></CreateWorkflowResponse>
 ```
 
-Nach diesem einen Aufruf existiert der Datensatz vollständig: `category=0`, `type=1`,
-`statecode=0`, `statuscode=1` und ein XAML-Grundgerüst von ca. 1770 Zeichen.
+After this single call the record exists in full: `category=0`, `type=1`,
+`statecode=0`, `statuscode=1` and an XAML skeleton of about 1770 characters.
 
 ### AddCheckStep
 
-Fügt eine Überprüfungsbedingung ein. Erzeugt **zwei** Modellknoten: den Container
-(`ConditionStep<N>`) und einen Zweig (`ConditionBranchStep<N+1>`).
+Inserts a check condition. Creates **two** model nodes: the container
+(`ConditionStep<N>`) and a branch (`ConditionBranchStep<N+1>`).
 
 ```xml
 <AddCheckStep xmlns="http://schemas.microsoft.com/crm/2009/WebServices">
@@ -188,47 +188,47 @@ Fügt eine Überprüfungsbedingung ein. Erzeugt **zwei** Modellknoten: den Conta
 
 ### UpdateCondition
 
-Setzt die Vergleichslogik eines Bedingungszweigs.
+Sets the comparison logic of a condition branch.
 
 ```xml
 <UpdateCondition xmlns="http://schemas.microsoft.com/crm/2009/WebServices">
   <activityId>ConditionBranchStep2</activityId>
-  <conditionXml><!-- siehe unten, XML-escaped --></conditionXml>
+  <conditionXml><!-- see below, XML-escaped --></conditionXml>
   <entityId>{E784A882-C8EF-46B2-B6E4-00CBE9146360}</entityId>
   <descriptionXml></descriptionXml>
 </UpdateCondition>
 ```
 
-### Weitere Operationen
+### Other operations
 
-Die Menüeinträge des Designers tragen stabile Element-IDs nach dem Schema
-`mnu_AddStep_<Typ>`; die zugehörigen Dienstoperationen folgen derselben Benennung
+The designer's menu entries carry stable element IDs following the pattern
+`mnu_AddStep_<Type>`; the corresponding service operations follow the same naming
 (`AddCheckStep` ↔ `mnu_AddStep_CheckStep`).
 
-| Element-ID | Menüeintrag | Erzeugter Schritttyp |
+| Element ID | Menu entry | Generated step type |
 |---|---|---|
-| `mnu_AddStep_StageStep` | Phase | `StageStep` |
-| `mnu_AddStep_CheckStep` | Überprüfungsbedingung | `ConditionStep` + `ConditionBranchStep` |
-| `mnu_AddStep_ElseIfStep` | Bedingungsverzweigung | `ConditionBranchStep` |
-| `mnu_AddStep_ElseStep` | Standardaktion | `ConditionBranchStep` |
-| `mnu_AddStep_WaitStep` | Wartebedingung | `WaitStep` |
-| `mnu_AddStep_WaitBranchStep` | Parallele Warteverzweigung | `WaitBranchStep` |
-| `mnu_AddStep_CreateStep` | Datensatz erstellen | `CreateStep` |
-| `mnu_AddStep_UpdateStep` | Datensatz aktualisieren | `UpdateStep` |
-| `mnu_AddStep_AssignStep` | Datensatz zuweisen | `AssignStep` |
-| `mnu_AddStep_SendEmailStep` | E-Mail senden | `SendEmailStep` |
-| `mnu_AddStep_ChildWorkflowStep` | Untergeordneten Workflow starten | `ChildWorkflowStep` |
-| `mnu_AddStep_SDKOperation` | Aktion durchführen | `InvokeSdkMessageStep` |
-| `mnu_AddStep_ChangeStatusStep` | Status ändern | `SetStateStep` |
-| `mnu_AddStep_StopWorkflowStep` | Workflow beenden | `StopWorkflowStep` |
-| `CustomActivity<pluginTypeId>` | Codeaktivität (Untermenü je Assembly) | `CustomActivityStep` |
+| `mnu_AddStep_StageStep` | Stage | `StageStep` |
+| `mnu_AddStep_CheckStep` | Check Condition | `ConditionStep` + `ConditionBranchStep` |
+| `mnu_AddStep_ElseIfStep` | Conditional Branch | `ConditionBranchStep` |
+| `mnu_AddStep_ElseStep` | Default Action | `ConditionBranchStep` |
+| `mnu_AddStep_WaitStep` | Wait Condition | `WaitStep` |
+| `mnu_AddStep_WaitBranchStep` | Parallel Wait Branch | `WaitBranchStep` |
+| `mnu_AddStep_CreateStep` | Create Record | `CreateStep` |
+| `mnu_AddStep_UpdateStep` | Update Record | `UpdateStep` |
+| `mnu_AddStep_AssignStep` | Assign Record | `AssignStep` |
+| `mnu_AddStep_SendEmailStep` | Send Email | `SendEmailStep` |
+| `mnu_AddStep_ChildWorkflowStep` | Start Child Workflow | `ChildWorkflowStep` |
+| `mnu_AddStep_SDKOperation` | Perform Action | `InvokeSdkMessageStep` |
+| `mnu_AddStep_ChangeStatusStep` | Change Status | `SetStateStep` |
+| `mnu_AddStep_StopWorkflowStep` | Stop Workflow | `StopWorkflowStep` |
+| `CustomActivity<pluginTypeId>` | Code activity (submenu per assembly) | `CustomActivityStep` |
 
-## Das Bedingungsformat conditionXml
+## The conditionXml condition format
 
-Bedingungen werden nicht als XAML übertragen, sondern in einem eigenen deklarativen Format, das
-der Server in XAML übersetzt.
+Conditions are not transmitted as XAML but in a separate declarative format that
+the server translates into XAML.
 
-### Vergleich mit statischem Wert
+### Comparison with a static value
 
 ```xml
 <and>
@@ -241,10 +241,10 @@ der Server in XAML übersetzt.
 </and>
 ```
 
-### Vergleich mit Feldwert (Data Slug)
+### Comparison with a field value (data slug)
 
-Der Feldverweis wird als `slugbody`-Struktur in das `value`-Attribut eingebettet (dort
-XML-escaped) und über `dataslugs` markiert:
+The field reference is embedded as a `slugbody` structure in the `value` attribute (XML-escaped
+there) and marked via `dataslugs`:
 
 ```xml
 <column id="colStaticValue" dataslugs="0"
@@ -255,26 +255,26 @@ XML-escaped) und über `dataslugs` markiert:
                </slugbody>" />
 ```
 
-`slugbody` kann mehrere `slugelement`-Kinder aufnehmen, wodurch gemischte Ausdrücke aus Text und
-Feldverweisen darstellbar sind.
+`slugbody` can hold multiple `slugelement` children, which makes it possible to represent mixed
+expressions of text and field references.
 
-### Vergleichsoperatoren
+### Comparison operators
 
-| Wert | Bedeutung | Wert | Bedeutung |
+| Value | Meaning | Value | Meaning |
 |---|---|---|---|
-| `eq` | gleich | `ne` | ungleich |
-| `contains` | enthält | `doesnotcontain` | enthält nicht |
-| `beginswith` | beginnt mit | `doesnotbeginwith` | beginnt nicht mit |
-| `endswith` | endet mit | `doesnotendwith` | endet nicht mit |
-| `not-null` | enthält Daten | `null` | enthält keine Daten |
-| `in` | in | `notin` | nicht in |
-| `gt` | ist größer als | `ge` | ist größer oder gleich |
+| `eq` | equals | `ne` | does not equal |
+| `contains` | contains | `doesnotcontain` | does not contain |
+| `beginswith` | begins with | `doesnotbeginwith` | does not begin with |
+| `endswith` | ends with | `doesnotendwith` | does not end with |
+| `not-null` | contains data | `null` | does not contain data |
+| `in` | in | `notin` | not in |
+| `gt` | is greater than | `ge` | is greater than or equal to |
 
-## Aufbau des Workflow-XAML
+## Structure of the workflow XAML
 
-### Dokumentrahmen
+### Document frame
 
-Das minimale, vom Server selbst erzeugte Grundgerüst:
+The minimal skeleton generated by the server itself:
 
 ```xml
 <?xml version="1.0" encoding="utf-16"?>
@@ -295,11 +295,11 @@ Das minimale, vom Server selbst erzeugte Grundgerüst:
 </Activity>
 ```
 
-### Namespacepräfixe
+### Namespace prefixes
 
-| Präfix | Namespace |
+| Prefix | Namespace |
 |---|---|
-| (Standard) | `http://schemas.microsoft.com/netfx/2009/xaml/activities` |
+| (default) | `http://schemas.microsoft.com/netfx/2009/xaml/activities` |
 | `x` | `http://schemas.microsoft.com/winfx/2006/xaml` |
 | `this` | `clr-namespace:` |
 | `mxs` | `Microsoft.Xrm.Sdk` |
@@ -310,26 +310,26 @@ Das minimale, vom Server selbst erzeugte Grundgerüst:
 | `s`, `scg`, `sco`, `srs` | `System`, `System.Collections.Generic`, `System.Collections.ObjectModel`, `System.Runtime.Serialization` |
 
 > [!WARNING]
-> Die Namespacedeklarationen am Wurzelelement werden **bedarfsgesteuert ergänzt**. Das Präfix
-> `mcwa` erscheint zum Beispiel erst, wenn der Prozess eine SDK-Nachrichtenaktivität enthält.
-> Ein Generator muss die Deklarationen am tatsächlichen Inhalt ausrichten.
+> The namespace declarations on the root element are **added on demand**. The prefix
+> `mcwa`, for example, only appears once the process contains an SDK message activity.
+> A generator must align the declarations with the actual content.
 
-### Kontextwörterbücher
+### Context dictionaries
 
-| Ausdruck | Bedeutung |
+| Expression | Meaning |
 |---|---|
-| `[InputEntities("primaryEntity")]` | Der auslösende Datensatz. |
-| `[InputEntities("primaryEntity").Id]` | Dessen Primärschlüssel. |
-| `[CreatedEntities("<StepId>_localParameter")]` | Der von einem Erstellungsschritt angelegte Datensatz. |
-| `[CreatedEntities("<StepId><ParameterName>_entity")]` | Der zu einer Lookup-**Ausgabe** einer Codeaktivität geladene Datensatz (siehe unten). |
-| `[InputEntities("related_<lookupAttribut>#<zielEntität>")]` | Ein direkt verknüpfter Datensatz, eine Ebene tief. |
-| `[CreatedEntities("<name>#Temp")]` | Temporäre Instanz für Datenänderungen (siehe unten). |
+| `[InputEntities("primaryEntity")]` | The triggering record. |
+| `[InputEntities("primaryEntity").Id]` | Its primary key. |
+| `[CreatedEntities("<StepId>_localParameter")]` | The record created by a create step. |
+| `[CreatedEntities("<StepId><ParameterName>_entity")]` | The record loaded for a lookup **output** of a code activity (see below). |
+| `[InputEntities("related_<lookupAttribute>#<targetEntity>")]` | A directly related record, one level deep. |
+| `[CreatedEntities("<name>#Temp")]` | Temporary instance for data changes (see below). |
 
-#### Datensatz zu einer Aktivitäts-Ausgabe laden
+#### Loading the record for an activity output
 
-Die Ausgabe einer Codeaktivität ist nur eine Referenz. Um deren Felder zu lesen, lädt der Designer
-den Datensatz direkt nach der Aktivität — abgesichert durch ein `If`, weil eine leere Referenz sonst
-zur Laufzeit scheitert:
+The output of a code activity is only a reference. To read its fields, the designer loads
+the record directly after the activity — guarded by an `If`, because an empty reference would otherwise
+fail at runtime:
 
 ```xml
 <If Condition="[Microsoft.VisualBasic.IsNothing(CustomActivityStep6InitiatingUser_localParameter)]">
@@ -344,42 +344,42 @@ zur Laufzeit scheitert:
 </If>
 ```
 
-Danach lesen `GetEntityProperty`-Aktivitäten mit `Entity='[CreatedEntities("…_entity")]"` und
-`EntityName="systemuser"` beliebige Felder dieses Datensatzes. Das ist der Weg, mit dem sich z. B.
-`msdyncrmWorkflowTools.Class.GetInitiatingUser` nutzbar machen lässt.
+After that, `GetEntityProperty` activities with `Entity='[CreatedEntities("…_entity")]"` and
+`EntityName="systemuser"` read any fields of this record. This is how, for example,
+`msdyncrmWorkflowTools.Class.GetInitiatingUser` can be made usable.
 
 > [!WARNING]
-> Verweise dieser Art hängen an der **Schritt-Id**. Wird ein Workflow neu erzeugt und dabei neu
-> durchnummeriert, zeigt ein übernommener Schlüssel auf einen Datensatz, den es nicht gibt — die
-> Aktivierung antwortet dann mit `0x80040216` ohne weitere Angabe. Beim Umbau muss der Schlüssel also
-> aus dem *neuen* Schritt abgeleitet werden, nicht aus dem alten.
+> References of this kind depend on the **step ID**. If a workflow is regenerated and
+> renumbered in the process, a carried-over key points to a record that does not exist — and
+> activation then responds with `0x80040216` without further detail. When restructuring, the key must therefore
+> be derived from the *new* step, not from the old one.
 
-### Änderungsmuster mit temporärer Entität
+### Change pattern with a temporary entity
 
-Alle datenverändernden Schritte folgen demselben Ablauf: neue Instanz erzeugen, Schlüssel
-übernehmen, Aktion ausführen, Ergebnis zurückschreiben, Persistenzpunkt setzen.
+All data-changing steps follow the same sequence: create a new instance, copy the key,
+perform the action, write the result back, set a persistence point.
 
 ```xml
 <Sequence DisplayName="UpdateStep3">
   <Assign x:TypeArguments="mxs:Entity" To='[CreatedEntities("primaryEntity#Temp")]'    Value='[New Entity("lead")]' />
   <Assign x:TypeArguments="s:Guid"     To='[CreatedEntities("primaryEntity#Temp").Id]' Value='[InputEntities("primaryEntity").Id]' />
-  <!-- hier: Wertaufbereitung und SetEntityProperty -->
+  <!-- here: value preparation and SetEntityProperty -->
   <mxswa:UpdateEntity DisplayName="UpdateStep3" Entity='[CreatedEntities("primaryEntity#Temp")]' EntityName="lead" />
   <Assign x:TypeArguments="mxs:Entity" To='[InputEntities("primaryEntity")]' Value='[CreatedEntities("primaryEntity#Temp")]' />
   <Persist />
 </Sequence>
 ```
 
-## Namenskonventionen
+## Naming conventions
 
 > [!IMPORTANT]
-> Diese Konventionen sind nicht kosmetisch. Der Designer leitet sein Anzeigemodell aus ihnen ab.
-> Abweichungen führen dazu, dass der Prozess nicht mehr geöffnet werden kann (Fehler `0x80045037`).
+> These conventions are not cosmetic. The designer derives its display model from them.
+> Deviations mean the process can no longer be opened (error `0x80045037`).
 
-### Schritt-IDs
+### Step IDs
 
-Muster `<Typ>Step<N>`. Der Zähler `N` läuft **fortlaufend über alle Schritttypen** eines Prozesses
-und wird nicht je Typ zurückgesetzt. Beispiel einer realen Nummerierung:
+Pattern `<Type>Step<N>`. The counter `N` runs **continuously across all step types** of a process
+and is not reset per type. Example of a real numbering:
 
 ```
 ConditionStep1, ConditionBranchStep2, UpdateStep3, CustomActivityStep4, CreateStep5,
@@ -389,44 +389,44 @@ StopWorkflowStep11, WaitStep12, WaitBranchStep13
 
 ### DisplayName
 
-| Fall | Wert |
+| Case | Value |
 |---|---|
-| Schritt ohne Beschreibung | `<StepId>`, z. B. `UpdateStep6` |
-| Schritt mit Beschreibung | `<StepId>: <Beschreibung>`, z. B. `UpdateStep6: Update Lead.Domain` |
-| Innere Aktivität eines Schritts | immer nur `<StepId>` |
-| Zweig-Wrapper (`Composite`) | die **Zweig**-ID, nicht die des enthaltenen Schritts |
-| Hilfsaktivitäten | fester Text: `EvaluateExpression`, `EvaluateCondition`, `EvaluateLogicalCondition`, `ConvertCrmXrmTypes` |
+| Step without description | `<StepId>`, e.g. `UpdateStep6` |
+| Step with description | `<StepId>: <Description>`, e.g. `UpdateStep6: Update Lead.Domain` |
+| Inner activity of a step | always just `<StepId>` |
+| Branch wrapper (`Composite`) | the **branch** ID, not that of the contained step |
+| Helper activities | fixed text: `EvaluateExpression`, `EvaluateCondition`, `EvaluateLogicalCondition`, `ConvertCrmXrmTypes` |
 
-### Variablen
+### Variables
 
-| Muster | Typ | Verwendung |
+| Pattern | Type | Usage |
 |---|---|---|
-| `<StepId>_<n>` | `x:Object` | Zwischenwerte. `_1` ist der Ergebnisslot, `_2` … `_n` die Quellen in Auswertungsreihenfolge. |
-| `<StepId>_condition` | `x:Boolean`, `Default="False"` | Ergebnis einer Bedingungsauswertung. |
-| `<StepId>_<n>_converted` | `x:Object` | Nach Typkonvertierung für Argumente von Codeaktivitäten. |
-| `<StepId><ParameterName>_localParameter` | Parametertyp | Ein-/Ausgabeparameter einer Codeaktivität. **Auf Workflowebene** in `<mxswa:Workflow.Variables>` deklariert, nicht in der Sequenz. |
+| `<StepId>_<n>` | `x:Object` | Intermediate values. `_1` is the result slot, `_2` … `_n` are the sources in evaluation order. |
+| `<StepId>_condition` | `x:Boolean`, `Default="False"` | Result of a condition evaluation. |
+| `<StepId>_<n>_converted` | `x:Object` | After type conversion, for arguments of code activities. |
+| `<StepId><ParameterName>_localParameter` | Parameter type | Input/output parameter of a code activity. Declared **at workflow level** in `<mxswa:Workflow.Variables>`, not in the sequence. |
 
-Beim `Default` der `_localParameter`-Variable zählt der Parametertyp: `[Nothing]` gilt nur für
-Referenztypen. Ein `x:Boolean` bekommt `Default="False"`, eine `mxs:EntityReference`
-`Default="[New EntityReference()]"`; ein `[Nothing]` auf einem Wertetyp ist ein Typfehler.
+For the `Default` of the `_localParameter` variable, the parameter type matters: `[Nothing]` only applies to
+reference types. An `x:Boolean` gets `Default="False"`, an `mxs:EntityReference`
+`Default="[New EntityReference()]"`; a `[Nothing]` on a value type is a type error.
 
 > [!IMPORTANT]
-> **Der Index in `_<n>_converted` muss auf eine deklarierte Variable verweisen.** Die konvertierte
-> Variable heißt nach ihrer Quelle — aus `_1` wird `_1_converted` —, sie verbraucht also **keine**
-> neue Nummer. Ein `_3_converted` ohne deklariertes `_3` lehnt die Aktivierung als
-> `InvalidPropertyBag` ab, obwohl das XAML wohlgeformt ist und jede *referenzierte* Variable
-> deklariert wurde. Die Prüfung „ist jede Referenz deklariert?" fängt das nicht: hier ist die
-> *unbenutzte* Basisvariable das Problem.
+> **The index in `_<n>_converted` must refer to a declared variable.** The converted
+> variable is named after its source — `_1` becomes `_1_converted` —, so it consumes **no**
+> new number. A `_3_converted` without a declared `_3` is rejected by activation as
+> `InvalidPropertyBag`, even though the XAML is well-formed and every *referenced* variable
+> was declared. The check "is every reference declared?" does not catch this: here the
+> *unused* base variable is the problem.
 
-**In Bedingungen heißen die Hilfsvariablen nach dem Zweig, nicht nach dem Schritt** —
-`ConditionBranchStep9_2`, nicht `ConditionStep1_2`. Nur dadurch lässt sich später zuordnen, welcher
-Vergleich zu welchem Zweig einer if/else-if-Kette gehört. Alle Zweige einer `ConditionSequence`
-deklarieren ihre Variablen in **einer** gemeinsamen `Variables`-Collection.
+**In conditions, the helper variables are named after the branch, not after the step** —
+`ConditionBranchStep9_2`, not `ConditionStep1_2`. Only this makes it possible later to determine which
+comparison belongs to which branch of an if/else-if chain. All branches of a `ConditionSequence`
+declare their variables in **one** shared `Variables` collection.
 
-### Beschreibungstexte
+### Description texts
 
-Zusätzlich zum `DisplayName` legt der Designer für sprachabhängige Beschreibungen drei Variablen
-in der Sequenz an:
+In addition to the `DisplayName`, the designer creates three variables in the sequence for
+language-dependent descriptions:
 
 ```xml
 <Variable x:TypeArguments="x:String" Default="45a82258-2b01-4f7a-a9f2-9ccb5c941acd" Name="stepLabelLabelId" />
@@ -437,42 +437,42 @@ in der Sequenz an:
 ```
 
 > [!NOTE]
-> `stepLabelLabelId` wird bei **jedem** Schreibvorgang neu erzeugt. Der Wert ist beliebig, muss
-> aber vorhanden sein. `stepLabelLanguageCode` ist die LCID der Designer-Sprache (1031 = Deutsch).
+> `stepLabelLabelId` is regenerated on **every** write. The value is arbitrary but must
+> be present. `stepLabelLanguageCode` is the LCID of the designer language (1031 = German).
 
-## Aktivitätsreferenz
+## Activity reference
 
-Alle `AssemblyQualifiedName`-Angaben der Plattformaktivitäten folgen dem Schema:
+All `AssemblyQualifiedName` values of the platform activities follow the pattern:
 
 ```
 Microsoft.Crm.Workflow.Activities.<Name>, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
 ```
 
-| Schritt | Aktivität | Anmerkung |
+| Step | Activity | Remark |
 |---|---|---|
-| Überprüfungsbedingung | `ConditionSequence` (als `ActivityReference`) | Argument `Wait=False` |
-| Wartebedingung | `ConditionSequence` | Argument `Wait=True`; `ContainsElseBranch` ist `x:Null` |
-| Bedingungszweig | `ConditionBranch` | Argument `Condition` = Variablenverweis; beim Else-Zweig das Literal `True` |
-| Zweig-/Phasen-Inhalt | `Composite` | Wrapper um eine `Sequence` |
-| Datensatz erstellen | `mxswa:CreateEntity` | Ergebnis in `CreatedEntities("<StepId>_localParameter")` |
-| Datensatz aktualisieren | `mxswa:UpdateEntity` | Temporärmuster |
-| Datensatz zuweisen | `mxswa:AssignEntity` | Attribut `Owner` |
-| Feldwert lesen | `mxswa:GetEntityProperty` | Attribute `Attribute`, `Entity`, `EntityName`, `Value` |
-| Feldwert setzen | `mxswa:SetEntityProperty` | dito, plus `TargetType` |
-| E-Mail senden | `mxswa:SendEmail` | Temporärmuster mit `New Entity("email")` |
-| Untergeordneten Workflow starten | `mxswa:StartChildWorkflow` | `WorkflowId`, `InputParameters` (Dictionary-Variable) |
-| Status ändern | `mxswa:SetState` | `State`/`Status` als `OptionSetValue`-Literale; **ohne** Sequenz-Wrapper |
-| Aktion durchführen | `mcwa:InvokeSdkMessageActivity` | `SdkMessageId`, `SdkMessageName`, `SdkMessageEntityName` |
-| Workflow beenden | `TerminateWorkflow` (WF4) | `Exception`, `Reason` |
-| Ausdruck auswerten | `EvaluateExpression` | siehe [Wertausdrücke](#wertausdrücke) |
-| Bedingung auswerten | `EvaluateCondition` | `ConditionOperator`, `Operand`, `Parameters`, `Result` |
-| Logische Verknüpfung | `EvaluateLogicalCondition` | `LogicalOperator` (`And`/`Or`), `LeftOperand`, `RightOperand` |
-| Typkonvertierung | `ConvertCrmXrmTypes` | CRM-Typ → .NET-Typ |
-| Codeaktivität | `AssemblyQualifiedName` der eigenen Assembly | siehe unten |
+| Check condition | `ConditionSequence` (as `ActivityReference`) | Argument `Wait=False` |
+| Wait condition | `ConditionSequence` | Argument `Wait=True`; `ContainsElseBranch` is `x:Null` |
+| Condition branch | `ConditionBranch` | Argument `Condition` = variable reference; for the else branch the literal `True` |
+| Branch/stage content | `Composite` | Wrapper around a `Sequence` |
+| Create record | `mxswa:CreateEntity` | Result in `CreatedEntities("<StepId>_localParameter")` |
+| Update record | `mxswa:UpdateEntity` | Temporary pattern |
+| Assign record | `mxswa:AssignEntity` | Attribute `Owner` |
+| Read field value | `mxswa:GetEntityProperty` | Attributes `Attribute`, `Entity`, `EntityName`, `Value` |
+| Set field value | `mxswa:SetEntityProperty` | Same, plus `TargetType` |
+| Send email | `mxswa:SendEmail` | Temporary pattern with `New Entity("email")` |
+| Start child workflow | `mxswa:StartChildWorkflow` | `WorkflowId`, `InputParameters` (dictionary variable) |
+| Change status | `mxswa:SetState` | `State`/`Status` as `OptionSetValue` literals; **without** sequence wrapper |
+| Perform action | `mcwa:InvokeSdkMessageActivity` | `SdkMessageId`, `SdkMessageName`, `SdkMessageEntityName` |
+| Stop workflow | `TerminateWorkflow` (WF4) | `Exception`, `Reason` |
+| Evaluate expression | `EvaluateExpression` | see [Value expressions](#value-expressions) |
+| Evaluate condition | `EvaluateCondition` | `ConditionOperator`, `Operand`, `Parameters`, `Result` |
+| Logical combination | `EvaluateLogicalCondition` | `LogicalOperator` (`And`/`Or`), `LeftOperand`, `RightOperand` |
+| Type conversion | `ConvertCrmXrmTypes` | CRM type → .NET type |
+| Code activity | `AssemblyQualifiedName` of the custom assembly | see below |
 
-### Beispiel: Überprüfungsbedingung
+### Example: check condition
 
-Eine Bedingung besteht aus einem `ConditionSequence`-Container mit vier Aktivitäten:
+A condition consists of a `ConditionSequence` container with four activities:
 
 ```xml
 <mxswa:ActivityReference AssemblyQualifiedName="…ConditionSequence, …" DisplayName="ConditionStep1">
@@ -486,15 +486,15 @@ Eine Bedingung besteht aus einem `ConditionSequence`-Container mit vier Aktivit�
       <Variable x:TypeArguments="x:Object" Name="ConditionBranchStep2_2" />
     </sco:Collection>
     <sco:Collection x:TypeArguments="Activity" x:Key="Activities">
-      <!-- 1. linke Seite lesen -->
+      <!-- 1. read the left-hand side -->
       <mxswa:GetEntityProperty Attribute="lastname" Entity='[InputEntities("primaryEntity")]'
                                EntityName="lead" Value="[ConditionBranchStep2_1]">
         <mxswa:GetEntityProperty.TargetType>
           <InArgument x:TypeArguments="s:Type"><mxswa:ReferenceLiteral x:TypeArguments="s:Type"><x:Null /></mxswa:ReferenceLiteral></InArgument>
         </mxswa:GetEntityProperty.TargetType>
       </mxswa:GetEntityProperty>
-      <!-- 2. rechte Seite aufbereiten (Literal oder zweites GetEntityProperty) -->
-      <!-- 3. vergleichen -->
+      <!-- 2. prepare the right-hand side (literal or a second GetEntityProperty) -->
+      <!-- 3. compare -->
       <mxswa:ActivityReference AssemblyQualifiedName="…EvaluateCondition, …" DisplayName="EvaluateCondition">
         <mxswa:ActivityReference.Arguments>
           <InArgument x:TypeArguments="mxsq:ConditionOperator" x:Key="ConditionOperator">Equal</InArgument>
@@ -503,7 +503,7 @@ Eine Bedingung besteht aus einem `ConditionSequence`-Container mit vier Aktivit�
           <OutArgument x:TypeArguments="x:Boolean" x:Key="Result">[ConditionBranchStep2_condition]</OutArgument>
         </mxswa:ActivityReference.Arguments>
       </mxswa:ActivityReference>
-      <!-- 4. verzweigen -->
+      <!-- 4. branch -->
       <mxswa:ActivityReference AssemblyQualifiedName="…ConditionBranch, …" DisplayName="ConditionBranchStep2">
         <mxswa:ActivityReference.Arguments>
           <InArgument x:TypeArguments="x:Boolean" x:Key="Condition">[ConditionBranchStep2_condition]</InArgument>
@@ -518,39 +518,39 @@ Eine Bedingung besteht aus einem `ConditionSequence`-Container mit vier Aktivit�
 </mxswa:ActivityReference>
 ```
 
-Wird ein Zweig mit Schritten gefüllt, ersetzt ein `Composite`-Wrapper das `x:Null` der
-Eigenschaft `Then` bzw. `Else`. Der Standardaktionszweig ist ein weiterer `ConditionBranch` mit
-`Condition` = `True`; zusätzlich wechselt `ContainsElseBranch` auf `True`.
+When a branch is filled with steps, a `Composite` wrapper replaces the `x:Null` of the
+`Then` or `Else` property. The default action branch is another `ConditionBranch` with
+`Condition` = `True`; in addition, `ContainsElseBranch` switches to `True`.
 
-#### Mehrere Zweige: die if/else-if-Kette
+#### Multiple branches: the if/else-if chain
 
-Eine `ConditionSequence` kann **N** `ConditionBranch`-Knoten tragen, jeder mit eigenen Vergleichen,
-in Reihenfolge geprüft — der erste zutreffende gewinnt. Das ist das Muster für „mehrere
-Voraussetzungen, jede mit eigenem Abbruch"; ein realer Workflow dieser Umgebung hat sechs Zweige.
+A `ConditionSequence` can carry **N** `ConditionBranch` nodes, each with its own comparisons,
+checked in order — the first one that matches wins. This is the pattern for "multiple
+preconditions, each with its own abort"; a real workflow in this environment has six branches.
 
-Der Aufbau der Aktivitätenliste ist dabei streng sequenziell:
+The structure of the activity list is strictly sequential:
 
 ```
-Vergleiche von Zweig 1 … → ConditionBranch (Zweig 1)
-Vergleiche von Zweig 2 … → ConditionBranch (Zweig 2)
+Comparisons of branch 1 … → ConditionBranch (branch 1)
+Comparisons of branch 2 … → ConditionBranch (branch 2)
 …
-ConditionBranch mit Condition="True"   ← der Standardzweig, falls vorhanden
+ConditionBranch with Condition="True"   ← the default branch, if present
 ```
 
-Genau diese Reihenfolge erlaubt es, beim Lesen jeden Vergleich seinem Zweig zuzuordnen — zusammen
-mit der Variablenbenennung nach dem Zweig (siehe *Namenskonventionen → Variablen*). Die Nummern der
-Zweig-Ids müssen **nicht** aufsteigend sein: wer im Designer nachträglich einen Zweig einfügt,
-bekommt eine hohe Nummer an früher Position.
+Exactly this order makes it possible, when reading, to assign each comparison to its branch — together
+with naming the variables after the branch (see *Naming conventions → Variables*). The numbers of the
+branch IDs do **not** have to be ascending: anyone who inserts a branch later in the designer
+gets a high number at an early position.
 
 > [!CAUTION]
-> Ein Modell, das nur „dann/sonst" kennt, kann eine solche Kette nicht abbilden. Wer sie trotzdem
-> darauf abbildet, verliert Zweige — und mischt zusätzlich die Vergleiche aller Zweige zu einer
-> einzigen Kette, was die Logik still verändert.
+> A model that only knows "then/else" cannot represent such a chain. Anyone who maps it onto
+> such a model anyway loses branches — and additionally merges the comparisons of all branches into a
+> single chain, which silently changes the logic.
 
 > [!IMPORTANT]
-> **Wertlose Operatoren** (`Null`, `NotNull` — in der Oberfläche „enthält keine Daten" bzw. „enthält
-> Daten") haben keinen Vergleichswert. `Parameters` muss dann als **explizites Null-Element**
-> geschrieben werden, nicht als `InArgument`:
+> **Valueless operators** (`Null`, `NotNull` — in the UI "does not contain data" and "contains
+> data") have no comparison value. `Parameters` must then be written as an **explicit null element**,
+> not as an `InArgument`:
 >
 > ```xml
 > <InArgument x:TypeArguments="mxsq:ConditionOperator" x:Key="ConditionOperator">NotNull</InArgument>
@@ -558,20 +558,20 @@ bekommt eine hohe Nummer an früher Position.
 > <InArgument x:TypeArguments="x:Object" x:Key="Operand">[ConditionBranchStep2_2]</InArgument>
 > ```
 >
-> Ein leeres Array (`[New Object() { }]`) wird von der Plattform mit `0x80045040` abgelehnt. Dies ist
-> die in der Praxis häufigste Ursache für abgelehntes XAML.
+> An empty array (`[New Object() { }]`) is rejected by the platform with `0x80045040`. In practice, this is
+> the most common cause of rejected XAML.
 
-### Phase
+### Stage
 
-Eine Phase ist ein `Composite`-Wrapper ohne besondere Kennzeichnung:
+A stage is a `Composite` wrapper without any special marking:
 
 ```xml
 <mxswa:ActivityReference AssemblyQualifiedName="…Composite, …"
-                         DisplayName="StageStep16: Beschreibung der Phase">
+                         DisplayName="StageStep16: Description of the stage">
   <mxswa:ActivityReference.Properties>
     <sco:Collection x:TypeArguments="Variable" x:Key="Variables" />
     <sco:Collection x:TypeArguments="Activity" x:Key="Activities">
-      … Schritte …
+      … steps …
       <Persist />
     </sco:Collection>
   </mxswa:ActivityReference.Properties>
@@ -579,19 +579,19 @@ Eine Phase ist ein `Composite`-Wrapper ohne besondere Kennzeichnung:
 ```
 
 > [!NOTE]
-> Eine Phase unterscheidet sich strukturell **nicht** von einem Zweig-Wrapper. Sie wird
-> ausschließlich über die Schritt-ID-Konvention `StageStep<N>` im `DisplayName` erkannt.
-> Enthält ein Prozess Phasen, müssen alle Schritte in Phasen liegen; der Designer ergänzt beim
-> Einfügen gegebenenfalls automatisch eine führende Phase.
+> Structurally, a stage does **not** differ from a branch wrapper. It is recognized
+> solely by the step ID convention `StageStep<N>` in the `DisplayName`.
+> If a process contains stages, all steps must lie within stages; when inserting, the designer
+> automatically adds a leading stage if necessary.
 
-## Wertausdrücke
+## Value expressions
 
-Literale werden **nie** direkt in ein Zielattribut geschrieben. Jeder Wert wird über eine
-Hilfsaktivität in eine Variable aufbereitet und von dort referenziert.
+Literals are **never** written directly into a target attribute. Every value is prepared into a
+variable via a helper activity and referenced from there.
 
-### Statischer Wert
+### Static value
 
-`EvaluateExpression` mit `ExpressionOperator` = `CreateCrmType`:
+`EvaluateExpression` with `ExpressionOperator` = `CreateCrmType`:
 
 ```xml
 <InArgument x:Key="ExpressionOperator">CreateCrmType</InArgument>
@@ -600,45 +600,45 @@ Hilfsaktivität in eine Variable aufbereitet und von dort referenziert.
 <OutArgument x:Key="Result">[UpdateStep3_4]</OutArgument>
 ```
 
-Der erste Parameter ist der `WorkflowPropertyType`, der zweite der Wert, der dritte der
-**CRM-Attributtyp** — und der ist nicht immer der Name des `WorkflowPropertyType`:
+The first parameter is the `WorkflowPropertyType`, the second the value, the third the
+**CRM attribute type** — and that is not always the name of the `WorkflowPropertyType`:
 
-| Typ | `WorkflowPropertyType` | Marker (3. Parameter) |
+| Type | `WorkflowPropertyType` | Marker (3rd parameter) |
 |---|---|---|
 | Text | `String` | `String` |
-| Ja/Nein | `Boolean` | `Boolean` (der Designer lässt ihn hier auch weg) |
-| Ganzzahl | **`Integer`** (nicht `Int`) | `Integer` |
-| Optionsset | `OptionSetValue` | **`Picklist`** |
-| Id | `Guid` | **`UniqueIdentifier`** |
-| Datensatzverweis | `EntityReference` | **`Lookup`** (fünfteilig, siehe unten) |
+| Yes/No | `Boolean` | `Boolean` (the designer also omits it here) |
+| Whole number | **`Integer`** (not `Int`) | `Integer` |
+| Option set | `OptionSetValue` | **`Picklist`** |
+| ID | `Guid` | **`UniqueIdentifier`** |
+| Record reference | `EntityReference` | **`Lookup`** (five-part, see below) |
 
 > [!IMPORTANT]
-> Ein falscher Marker lässt Dataverse das gesamte Dokument beim Schreiben mit `0x80045040` ablehnen.
-> Ebenso ein `x:DateTime` als Typargument: der XAML-2006-Namespace hat kein DateTime, der Typ muss
-> aus `System` kommen — **`s:DateTime`**.
+> A wrong marker makes Dataverse reject the entire document on write with `0x80045040`.
+> The same goes for `x:DateTime` as a type argument: the XAML 2006 namespace has no DateTime; the type must
+> come from `System` — **`s:DateTime`**.
 
 > [!IMPORTANT]
-> Auch der **erste** Parameter muss stimmen, und zwar buchstäblich: es ist ein Enum-Mitglied, das im
-> VB-Ausdruck aufgelöst wird. Eine Ganzzahl heißt dort `Integer`, nicht `Int` — obwohl der Typ überall
-> sonst „Int" genannt wird. Steht ein Name da, den das Enum nicht kennt, lässt sich der Ausdruck nicht
-> übersetzen, und die Antwort ist wieder `0x80045040` mit der irreführenden Meldung „außerhalb der
-> Webanwendung erstellt". Der Fehler zeigt also nicht auf den Ausdruck, sondern auf das ganze Dokument.
+> The **first** parameter must be correct too, and literally so: it is an enum member that is resolved in the
+> VB expression. A whole number is called `Integer` there, not `Int` — even though the type is called
+> "Int" everywhere else. If a name appears that the enum does not know, the expression cannot be
+> translated, and the response is again `0x80045040` with the misleading message "außerhalb der
+> Webanwendung erstellt" ("created outside the web application"). So the error does not point at the expression but at the whole document.
 >
-> Gefunden wurde das an einer Ganzzahl-Eingabe für `msdyncrmWorkflowTools.StringFunctions`.
-> Text- und Ja/Nein-Eingaben waren zufällig richtig benannt und haben die Lücke verdeckt; in keinem der
-> zehn Designer-Fixtures kommt eine skalare Eingabe an eine Codeaktivität vor.
+> This was found on a whole-number input for `msdyncrmWorkflowTools.StringFunctions`.
+> Text and Yes/No inputs happened to be named correctly and masked the gap; none of the
+> ten designer fixtures contains a scalar input to a code activity.
 
 > [!NOTE]
-> Konstanten für Eingaben einer Codeaktivität brauchen die volle Kette
-> `CreateCrmType` → `ConvertCrmXrmTypes` → `[DirectCast(…)]`. Das Literal **direkt** in das
-> `InArgument` zu schreiben — in reinem WF4 zulässig — lehnt die Plattform mit `0x80045040` ab,
-> und zwar für jeden Typ, auch für Text.
+> Constants for inputs of a code activity need the full chain
+> `CreateCrmType` → `ConvertCrmXrmTypes` → `[DirectCast(…)]`. Writing the literal **directly** into the
+> `InArgument` — permitted in plain WF4 — is rejected by the platform with `0x80045040`,
+> for every type, including text.
 
-#### Ein Feld leeren
+#### Clearing a field
 
-Ein leerer Wert wird **nicht** als `CreateCrmType` mit leerer Zeichenkette geschrieben. Der Designer
-deklariert stattdessen eine Variable, die er **nie zuweist**, und zeigt mit der Zuweisung darauf — zur
-Laufzeit ist das `Nothing`:
+An empty value is **not** written as `CreateCrmType` with an empty string. Instead, the designer
+declares a variable that it **never assigns** and points the assignment at it — at
+runtime this is `Nothing`:
 
 ```xml
 <Variable x:TypeArguments="x:Object" Name="UpdateStep13_4" />
@@ -647,21 +647,21 @@ Laufzeit ist das `Nothing`:
 ```
 
 > [!IMPORTANT]
-> Ein `CreateCrmType` mit leerem Wert wird bei einem **Datum** mit `0x80040216` abgelehnt — bei Text
-> geht es durch. Diese Ungleichbehandlung ist die Falle: der Fehler tritt erst bei dem einen Feldtyp auf,
-> lange nachdem das Muster für einen anderen erprobt wurde.
+> A `CreateCrmType` with an empty value is rejected with `0x80040216` for a **date** — for text
+> it goes through. This inconsistency is the trap: the error only occurs for that one field type,
+> long after the pattern was tried out for a different one.
 >
-> Beim **Lesen** ist die Unterscheidung ebenso wichtig: eine Quellvariable, die niemand befüllt, ist ein
-> gewolltes Leeren; eine, die befüllt wird, deren Kette sich aber nicht auflösen lässt, ist eine Lücke
-> im Leser und muss gemeldet werden. Ohne diese Trennung wird entweder ein harmloses „Feld leeren" als
-> unlesbar gemeldet — oder, weit schlimmer, ein **berechneter** Wert beim Zurückschreiben stillschweigend
-> durch einen leeren ersetzt.
+> When **reading**, the distinction is just as important: a source variable that nobody fills is an
+> intentional clear; one that is filled but whose chain cannot be resolved is a gap
+> in the reader and must be reported. Without this separation, either a harmless "clear field" is reported as
+> unreadable — or, far worse, a **calculated** value is silently replaced by an empty one
+> when writing back.
 
-#### Eine Frist: Datum plus Dauer
+#### A deadline: date plus duration
 
-Ein berechnetes Fälligkeitsdatum ist ein `Add` über das Basisdatum und eine Dauer. Die Dauer ist wieder
-eine Variable mit Vorgabewert, diesmal vom Typ `mxsw:XrmTimeSpan` — als **Kindelement**, nicht als
-`Default`-Attribut:
+A calculated due date is an `Add` over the base date and a duration. The duration is again
+a variable with a default value, this time of type `mxsw:XrmTimeSpan` — as a **child element**, not as a
+`Default` attribute:
 
 ```xml
 <Variable x:TypeArguments="mxsw:XrmTimeSpan" Name="UpdateStep15_5">
@@ -673,33 +673,33 @@ eine Variable mit Vorgabewert, diesmal vom Typ `mxsw:XrmTimeSpan` — als **Kind
 </Variable>
 ```
 
-Die Kette lautet dann `RetrieveCurrentTime` → `SelectFirstNonNull` → `Add(Basis, Dauer)`.
+The chain is then `RetrieveCurrentTime` → `SelectFirstNonNull` → `Add(base, duration)`.
 
 > [!NOTE]
-> Anders als bei der Verkettung von Text trägt dieses `Add` **einen** `TargetType`, nämlich
-> `s:DateTime`. Am Zieltyp lässt sich beim Lesen unterscheiden, ob ein `Add` eine Zeichenkette
-> zusammensetzt oder ein Datum verschiebt.
+> Unlike text concatenation, this `Add` carries **one** `TargetType`, namely
+> `s:DateTime`. When reading, the target type tells you whether an `Add` assembles a string
+> or shifts a date.
 >
-> Der Namensraum `mxsw` (`Microsoft.Xrm.Sdk.Workflow`) ist **nicht** derselbe wie `mxswa`
-> (`…Workflow.Activities`) und wird nur in Dokumenten deklariert, die eine Dauer enthalten.
+> The namespace `mxsw` (`Microsoft.Xrm.Sdk.Workflow`) is **not** the same as `mxswa`
+> (`…Workflow.Activities`) and is only declared in documents that contain a duration.
 
 > [!WARNING]
-> **Kommas im Wert müssen als `&#44;` kodiert werden.** Das Parameterarray wird auf Kommas zerlegt,
-> bevor die Stringliterale ausgewertet werden; ein Komma im Text zerreißt also die Argumentliste. Bei
-> deutschen Sätzen ist das der Normalfall — der Designer kodiert konsequent.
+> **Commas in the value must be encoded as `&#44;`.** The parameter array is split on commas
+> before the string literals are evaluated; a comma in the text therefore tears the argument list apart. In
+> German sentences this is the normal case — the designer encodes consistently.
 
-#### Mengen von Werten (`In` / `NotIn`)
+#### Sets of values (`In` / `NotIn`)
 
-Für einen Vergleich gegen mehrere Werte wird pro Wert ein `CreateCrmType` erzeugt; das
-`Parameters`-Array der `EvaluateCondition` nennt dann alle Ergebnisvariablen:
+For a comparison against multiple values, one `CreateCrmType` is generated per value; the
+`Parameters` array of the `EvaluateCondition` then lists all result variables:
 
 ```xml
 <InArgument x:Key="Parameters">[New Object() { ConditionBranchStep2_3, ConditionBranchStep2_4, ConditionBranchStep2_5 }]</InArgument>
 ```
 
-#### Aktuelle Zeit
+#### Current time
 
-`ExpressionOperator` = `RetrieveCurrentTime`, **ohne** Parameter und **ohne** Zieltyp:
+`ExpressionOperator` = `RetrieveCurrentTime`, **without** parameters and **without** a target type:
 
 ```xml
 <InArgument x:Key="ExpressionOperator">RetrieveCurrentTime</InArgument>
@@ -707,14 +707,14 @@ Für einen Vergleich gegen mehrere Werte wird pro Wert ein `CreateCrmType` erzeu
 <InArgument x:Key="TargetType"><mxswa:ReferenceLiteral x:TypeArguments="s:Type"><x:Null /></mxswa:ReferenceLiteral></InArgument>
 ```
 
-In einer Bedingung geht das Ergebnis direkt in das `Parameters`-Array (Operatoren `OnOrAfter`,
-`OnOrBefore`, …); als geschriebener Wert läuft es wie jede Quelle durch `SelectFirstNonNull`.
+In a condition, the result goes directly into the `Parameters` array (operators `OnOrAfter`,
+`OnOrBefore`, …); as a written value it passes through `SelectFirstNonNull` like any source.
 
-#### Verkettung
+#### Concatenation
 
-`ExpressionOperator` = `Add` verbindet mehrere Werte zu einem Text — so entstehen Betreffzeilen und
-Mailtexte. Der Zieltyp ist **`x:Null`**, weil die Teile ihn bestimmen. Der Ergebnisslot wird zuerst
-reserviert, dann die Teile in Reihenfolge:
+`ExpressionOperator` = `Add` joins multiple values into one text — this is how subject lines and
+email bodies are built. The target type is **`x:Null`**, because the parts determine it. The result slot is
+reserved first, then the parts in order:
 
 ```xml
 <InArgument x:Key="ExpressionOperator">Add</InArgument>
@@ -723,26 +723,26 @@ reserviert, dann die Teile in Reihenfolge:
 <OutArgument x:Key="Result">[CreateStep17_5]</OutArgument>
 ```
 
-Teile dürfen selbst Feldverweise sein; ein echter Mailtext besteht aus einem Dutzend und mehr.
+Parts may themselves be field references; a real email body consists of a dozen or more.
 
-### Feldverweise mit Standardwert
+### Field references with a default value
 
-`EvaluateExpression` mit `ExpressionOperator` = `SelectFirstNonNull`. Die Quellen werden zuvor je
-mit `GetEntityProperty` gelesen; der Standardwert wird als Literal aufbereitet und als
-**letztes** Element des Parameterarrays angefügt:
+`EvaluateExpression` with `ExpressionOperator` = `SelectFirstNonNull`. The sources are each read
+beforehand with `GetEntityProperty`; the default value is prepared as a literal and appended as the
+**last** element of the parameter array:
 
 ```xml
 <!-- GetEntityProperty companyname → [UpdateStep3_2] -->
 <!-- GetEntityProperty subject     → [UpdateStep3_3] -->
-<!-- CreateCrmType "unbekannt"     → [UpdateStep3_4] -->
+<!-- CreateCrmType "unbekannt"     → [UpdateStep3_4]  ("unknown") -->
 <InArgument x:Key="ExpressionOperator">SelectFirstNonNull</InArgument>
 <InArgument x:Key="Parameters">[New Object() { UpdateStep3_2, UpdateStep3_3, UpdateStep3_4 }]</InArgument>
 <OutArgument x:Key="Result">[UpdateStep3_1]</OutArgument>
 ```
 
-Zur Laufzeit gewinnt der erste nicht leere Wert.
+At runtime, the first non-empty value wins.
 
-### Ausgabe eines vorangehenden Schritts
+### Output of a preceding step
 
 ```xml
 <InArgument x:Key="ExpressionOperator">SelectFirstNonNull</InArgument>
@@ -750,16 +750,16 @@ Zur Laufzeit gewinnt der erste nicht leere Wert.
 <OutArgument x:Key="Result">[UpdateStep6_1]</OutArgument>
 ```
 
-### Vergleichswert einer Bedingung
+### Comparison value of a condition
 
-Hier gilt eine Ausnahme: Ein Feldverweis auf der rechten Seite eines Vergleichs ersetzt den
-Literalblock **ersatzlos durch ein zweites `GetEntityProperty`**, das in dieselbe Variable
-schreibt. Weder `SelectFirstNonNull` noch `ConvertCrmXrmTypes` kommen zum Einsatz.
+An exception applies here: a field reference on the right-hand side of a comparison replaces the
+literal block **entirely with a second `GetEntityProperty`** that writes into the same variable.
+Neither `SelectFirstNonNull` nor `ConvertCrmXrmTypes` is used.
 
-### Typkonvertierung
+### Type conversion
 
-`ConvertCrmXrmTypes` ist nur erforderlich, wenn der Wert in ein Argument einer **Codeaktivität**
-fließt, weil dort ein echter .NET-Typ erwartet wird:
+`ConvertCrmXrmTypes` is only required when the value flows into an argument of a **code activity**,
+because a real .NET type is expected there:
 
 ```xml
 <InArgument x:Key="Value">[CustomActivityStep3_1]</InArgument>
@@ -767,37 +767,37 @@ fließt, weil dort ein echter .NET-Typ erwartet wird:
 <OutArgument x:Key="Result">[CustomActivityStep3_1_converted]</OutArgument>
 ```
 
-Die Verwendung erfolgt dann typisiert: `[DirectCast(CustomActivityStep3_1_converted, System.String)]`.
+It is then used in typed form: `[DirectCast(CustomActivityStep3_1_converted, System.String)]`.
 
-`SetEntityProperty` benötigt keine Konvertierung, da sein `Value` einen CRM-typisierten Wert annimmt.
+`SetEntityProperty` needs no conversion, because its `Value` accepts a CRM-typed value.
 
-### `TargetType` von `GetEntityProperty`
+### `TargetType` of `GetEntityProperty`
 
-| Kontext | Wert |
+| Context | Value |
 |---|---|
-| Bedingungsvergleich | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
-| Abbruchmeldung (`TerminateWorkflow.Reason`) | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
-| Wertaufbereitung für Felder/Argumente | `<mxswa:ReferenceLiteral Value="x:String" />` (bzw. Zieltyp) |
+| Condition comparison | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
+| Abort message (`TerminateWorkflow.Reason`) | `<mxswa:ReferenceLiteral><x:Null /></mxswa:ReferenceLiteral>` |
+| Value preparation for fields/arguments | `<mxswa:ReferenceLiteral Value="x:String" />` (or the target type) |
 
-Die mittlere Zeile ist teuer erkauft: Ein Feldlesevorgang, der in der Abbruchmeldung `x:String` als
-Zieltyp nennt, liefert für alles, was kein Text ist — allen voran ein Datum — **nichts** zurück. Die
-Meldung bleibt damit leer, und Dataverse zeigt statt des Satzes den Anzeigenamen des Schritts
-(„Workflow abbrechen"). Das nachfolgende `SelectFirstNonNull` derselben Kette bleibt ebenfalls
-untypisiert; das anschließende `Add` formatiert den Wert.
+The middle row was learned the hard way: a field read that names `x:String` as the target type in the
+abort message returns **nothing** for anything that is not text — above all a date. The
+message thus stays empty, and instead of the sentence Dataverse shows the display name of the step
+("Workflow abbrechen", i.e. "Stop workflow"). The subsequent `SelectFirstNonNull` of the same chain also stays
+untyped; the following `Add` formats the value.
 
-Belegt durch den Vergleich derselben Workflow-Definition in zwei Organisationen: die vom Designer
-geschriebene Fassung (Zieltyp `null`) gibt das Datum aus, die erzeugte nicht — die beiden
-XAML-Dokumente unterschieden sich an genau diesen zwei Stellen und sonst nirgends.
+Established by comparing the same workflow definition in two organizations: the version written by the designer
+(target type `null`) outputs the date, the generated one does not — the two
+XAML documents differed in exactly these two places and nowhere else.
 
-### Verknüpfung mehrerer Bedingungen
+### Combining multiple conditions
 
-`EvaluateLogicalCondition` verknüpft **paarweise** über `LeftOperand` und `RightOperand`; beide dürfen
-das `Result` einer anderen `EvaluateLogicalCondition` sein. Die Verknüpfung ist damit kein flaches
-Und/Oder über eine Liste, sondern ein **Ausdrucksbaum** — Klammerung wie `A Und (B Oder C)` braucht
-kein zusätzliches Konstrukt, nur einen Teilbaum mit abweichendem Operator.
+`EvaluateLogicalCondition` combines **pairwise** via `LeftOperand` and `RightOperand`; both may
+be the `Result` of another `EvaluateLogicalCondition`. The combination is therefore not a flat
+And/Or over a list but an **expression tree** — grouping such as `A And (B Or C)` needs
+no additional construct, only a subtree with a different operator.
 
 ```xml
-<!-- A Und (B Oder C) -->
+<!-- A And (B Or C) -->
 <mxswa:ActivityReference AssemblyQualifiedName="…EvaluateLogicalCondition…">
   <InArgument x:Key="LogicalOperator">Or</InArgument>
   <InArgument x:Key="LeftOperand">[ConditionBranchStep7_4]</InArgument>   <!-- B -->
@@ -807,23 +807,23 @@ kein zusätzliches Konstrukt, nur einen Teilbaum mit abweichendem Operator.
 <mxswa:ActivityReference AssemblyQualifiedName="…EvaluateLogicalCondition…">
   <InArgument x:Key="LogicalOperator">And</InArgument>
   <InArgument x:Key="LeftOperand">[ConditionBranchStep7_1]</InArgument>   <!-- A -->
-  <InArgument x:Key="RightOperand">[ConditionBranchStep7_3]</InArgument>  <!-- die Gruppe -->
+  <InArgument x:Key="RightOperand">[ConditionBranchStep7_3]</InArgument>  <!-- the group -->
   <OutArgument x:Key="Result">[ConditionBranchStep7_condition]</OutArgument>
 </mxswa:ActivityReference>
 ```
 
-Der Designer nummeriert die Variablen dabei in Präorder (Ergebnis vor den Kindern); zwingend ist das
-nicht — entscheidend ist, dass jede Variable deklariert ist und der Wurzelknoten in
-`<BranchId>_condition` schreibt, worauf sich `ConditionBranch.Condition` beruft.
+The designer numbers the variables in pre-order (result before the children); this is not
+mandatory — what matters is that every variable is declared and that the root node writes to
+`<BranchId>_condition`, which `ConditionBranch.Condition` relies on.
 
-Als Fixture beigelegt: `condition-group.xaml`, ein vom Designer geschriebener Workflow mit genau
-einer Klammer.
+Included as a fixture: `condition-group.xaml`, a workflow written by the designer with exactly
+one group.
 
-## Benutzerdefinierte Workflowaktivitäten
+## Custom workflow activities
 
-### Parametermetadaten
+### Parameter metadata
 
-Die Ein- und Ausgabeparameter registrierter Codeaktivitäten liegen als XML in
+The input and output parameters of registered code activities are stored as XML in
 `plugintype.customworkflowactivityinfo`:
 
 ```
@@ -854,18 +854,18 @@ GET /api/data/v9.2/plugintypes(<pluginTypeId>)?$select=name,customworkflowactivi
 ```
 
 > [!IMPORTANT]
-> - Der `AssemblyQualifiedName` liegt **fertig zusammengesetzt** vor und sollte übernommen, nicht
->   selbst gebildet werden. Insbesondere ist `PublicKeyToken` bei signierten Assemblys gesetzt.
-> - Als `x:Key` im XAML dient `DependencyPropertyName`, **nicht** `Name`. Im Beispiel oben:
->   `Email`, nicht `E-Mail`.
-> - `WorkflowAttributeType` ist unzuverlässig — im Beispiel steht `Boolean` bei einem
->   Zeichenfolgenparameter. Maßgeblich ist `TypeName`.
-> - `workflowactivitygroupname` ist eine **Zeichenfolge** (`"Contoso.Plugins (1.0.0.0)"`).
+> - The `AssemblyQualifiedName` is available **fully assembled** and should be copied, not
+>   built yourself. In particular, `PublicKeyToken` is set for signed assemblies.
+> - The `x:Key` in the XAML is `DependencyPropertyName`, **not** `Name`. In the example above:
+>   `Email`, not `E-Mail`.
+> - `WorkflowAttributeType` is unreliable — the example shows `Boolean` for a
+>   string parameter. `TypeName` is authoritative.
+> - `workflowactivitygroupname` is a **string** (`"Contoso.Plugins (1.0.0.0)"`).
 
-### XAML-Darstellung
+### XAML representation
 
-Die Aktivität steckt in einem `Composite`-Wrapper; Parameter erscheinen als `InArgument` bzw.
-`OutArgument` mit `x:Key` = `DependencyPropertyName`:
+The activity sits inside a `Composite` wrapper; parameters appear as `InArgument` or
+`OutArgument` with `x:Key` = `DependencyPropertyName`:
 
 ```xml
 <mxswa:ActivityReference AssemblyQualifiedName="…Composite, …" DisplayName="CustomActivityStep3">
@@ -886,7 +886,7 @@ Die Aktivität steckt in einem `Composite`-Wrapper; Parameter erscheinen als `In
 </mxswa:ActivityReference>
 ```
 
-Die Ausgabevariable wird auf Workflowebene deklariert:
+The output variable is declared at workflow level:
 
 ```xml
 <mxswa:Workflow.Variables>
@@ -894,173 +894,175 @@ Die Ausgabevariable wird auf Workflowebene deklariert:
 </mxswa:Workflow.Variables>
 ```
 
-## Aktivierung und Kompilierung
+## Activation and compilation
 
-Die Aktivierung erfolgt über eine Zustandsänderung des Datensatzes:
+Activation is performed by changing the state of the record:
 
 ```http
 PATCH /api/data/v9.2/workflows(<id>)
 { "statecode": 1, "statuscode": 2 }
 ```
 
-Dabei kompiliert die Plattform das XAML und **ersetzt die Null-GUID im Klassennamen durch die
-tatsächliche `workflowid`** — an allen Vorkommen (`x:Class` sowie den `this:`-Eigenschaftselementen):
+In doing so, the platform compiles the XAML and **replaces the null GUID in the class name with the
+actual `workflowid`** — at all occurrences (`x:Class` as well as the `this:` property elements):
 
 ```
-vor  Aktivierung:  x:Class="XrmWorkflow00000000000000000000000000000000"
-nach Aktivierung:  x:Class="XrmWorkflowe784a882c8ef46b2b6e400cbe9146360"
+before activation:  x:Class="XrmWorkflow00000000000000000000000000000000"
+after activation:   x:Class="XrmWorkflowe784a882c8ef46b2b6e400cbe9146360"
 ```
 
 > [!NOTE]
-> Der Klassenname muss beim Schreiben **nicht** die Prozess-GUID enthalten; die Null-GUID ist
-> zulässig. Ebenso sind unterschiedliche Assemblyversionen in den Namespaces tolerant: In einer
-> Organisation koexistieren Prozesse mit `Version=8.0.0.0` und `Version=9.0.0.0`.
+> When writing, the class name does **not** have to contain the process GUID; the null GUID is
+> permitted. Different assembly versions in the namespaces are tolerated as well: in one
+> organization, processes with `Version=8.0.0.0` and `Version=9.0.0.0` coexist.
 >
-> Die Aktivierung validiert die Ablauflogik nicht vollständig. Unvollständig konfigurierte
-> Schritte (etwa ein Erstellungsschritt ohne Pflichtfelder) verhindern die Aktivierung nicht.
+> Activation does not fully validate the execution logic. Incompletely configured
+> steps (such as a create step without required fields) do not prevent activation.
 
-## Programmatischer Zugriff
+## Programmatic access
 
-### Unterstützte und nicht unterstützte Vorgänge
+### Supported and unsupported operations
 
-| Vorgang | Weg | Ergebnis |
+| Operation | Route | Result |
 |---|---|---|
-| Prozesse lesen | `GET /api/data/v9.2/workflows` | unterstützt |
-| XAML lesen | `GET …/workflows(<id>)?$select=xaml` | unterstützt |
-| Metadaten ändern | `PATCH …/workflows(<id>)` | unterstützt |
-| **XAML ändern** | `PATCH …/workflows(<id>)` mit `{"xaml": …}` | **unterstützt, solange `statecode=0`** |
-| Aktivieren/Deaktivieren | `PATCH` auf `statecode`/`statuscode` | unterstützt, Trigger erforderlich |
-| Prozess erstellen **ohne** `xaml` | `POST /api/data/v9.2/workflows` | scheitert mit `0x80045040` |
-| **Prozess erstellen mit `xaml`** | `POST /api/data/v9.2/workflows` | **unterstützt** |
-| Prozess löschen | `DELETE …/workflows(<id>)` | unterstützt, nur im Entwurf |
+| Read processes | `GET /api/data/v9.2/workflows` | supported |
+| Read XAML | `GET …/workflows(<id>)?$select=xaml` | supported |
+| Change metadata | `PATCH …/workflows(<id>)` | supported |
+| **Change XAML** | `PATCH …/workflows(<id>)` with `{"xaml": …}` | **supported as long as `statecode=0`** |
+| Activate/deactivate | `PATCH` on `statecode`/`statuscode` | supported, trigger required |
+| Create process **without** `xaml` | `POST /api/data/v9.2/workflows` | fails with `0x80045040` |
+| **Create process with `xaml`** | `POST /api/data/v9.2/workflows` | **supported** |
+| Delete process | `DELETE …/workflows(<id>)` | supported, only in draft |
 
 > [!IMPORTANT]
-> `0x80045040` ("außerhalb der Webanwendung erstellt") bezieht sich auf **fehlendes oder ungültiges
-> XAML**, nicht auf den Zugriffsweg. Ein `POST` mit gültigem Grundgerüst im Feld `xaml` wird
-> akzeptiert — verifiziert mit Bearer-Token gegen Dataverse 9.2. Der interne SOAP-Dienst ist dafür
-> nicht nötig (und für API-Aufrufer ohnehin gesperrt).
+> `0x80045040` ("created outside the web application") refers to **missing or invalid
+> XAML**, not to the access route. A `POST` with a valid skeleton in the `xaml` field is
+> accepted — verified with a bearer token against Dataverse 9.2. The internal SOAP service is not
+> needed for this (and is blocked for API callers anyway).
 >
-> Dasselbe gilt beim `PATCH`: Wird XAML geschrieben, das die Plattform nicht als gültig ansieht,
-> lautet die Antwort ebenfalls `0x80045040` — obwohl der Datensatz längst existiert. Die Meldung ist
-> also ein allgemeiner „XAML nicht akzeptiert"-Fehler.
+> The same applies to `PATCH`: if XAML is written that the platform does not consider valid,
+> the response is also `0x80045040` — even though the record has long existed. The message is
+> therefore a general "XAML not accepted" error.
 
-### Bearbeitungszyklus für XAML
+### Editing cycle for XAML
 
-Der folgende Zyklus ist verifiziert: Lesen → Ändern → Zurückschreiben → Aktivieren → Öffnen im
-Designer, wobei der Designer die Änderung korrekt darstellt und anschließend selbst darauf
-weiterarbeitet.
+The following cycle is verified: read → change → write back → activate → open in the
+designer, with the designer displaying the change correctly and then continuing to work on it
+itself.
 
 ```
 1. GET    …/workflows(<id>)?$select=xaml,statecode
-2. ggf. PATCH { "statecode": 0, "statuscode": 1 }        // Entwurf erzwingen
-3. XAML ändern – Namenskonventionen einhalten!
+2. if needed PATCH { "statecode": 0, "statuscode": 1 }   // force draft
+3. change XAML – follow the naming conventions!
 4. PATCH  …/workflows(<id>)  { "xaml": "…" }             // 204 No Content
 5. PATCH  …/workflows(<id>)  { "statecode": 1, "statuscode": 2 }
 ```
 
 > [!TIP]
-> Vor Schritt 4 immer das unveränderte XAML als Wiederherstellungspunkt sichern.
+> Before step 4, always save the unchanged XAML as a restore point.
 
-## Fehlerreferenz
+## Error reference
 
-| Code | Meldung (gekürzt) | Ursache und Abhilfe |
+| Code | Message (abbreviated) | Cause and remedy |
 |---|---|---|
-| `0x80045040` | „Dieser Workflow kann nicht erstellt, aktualisiert oder veröffentlicht werden, da er außerhalb der Microsoft Dynamics 365-Webanwendung erstellt wurde." | Das XAML fehlt oder wird nicht akzeptiert. Beim Erstellen ein gültiges Grundgerüst mitsenden. Beim Ändern: die Namenskonventionen und die unten genannten Detailregeln prüfen (häufigste Ursache: siehe `x:Null`-Regel bei wertlosen Operatoren). |
-| `0x80045018` | „Automatic workflow cannot be published if no activation parameters have been specified." | Aktivierung eines automatischen Prozesses ohne Auslöser. Vorher `triggeroncreate`/`updatestage`/`triggerondelete` oder `ondemand` setzen. |
-| `INVALID_WRPC_TOKEN` | SOAP-Fault von `Workflow.asmx` | Der interne Dienst verlangt das Anti-Forgery-Token des Legacy-Webclients. Web API verwenden. |
-| `0x80045037` | Designer kann den Prozess nicht darstellen | Strukturell inkonsistentes XAML: Schritt-IDs, `DisplayName` oder Variablennamen entsprechen nicht den Konventionen. Der Fehler entsteht **nicht** durch das Schreiben an sich. |
-| `0x80060888` | „Resource not found for the segment 'plugintypeattributes'." | Die Tabelle `plugintypeattributes` existiert in aktuellen Dataverse-Versionen nicht. Parameter von Codeaktivitäten stattdessen aus `plugintype.customworkflowactivityinfo` lesen. |
+| `0x80045040` | „Dieser Workflow kann nicht erstellt, aktualisiert oder veröffentlicht werden, da er außerhalb der Microsoft Dynamics 365-Webanwendung erstellt wurde." ("This workflow cannot be created, updated or published because it was created outside the Microsoft Dynamics 365 web application.") | The XAML is missing or not accepted. When creating, send a valid skeleton along. When changing: check the naming conventions and the detailed rules mentioned below (most common cause: see the `x:Null` rule for valueless operators). |
+| `0x80045018` | "Automatic workflow cannot be published if no activation parameters have been specified." | Activation of an automatic process without a trigger. Set `triggeroncreate`/`updatestage`/`triggerondelete` or `ondemand` first. |
+| `INVALID_WRPC_TOKEN` | SOAP fault from `Workflow.asmx` | The internal service requires the anti-forgery token of the legacy web client. Use the Web API. |
+| `0x80045037` | Designer cannot display the process | Structurally inconsistent XAML: step IDs, `DisplayName` or variable names do not match the conventions. The error is **not** caused by the write itself. |
+| `0x80060888` | "Resource not found for the segment 'plugintypeattributes'." | The `plugintypeattributes` table does not exist in current Dataverse versions. Read code activity parameters from `plugintype.customworkflowactivityinfo` instead. |
 
-## Einschränkungen und Hinweise
+## Limitations and notes
 
-- **Alle Schnittstellen dieses Dokuments außer der Web-API sind intern.** `Workflow.asmx` ist
-  nicht versioniert und kann sich ändern.
-- Die Zuordnung von Schritt-IDs ist prozessweit eindeutig und fortlaufend. Beim Einfügen von
-  Schritten in bestehende Prozesse muss der Zähler fortgesetzt werden.
-- Der Designer erzeugt auch **unvollständige Zwischenstände** im XAML (etwa `CreateEntity` mit
-  leerem `EntityName`). Ein Entwurf muss nicht ausführbar sein.
-- Änderungen an aktivierten Prozessen sind nicht möglich; vorher deaktivieren.
-- **`<Persist />` darf nur in Hintergrund-Workflows stehen.** Ein Echtzeitprozess (`mode=1`) kennt
-  keine Persistenzpunkte; das erzeugte XAML unterscheidet sich also je nach Modus, und der Modus
-  gehört deshalb festgelegt, *bevor* die Logik geschrieben wird.
-- **Aktivieren legt eine zweite Zeile an** (`type=2`, Verweis über `parentworkflowid`). Weder das
-  Deaktivieren noch das Löschen der Definition entfernt sie — in einer Testumgebung sammeln sich
-  diese Kopien deshalb an.
-- Beim Wechsel der Zielentität eines Schritts verwirft der Designer die Konfiguration dieses
-  Schritts (Rückfrage im Browser).
+- **All interfaces in this document except the Web API are internal.** `Workflow.asmx` is
+  not versioned and may change.
+- Step IDs are assigned uniquely and sequentially across the whole process. When inserting
+  steps into existing processes, the counter must be continued.
+- The designer also produces **incomplete intermediate states** in the XAML (such as `CreateEntity` with
+  an empty `EntityName`). A draft does not have to be executable.
+- Changes to activated processes are not possible; deactivate first.
+- **`<Persist />` may only appear in background workflows.** A real-time process (`mode=1`) has
+  no persistence points; the generated XAML therefore differs depending on the mode, and the mode
+  must consequently be fixed *before* the logic is written.
+- **Activating creates a second row** (`type=2`, referenced via `parentworkflowid`). Neither
+  deactivating nor deleting the definition removes it — so in a test environment
+  these copies accumulate.
+- When the target entity of a step is changed, the designer discards the configuration of that
+  step (confirmation prompt in the browser).
 
-### Hinweise zur Automatisierung der Oberfläche
+### Notes on automating the user interface
 
-| Element | ID/Muster |
+| Element | ID/pattern |
 |---|---|
-| Menü „Schritt hinzufügen" | `mnu_AddStep_<Typ>`, Codeaktivitäten `CustomActivity<pluginTypeId>` |
-| Schaltfläche „Eigenschaften festlegen" | `<StepId>_button` |
-| Entitätsauswahl eines Schritts | `<StepId>_entitylstwfc` (löst eine Rückfrage aus) |
-| Bedingungszeile (Advanced-Find-Steuerung) | `EFGRP<id>` + `EFENTITYCTL` / `AFATTRCTL` / `OPFOPCTL` / `VFVALUECTL` |
-| Formular-Assistent | `selObjects` (Entität), `valueSelector` (Feld), `wfDynamicExpressionAdd`, `dynamicValueSelector`, `<zielfeld>DefaultValueControl`, `wfDynamicExpressionOk` |
-| Übertragung eines Feldverweises | JS-Funktion `InsertCustomizedDataSlug(value, text)` |
+| "Add Step" menu | `mnu_AddStep_<Type>`, code activities `CustomActivity<pluginTypeId>` |
+| "Set Properties" button | `<StepId>_button` |
+| Entity selection of a step | `<StepId>_entitylstwfc` (triggers a confirmation prompt) |
+| Condition row (Advanced Find control) | `EFGRP<id>` + `EFENTITYCTL` / `AFATTRCTL` / `OPFOPCTL` / `VFVALUECTL` |
+| Form assistant | `selObjects` (entity), `valueSelector` (field), `wfDynamicExpressionAdd`, `dynamicValueSelector`, `<targetfield>DefaultValueControl`, `wfDynamicExpressionOk` |
+| Transferring a field reference | JS function `InsertCustomizedDataSlug(value, text)` |
 
-Die vier Steuerelemente einer Bedingungszeile werden kaskadierend geladen (Entität → Attribut →
-Operator → Wert); jede Stufe wird erst nach Auswahl der vorherigen gefüllt. Die Feldliste ist
-typgefiltert: Im Bedingungseditor erscheinen nur Felder, die zum Datentyp des linken Operanden
-passen.
+The four controls of a condition row are loaded in cascade (entity → attribute →
+operator → value); each level is only populated after the previous one has been selected. The field list is
+type-filtered: in the condition editor only fields that match the data type of the left operand
+appear.
 
-## Anhang: Untersuchungsmethodik
+## Appendix: Investigation methodology
 
-Die Angaben dieses Dokuments beruhen auf folgendem Vorgehen:
+The information in this document is based on the following procedure:
 
-1. **Netzwerk-Mitschnitt** aller Anfragen des Designers je Bearbeitungsschritt, inklusive
-   vollständiger SOAP-Rümpfe.
-2. **Differenzanalyse des XAML**: Nach jeder einzelnen Designer-Aktion wurde das XAML über die
-   Web-API gelesen und gegen den Vorzustand verglichen. Das isoliert das Delta eines Schritttyps
-   exakt.
-3. **Gegenprobe an produktiven Prozessen**: Vollständig konfigurierte Muster (Codeaktivitäten mit
-   Parametern, Feldverweise) wurden an bestehenden, von Menschen erstellten Prozessen verifiziert.
-4. **Schreibprobe**: Geändertes XAML wurde zurückgeschrieben, der Prozess aktiviert und im
-   Designer erneut geöffnet, um Rückwärtskompatibilität zu belegen.
+1. **Network capture** of all designer requests per editing step, including
+   complete SOAP bodies.
+2. **Diff analysis of the XAML**: after every single designer action, the XAML was read via the
+   Web API and compared against the previous state. This isolates the delta of a step type
+   exactly.
+3. **Cross-check against production processes**: fully configured patterns (code activities with
+   parameters, field references) were verified against existing, human-created processes.
+4. **Write test**: changed XAML was written back, the process was activated and reopened in the
+   designer to demonstrate backward compatibility.
 
-Empfohlener Ablauf für weitere Untersuchungen:
+Recommended procedure for further investigations:
 
 ```bash
-# XAML lesen, lesbar umbrechen, gegen Vorzustand diffen
-sed 's/></>\n</g' schritt-N.xaml > schritt-N.pretty
-diff schritt-N-1.pretty schritt-N.pretty
+# Read XAML, break it into readable lines, diff against the previous state
+sed 's/></>\n</g' step-N.xaml > step-N.pretty
+diff step-N-1.pretty step-N.pretty
 ```
 
-## Nachtrag: Die Aktivierung validiert das XAML gründlich
+## Addendum: Activation validates the XAML thoroughly
 
-Frühere Annahme in diesem Dokument war, die Aktivierung prüfe die Logik kaum. Das gilt nur für die
-*Vollständigkeit der Konfiguration* (ein Schritt ohne Pflichtangaben lässt sich aktivieren). Die
-*Struktur* wird dagegen genau geprüft, und der Fehler nennt die betroffenen Schritte:
+An earlier assumption in this document was that activation barely checks the logic. That only applies to the
+*completeness of the configuration* (a step without required details can be activated). The
+*structure*, by contrast, is checked closely, and the error names the affected steps:
 
 ```
 0x80048455 — Dieser Workflow enthaelt Fehler und kann nicht veroeffentlicht werden.
-Worklfow Id: <id der Aktivierungskopie>
+Worklfow Id: <id of the activation copy>
 ErrorMap Details: {CustomActivityStep9: InvalidPropertyBag ;
                    ConditionBranchStep8: InvalidEntity, InvalidPropertyBag ;
                    ... ; WorkflowStep0: InvalidEntity, InvalidPropertyBag}
 ```
 
-| Kennzeichen | Bedeutung |
+(The first line reads: "This workflow contains errors and cannot be published.")
+
+| Flag | Meaning |
 |---|---|
-| `InvalidEntity` | Der Schritt liest von einer Entität, die in diesem Kontext nicht auflösbar ist — etwa ein `related_…#…`-Schlüssel, dessen Lookup-Attribut nicht zur genannten Zielentität führt. |
-| `InvalidPropertyBag` | Die `ActivityReference.Properties` eines Schritts passen nicht zur erwarteten Form der Aktivität. |
+| `InvalidEntity` | The step reads from an entity that cannot be resolved in this context — such as a `related_…#…` key whose lookup attribute does not lead to the named target entity. |
+| `InvalidPropertyBag` | The `ActivityReference.Properties` of a step do not match the expected shape of the activity. |
 
 > [!TIP]
-> Die `ErrorMap` ist das wichtigste Diagnosewerkzeug. Sie erscheint **nur** beim Aktivieren, nicht
-> beim Schreiben des XAML — ein `PATCH` kann also erfolgreich sein, obwohl der Prozess nicht
-> lauffähig ist. Wer XAML generiert, sollte nach dem Schreiben immer eine Probeaktivierung machen.
+> The `ErrorMap` is the most important diagnostic tool. It appears **only** on activation, not
+> when writing the XAML — so a `PATCH` can succeed even though the process is not
+> runnable. Anyone generating XAML should always do a trial activation after writing.
 >
-> Beachte auch: Die genannte Workflow-Id ist die der **Aktivierungskopie** (`type=2`), nicht die des
-> bearbeiteten Prozesses.
+> Note also: the workflow ID shown is that of the **activation copy** (`type=2`), not that of the
+> edited process.
 
 > [!WARNING]
-> **Aktivierungskopien lassen sich nicht direkt löschen.** Ein `DELETE` auf eine Zeile mit `type=2`
-> antwortet mit `0x80045004` („Cannot delete a workflow activation."). Sie verschwinden nur, wenn die
-> **Definition** gelöscht wird — und zwar bevor die Definition weg ist.
+> **Activation copies cannot be deleted directly.** A `DELETE` on a row with `type=2`
+> responds with `0x80045004` ("Cannot delete a workflow activation."). They only disappear when the
+> **definition** is deleted — and only before the definition is gone.
 >
-> Wird die Definition zuerst entfernt, bleibt die Kopie als Waise stehen und ist über die API nicht
-> mehr wegzubekommen. Wer beim Erproben viel aktiviert und löscht, sammelt sie deshalb an: eine
-> Umgebung kann hunderte solcher Zeilen enthalten, die in der Oberfläche nicht auftauchen (Abfragen
-> filtern auf `type eq 1`), aber in `workflows` liegen. Reihenfolge also immer: **deaktivieren, dann
-> die Definition löschen** — nie die Definition löschen, solange eine Aktivierung existiert.
+> If the definition is removed first, the copy remains as an orphan and can no longer be
+> removed via the API. Anyone who activates and deletes a lot while experimenting therefore accumulates them: an
+> environment can contain hundreds of such rows that do not show up in the UI (queries
+> filter on `type eq 1`) but sit in `workflows`. So the order is always: **deactivate, then
+> delete the definition** — never delete the definition while an activation exists.

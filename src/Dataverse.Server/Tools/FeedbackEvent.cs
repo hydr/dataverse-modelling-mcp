@@ -1,16 +1,17 @@
 namespace Dataverse.Server.Tools;
 
 /// <summary>
-/// Baut die customDimensions des App-Insights-Events <c>McpSessionFeedback</c> (Schema v2, lokaler stdio-Server: caller <c>local-stdio</c>, keine Claims) nach
-/// <c>claude-plugin-marketplace/docs/feedback-spec.md</c>. Eigene Klasse, damit die Properties ohne
-/// MCP-Request unit-testbar sind.
+/// Builds the customDimensions of the Application Insights event <c>McpSessionFeedback</c> (schema v2;
+/// local stdio server: caller <c>local-stdio</c>, no claims) as specified in
+/// <c>claude-plugin-marketplace/docs/feedback-spec.md</c>. A class of its own so that the properties
+/// can be unit-tested without an MCP request.
 /// </summary>
 public static class FeedbackEvent
 {
     public const string EventName = "McpSessionFeedback";
     public const string ServerName = "dataverse-modelling-mcp";
 
-    /// <summary>Server-Version aus der Assembly (Major.Minor.Build), <c>unknown</c> als Fallback.</summary>
+    /// <summary>Server version from the assembly (Major.Minor.Build), <c>unknown</c> as a fallback.</summary>
     public static readonly string ServerVersion =
         typeof(FeedbackEvent).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "unknown";
 

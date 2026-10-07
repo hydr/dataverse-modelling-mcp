@@ -1,138 +1,136 @@
-# Verknüpfte Datensätze und die Workflow Tools
+# Related records and the Workflow Tools
 
-Zwei Themen, die klassische Workflows über ihre scheinbaren Grenzen hinausheben. Ergänzung zu
-`SKILL.md`.
+Two topics that take classic workflows beyond their apparent limits. A supplement to `SKILL.md`.
 
-## 1. Felder verknüpfter Datensätze lesen
+## 1. Reading fields of related records
 
-Klassische Workflows können Felder **direkt verknüpfter** Datensätze lesen — eine Ebene tief, über
-Lookup-Felder des Primärdatensatzes. Der Zugriff läuft über einen zweiten Schlüssel im
-`InputEntities`-Wörterbuch:
+Classic workflows can read fields of **directly related** records — one level deep, through lookup
+fields of the primary record. Access goes through a second key in the `InputEntities` dictionary:
 
 ```
-InputEntities("related_<lookupAttribut>#<zielEntität>")
+InputEntities("related_<lookupAttribute>#<targetEntity>")
 ```
 
-Beispiel — auf einem `salesorder` das Feld `sample_salesrep` der verknüpften `opportunity` lesen
-(Lookup-Feld dorthin: `opportunityid`):
+Example — on a `salesorder`, read the field `sample_salesrep` of the related `opportunity`
+(lookup field leading there: `opportunityid`):
 
 ```xml
-<!-- Erst das Lookup-Feld des Primärdatensatzes lesen (macht die Verknüpfung verfügbar) -->
+<!-- First read the lookup field of the primary record (makes the relationship available) -->
 <mxswa:GetEntityProperty Attribute="opportunityid" Entity='[InputEntities("primaryEntity")]'
                          EntityName="salesorder" Value="[UpdateStep3_2]"> … </mxswa:GetEntityProperty>
 
-<!-- Dann das Feld auf der verknüpften Entität -->
+<!-- Then the field on the related entity -->
 <mxswa:GetEntityProperty Attribute="sample_salesrep"
                          Entity='[InputEntities("related_opportunityid#opportunity")]'
                          EntityName="opportunity" Value="[UpdateStep3_3]"> … </mxswa:GetEntityProperty>
 ```
 
-Merkregeln:
+Rules of thumb:
 
-- Der Schlüssel setzt sich aus **Lookup-Attribut des Primärdatensatzes** und **logischem Namen der
-  Zielentität** zusammen, getrennt durch `#`, mit dem Präfix `related_`.
-- `EntityName` ist die **Zielentität**, nicht die Primärentität.
-- Nur eine Ebene. Für tiefere Pfade braucht es einen untergeordneten Workflow auf der Zielentität
-  oder `msdyncrmWorkflowTools.QueryValues` (siehe unten).
-- Die Plattform füllt diese Schlüssel selbst; man muss die Verknüpfung nicht „laden".
+- The key is made up of the **lookup attribute of the primary record** and the **logical name of the
+  target entity**, separated by `#`, with the prefix `related_`.
+- `EntityName` is the **target entity**, not the primary entity.
+- One level only. Deeper paths need a child workflow on the target entity or
+  `msdyncrmWorkflowTools.QueryValues` (see below).
+- The platform fills these keys itself; you do not have to "load" the relationship.
 
-Im Definitionsmodell dieses Servers werden solche Verweise als `"<entität>.<attribut>"` geschrieben,
-also `"opportunity.sample_salesrep"` — der Builder erzeugt daraus den `related_…`-Schlüssel, sofern er
-das Lookup-Attribut kennt (Angabe über `via`).
+In this server's definition model such references are written as `"<entity>.<attribute>"`, i.e.
+`"opportunity.sample_salesrep"` — the builder generates the `related_…` key from it, provided it knows
+the lookup attribute (specified via `via`).
 
-## 2. msdyncrmWorkflowTools — was klassische Workflows damit doch können
+## 2. msdyncrmWorkflowTools — what classic workflows can do after all
 
-Die Assembly **msdyncrmWorkflowTools** (Version 1.0.62.1, `PublicKeyToken=416e876b9bee261e`) ist in
-dieser Umgebung installiert und stellt **87 Codeaktivitäten** bereit. Sie schließen genau die Lücken,
-an denen klassische Workflows sonst scheitern.
+The assembly **msdyncrmWorkflowTools** (version 1.0.62.1, `PublicKeyToken=416e876b9bee261e`) is
+installed in this environment and provides **87 code activities**. They close exactly the gaps where
+classic workflows otherwise fail.
 
 > [!TIP]
-> Vor dem Griff zum Cloud Flow hier nachsehen. Vieles, was „mit klassischen Workflows nicht geht",
-> geht mit diesen Aktivitäten doch — synchron und innerhalb der Transaktion.
+> Look here before reaching for a cloud flow. Much of what "cannot be done with classic workflows"
+> can be done with these activities after all — synchronously and inside the transaction.
 >
-> Parameter und den korrekten `AssemblyQualifiedName` immer per
-> `workflow_get_activity_parameters` holen, nie raten.
+> Always fetch the parameters and the correct `AssemblyQualifiedName` via
+> `workflow_get_activity_parameters`; never guess them.
 
-### Beziehungen und Mitgliedschaften (nicht mit Bordmitteln prüfbar)
+### Relationships and memberships (cannot be checked with built-in steps)
 
-| Aktivität | Zweck |
+| Activity | Purpose |
 |---|---|
-| `CheckUserInTeam` | Ist ein Benutzer Mitglied eines Teams? In: `Team` (Lookup team), `User` (Lookup systemuser) · Out: `isUserInTeam` (Boolean) |
-| `Class.IsMemberOfTeam` | dasselbe, alternative Implementierung |
-| `CheckUserInRole` | Hat ein Benutzer eine bestimmte Sicherheitsrolle? |
-| `Class.IsMemberOfMarketingList` | Mitgliedschaft in einer Marketingliste |
-| `CheckAssociateEntity` | Besteht eine N:N-Verknüpfung? |
-| `AssociateEntity` / `DisassociateEntity` | N:N-Verknüpfung setzen/lösen |
-| `AddUserToTeam` / `RemoveUserFromTeam` | Teammitgliedschaft ändern |
-| `AddRoleToUser` / `RemoveRoleFromUser` / `AddRoleToTeam` / `RemoveRoleFromTeam` | Rollen zuweisen |
+| `CheckUserInTeam` | Is a user a member of a team? In: `Team` (lookup team), `User` (lookup systemuser) · Out: `isUserInTeam` (Boolean) |
+| `Class.IsMemberOfTeam` | the same, alternative implementation |
+| `CheckUserInRole` | Does a user have a specific security role? |
+| `Class.IsMemberOfMarketingList` | Membership in a marketing list |
+| `CheckAssociateEntity` | Does an N:N association exist? |
+| `AssociateEntity` / `DisassociateEntity` | Create/remove an N:N association |
+| `AddUserToTeam` / `RemoveUserFromTeam` | Change team membership |
+| `AddRoleToUser` / `RemoveRoleFromUser` / `AddRoleToTeam` / `RemoveRoleFromTeam` | Assign roles |
 
-### Daten abfragen und aggregieren
+### Querying and aggregating data
 
-| Aktivität | Zweck |
+| Activity | Purpose |
 |---|---|
-| `QueryValues` | **Der Allzweck-Baustein:** FetchXML ausführen und Werte zurückgeben (7 In / 2 Out). Damit sind beliebig tiefe Beziehungen, Filter und Sortierungen erreichbar. |
-| `CountChildEntityRecords` | Untergeordnete Datensätze zählen |
-| `ConcatenateFromQuery` | Feldwerte mehrerer Datensätze zu einem Text verketten |
-| `RollupFunctions` | Aggregate (5 Ausgaben) |
-| `CalculateRollupField` | Rollup-Feld sofort neu berechnen |
-| `GetRecordID` | Id des Datensatzes als Text |
+| `QueryValues` | **The general-purpose building block:** run FetchXML and return values (7 in / 2 out). This reaches relationships of any depth, filters and sort orders. |
+| `CountChildEntityRecords` | Count child records |
+| `ConcatenateFromQuery` | Concatenate field values of several records into one text |
+| `RollupFunctions` | Aggregates (5 outputs) |
+| `CalculateRollupField` | Recalculate a rollup field immediately |
+| `GetRecordID` | Id of the record as text |
 
-### Datensätze verändern
+### Changing records
 
-| Aktivität | Zweck |
+| Activity | Purpose |
 |---|---|
-| `UpdateChildRecords` | Untergeordnete Datensätze in einem Zug aktualisieren |
-| `CloneRecord` / `CloneChildren` | Datensätze samt Kindern kopieren |
-| `Class.DeleteRecord` | Löschen (können klassische Workflows nicht) |
-| `SetState` | Status setzen, auch wo der Standardschritt nicht greift |
-| `SetLookupFieldFromRecordUrl` | Lookup aus einer Datensatz-URL setzen |
-| `Class.SetProcess` / `SetProcessStage` | Geschäftsprozessfluss und Phase steuern |
+| `UpdateChildRecords` | Update child records in one go |
+| `CloneRecord` / `CloneChildren` | Copy records including their children |
+| `Class.DeleteRecord` | Delete (classic workflows cannot do this) |
+| `SetState` | Set the status, even where the standard step does not work |
+| `SetLookupFieldFromRecordUrl` | Set a lookup from a record URL |
+| `Class.SetProcess` / `SetProcessStage` | Control the business process flow and its stage |
 
-### Optionssets, Text, Zahlen, Datum
+### Option sets, text, numbers, dates
 
-| Aktivität | Zweck |
+| Activity | Purpose |
 |---|---|
-| `GetMultiSelectOptionSet` / `SetMultiSelectOptionSet` / `MapMultiSelectOptionSet` | Mehrfachauswahl-Felder (mit Bordmitteln unerreichbar) |
-| `GetOptionSetValue` / `InsertOptionValue` / `DeleteOptionValue` | Optionswerte lesen und die Metadaten pflegen |
-| `StringFunctions` | 12 Eingaben / 11 Ausgaben — Teilzeichenfolgen, Ersetzen, Suchen, Länge … |
-| `NumericFunctions` / `DateFunctions` | Rechnen (4 bzw. 11 Ausgaben, u. a. Wochentag, Differenzen) |
-| `CalculateAgregateDate` | Datumsaggregate |
-| `CurrencyConvert` | Währungsumrechnung |
-| `JsonParser` / `EntityJsonSerializer` | JSON lesen und schreiben |
-| `EncryptText` / `TranslateText` | Verschlüsseln, übersetzen |
+| `GetMultiSelectOptionSet` / `SetMultiSelectOptionSet` / `MapMultiSelectOptionSet` | Multi-select fields (unreachable with built-in steps) |
+| `GetOptionSetValue` / `InsertOptionValue` / `DeleteOptionValue` | Read option values and maintain the metadata |
+| `StringFunctions` | 12 inputs / 11 outputs — substrings, replace, search, length … |
+| `NumericFunctions` / `DateFunctions` | Arithmetic (4 and 11 outputs respectively, including weekday and differences) |
+| `CalculateAgregateDate` | Date aggregates |
+| `CurrencyConvert` | Currency conversion |
+| `JsonParser` / `EntityJsonSerializer` | Read and write JSON |
+| `EncryptText` / `TranslateText` | Encrypt, translate |
 
-### Kommunikation, Freigaben, Sonstiges
+### Communication, sharing, miscellaneous
 
-| Aktivität | Zweck |
+| Activity | Purpose |
 |---|---|
-| `Class.EmailToTeam`, `Class.SendEmailToUsersInRole`, `Class.SendEmailFromTemplateToUsersInRole` | E-Mails an Teams und Rollen |
-| `Class.EntityAttachmentToEmail`, `Class.SalesLiteratureToEmail` | Anlagen anhängen |
-| `ShareRecordWithUser` / `ShareRecordWithTeam` (+ Unshare) | Freigaben setzen |
-| `ShareSecuredField` | Feldsicherheit freigeben |
-| `Class.ExecuteWorkflowByID`, `ExecuteWorkflowForRecordsinQuery` | Workflows dynamisch bzw. für Suchergebnisse starten |
-| `Class.GetInitiatingUser` | Auslösenden Benutzer ermitteln |
-| `RetrieveUserBUDefaultTeam` | Standardteam der Geschäftseinheit |
-| `GetAppRecordUrl`, `GetAppModuleID`, `EntityMobileDeepLink` | Links in die App |
-| `GeoCodeAddress` | Adresse geokodieren |
-| `OrgDBSettingsRetrieve` / `OrgDBSettingsUpdate` | Organisationseinstellungen |
-| `Class.PickFromQueue`, `QueueItemCount`, `ApplyRoutingRule`, `Class.ResolveCase`, `QualifyLead`, `WinQuote`, `CreateQuoteFromOpportunity`, `CalculatePrice` | Vorgangs- und Vertriebsautomatisierung |
+| `Class.EmailToTeam`, `Class.SendEmailToUsersInRole`, `Class.SendEmailFromTemplateToUsersInRole` | E-mails to teams and roles |
+| `Class.EntityAttachmentToEmail`, `Class.SalesLiteratureToEmail` | Add attachments |
+| `ShareRecordWithUser` / `ShareRecordWithTeam` (+ Unshare) | Set sharing |
+| `ShareSecuredField` | Share field security |
+| `Class.ExecuteWorkflowByID`, `ExecuteWorkflowForRecordsinQuery` | Start workflows dynamically or for query results |
+| `Class.GetInitiatingUser` | Determine the initiating user |
+| `RetrieveUserBUDefaultTeam` | Default team of the business unit |
+| `GetAppRecordUrl`, `GetAppModuleID`, `EntityMobileDeepLink` | Links into the app |
+| `GeoCodeAddress` | Geocode an address |
+| `OrgDBSettingsRetrieve` / `OrgDBSettingsUpdate` | Organization settings |
+| `Class.PickFromQueue`, `QueueItemCount`, `ApplyRoutingRule`, `Class.ResolveCase`, `QualifyLead`, `WinQuote`, `CreateQuoteFromOpportunity`, `CalculatePrice` | Case and sales automation |
 
-### Vollständige Liste
+### Complete list
 
-87 Aktivitäten, ermittelbar mit:
+87 activities, retrievable with:
 
 ```
 GET /api/data/v9.2/plugintypes?$select=name,customworkflowactivityinfo
     &$filter=workflowactivitygroupname ne null and contains(assemblyname,'msdyncrmWorkflowTools')
 ```
 
-oder über `workflow_list_activities` mit `nameFilter: "msdyncrmWorkflowTools"`.
+or via `workflow_list_activities` with `nameFilter: "msdyncrmWorkflowTools"`.
 
-## 3. Ausgaben einer Codeaktivität in Bedingungen prüfen
+## 3. Checking a code activity's outputs in conditions
 
-Eine Aktivität wie `CheckUserInTeam` liefert ihr Ergebnis in eine Variable
-`<StepId><Parameter>_localParameter`. Um darauf zu verzweigen, wird diese Variable im
-`EvaluateCondition` als `Operand` verwendet — statt eines `GetEntityProperty`-Ergebnisses:
+An activity such as `CheckUserInTeam` delivers its result into a variable
+`<StepId><Parameter>_localParameter`. To branch on it, this variable is used as the `Operand` in
+`EvaluateCondition` — instead of a `GetEntityProperty` result:
 
 ```xml
 <InArgument x:TypeArguments="mxsq:ConditionOperator" x:Key="ConditionOperator">Equal</InArgument>
@@ -140,20 +138,20 @@ Eine Aktivität wie `CheckUserInTeam` liefert ihr Ergebnis in eine Variable
 <InArgument x:TypeArguments="x:Object" x:Key="Operand">[CustomActivityStepMisUserInTeam_localParameter]</InArgument>
 ```
 
-Im Definitionsmodell: `conditions[].stepOutput` anstelle von `conditions[].attribute`. Dort genügt
-der **reine Parametername** (`"isUserInTeam"`) — die Schritt-Id vergibt erst der Builder, kann also
-beim Schreiben nicht bekannt sein. Die qualifizierte Form `"CustomActivityStep4.isUserInTeam"` wird
-ebenfalls akzeptiert; beim Zurücklesen liefert der Server sie.
+In the definition model: `conditions[].stepOutput` instead of `conditions[].attribute`. The **bare
+parameter name** (`"isUserInTeam"`) is enough there — the step id is only assigned by the builder, so
+it cannot be known when writing. The qualified form `"CustomActivityStep4.isUserInTeam"` is accepted
+as well; when reading back, the server returns that form.
 
-Der Typ der Variablen ist der **Parametertyp**, nicht `x:String` — bei `CheckUserInTeam` also
-`x:Boolean` mit `Default="False"`. Der Builder liest ihn aus den Metadaten; ein hart gesetztes
-`x:String` lehnt die Aktivierung als `InvalidPropertyBag` ab.
+The variable's type is the **parameter type**, not `x:String` — for `CheckUserInTeam`, therefore,
+`x:Boolean` with `Default="False"`. The builder reads it from the metadata; a hard-coded `x:String`
+makes activation fail with `InvalidPropertyBag`.
 
-## 4. Felder des Datensatzes lesen, den eine Aktivität zurückgibt
+## 4. Reading fields of the record an activity returns
 
-Aktivitäten wie `Class.GetInitiatingUser`, `RetrieveUserBUDefaultTeam` oder `Class.PickFromQueue`
-liefern eine **Referenz**, keinen Datensatz. Um an dessen Felder zu kommen, wird der Datensatz
-geladen — im Definitionsmodell genügt dafür `fromStepOutput` am Wert:
+Activities such as `Class.GetInitiatingUser`, `RetrieveUserBUDefaultTeam` or `Class.PickFromQueue`
+return a **reference**, not a record. To get at its fields, the record is loaded — in the definition
+model, `fromStepOutput` on the value is all it takes:
 
 ```json
 { "kind": "field", "dataType": "String",
@@ -161,39 +159,37 @@ geladen — im Definitionsmodell genügt dafür `fromStepOutput` am Wert:
   "fromStepOutput": "InitiatingUser" }
 ```
 
-Der Server erzeugt das Laden selbst (ein `If` um `RetrieveEntity`, wie der Designer) und legt den
-Datensatz unter `CreatedEntities("<StepId><Parameter>_entity")` ab. Man braucht also **keine** zweite
-Aktivität und keinen untergeordneten Workflow, um z. B. Name, Telefon und E-Mail des ausführenden
-Benutzers zu verwenden.
+The server generates the load itself (an `If` around `RetrieveEntity`, like the designer) and stores
+the record under `CreatedEntities("<StepId><Parameter>_entity")`. So you need **no** second activity
+and no child workflow to use, for example, the name, phone and e-mail of the executing user.
 
-Dasselbe Feld funktioniert in Bedingungen — typisch als Wächter davor:
+The same field works in conditions — typically as a guard beforehand:
 
 ```json
 { "fromStepOutput": "InitiatingUser", "entity": "systemuser",
   "attribute": "internalemailaddress", "operator": "Null" }
 ```
 
-Für einen Datensatz, den der Workflow selbst **anlegt** (`createRecord`), heißt das Gegenstück
-`fromStep` — mit der Entität als Angabe, z. B. `"fromStep": "email"`, um die `activityid` der eben
-erzeugten E-Mail an eine Aktivität wie `Class.SendEmail` zu übergeben.
+For a record that the workflow itself **creates** (`createRecord`), the counterpart is called
+`fromStep` — with the entity as the value, e.g. `"fromStep": "email"`, to pass the `activityid` of the
+e-mail just created to an activity such as `Class.SendEmail`.
 
-## 5. CRM-Typen der Workflow-Tools-Parameter
+## 5. CRM types of the Workflow Tools parameters
 
-Die Aktivitäten verwenden CRM-eigene Parametertypen, nicht die .NET-Typen:
+The activities use CRM-specific parameter types, not the .NET types:
 
-| `TypeName` im Metadaten-XML | Bedeutung | `dataType` im Modell |
+| `TypeName` in the metadata XML | Meaning | `dataType` in the model |
 |---|---|---|
-| `Microsoft.Crm.Sdk.Lookup` | Datensatzverweis, gültige Zielentitäten stehen in `EntityNames` | `EntityReference` |
-| `Microsoft.Crm.Sdk.CrmBoolean` | Ja/Nein | `Boolean` |
-| `Microsoft.Crm.Sdk.CrmDateTime` | Datum/Zeit | `DateTime` |
-| `Microsoft.Crm.Sdk.CrmDecimal` / `CrmFloat` / `CrmMoney` | Zahlen | `Decimal` / `Double` / `Money` |
-| `Microsoft.Crm.Sdk.Picklist` | Optionsset | `OptionSetValue` |
+| `Microsoft.Crm.Sdk.Lookup` | Record reference; valid target entities are listed in `EntityNames` | `EntityReference` |
+| `Microsoft.Crm.Sdk.CrmBoolean` | Yes/No | `Boolean` |
+| `Microsoft.Crm.Sdk.CrmDateTime` | Date/time | `DateTime` |
+| `Microsoft.Crm.Sdk.CrmDecimal` / `CrmFloat` / `CrmMoney` | Numbers | `Decimal` / `Double` / `Money` |
+| `Microsoft.Crm.Sdk.Picklist` | Option set | `OptionSetValue` |
 | `System.String` | Text | `String` |
 
-`EntityNames` eines Lookup-Parameters nennt die erlaubten Zielentitäten (z. B. `team`,
-`systemuser`) — ein Lookup auf eine andere Entität wird zur Laufzeit abgelehnt. Bei festen
-Referenzen (`"team:<guid>"`) prüft die Validierung das vorab (`WF088`); stammt der Wert aus einem
-Feld, kann sie es nicht wissen.
+`EntityNames` of a lookup parameter names the allowed target entities (e.g. `team`, `systemuser`) — a
+lookup to a different entity is rejected at runtime. For fixed references (`"team:<guid>"`) validation
+checks this in advance (`WF088`); if the value comes from a field, it cannot know.
 
-Diese Zuordnung muss man nicht selbst treffen: `workflow_get_activity_parameters` liefert zu jedem
-Parameter den passenden `dataType`, und ein falscher wird vor dem Schreiben als `WF086` gemeldet.
+You do not have to make this mapping yourself: `workflow_get_activity_parameters` returns the matching
+`dataType` for every parameter, and a wrong one is reported as `WF086` before writing.

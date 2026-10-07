@@ -121,23 +121,22 @@ Checks performed:
 
 ---
 
-## Authoring: die Logik als Definition
+## Authoring: the logic as a definition
 
-Diese Tools arbeiten nicht mit XAML, sondern mit dem deklarativen JSON-Modell. Die Formatdetails
-stehen in `skills/classic-workflows/SKILL.md`, das XAML dahinter in
-`docs/classic-workflows-reference.md`.
+These tools do not work with XAML but with the declarative JSON model. The format details are in
+`skills/classic-workflows/SKILL.md`, the XAML behind it in `docs/classic-workflows-reference.md`.
 
 ### `workflow_explain`
 
-Erklärt einen Workflow in Prosa: Trigger, Modus, Scope und die Logik als eingerückte Struktur.
-Der Einstieg, wenn man einen fremden Prozess verstehen will.
+Explains a workflow in prose: trigger, mode, scope and the logic as an indented structure. The
+starting point when you want to understand a process someone else wrote.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflowId` | GUID string | Yes | Der Workflow |
+| `workflowId` | GUID string | Yes | The workflow |
 
-Am Ende steht ein Abschnitt **„Not understood"**, falls der Parser Konstrukte nicht abbilden konnte.
-Dann ist die Erklärung unvollständig und der Workflow darf nicht überschrieben werden.
+At the end there is a **"Not understood"** section if the parser could not map some constructs. The
+explanation is then incomplete, and the workflow must not be overwritten.
 
 **Example prompt:** "What does the payment reminder workflow do?"
 
@@ -145,131 +144,130 @@ Dann ist die Erklärung unvollständig und der Workflow darf nicht überschriebe
 
 ### `workflow_get_definition`
 
-Gibt die Logik als editierbares JSON zurück.
+Returns the logic as editable JSON.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflowId` | GUID string | Yes | Der Workflow |
+| `workflowId` | GUID string | Yes | The workflow |
 
-**`fullyUnderstood` ist der entscheidende Wert.** Ist er `false`, nennt `unrecognised` die nicht
-abbildbaren Teile — ein Rückschreiben würde sie verlieren. Dann im Designer ändern.
+**`fullyUnderstood` is the value that matters.** If it is `false`, `unrecognised` names the parts that
+cannot be mapped — writing back would lose them. Make the change in the designer instead.
 
-**Example prompt:** „Gib mir die Definition von Workflow abc123 als JSON"
+**Example prompt:** "Give me the definition of workflow abc123 as JSON"
 
 ---
 
 ### `workflow_validate_definition`
 
-Prüft eine Definition, **ohne** etwas zu schreiben: Modellregeln, Existenz von Tabellen und
-Attributen, und die Signatur der referenzierten Codeaktivitäten.
+Checks a definition **without** writing anything: model rules, existence of tables and attributes,
+and the signature of the referenced code activities.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `definitionJson` | string | Eines von beiden | Die Definition als JSON |
-| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
+| `definitionJson` | string | One of the two | The definition as JSON |
+| `definitionFile` | string | One of the two | Path to a local `.json` file containing the definition |
 
-Jeder Befund trägt `code`, `path`, `problem` und `fix`. Die Codetabelle steht im Skill.
+Every issue carries `code`, `path`, `problem` and `fix`. The code table is in the skill.
 
-**Example prompt:** „Prüfe diese Workflow-Definition, bevor wir sie schreiben"
+**Example prompt:** "Check this workflow definition before we write it"
 
 ---
 
 ### `workflow_set_definition`
 
-Schreibt die Logik als XAML. Schreibt **nur**, wenn alle drei Prüfungen sauber sind
-(Modell, Metadaten, Selbsttest des erzeugten XAML).
+Writes the logic as XAML. Writes **only** if all three checks are clean (model, metadata, self-check
+of the generated XAML).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflowId` | GUID string | Yes | Der Zielworkflow |
-| `definitionJson` | string | Eines von beiden | Die Definition als JSON |
-| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
-| `reactivate` | bool | No | Aktivierten Workflow deaktivieren, schreiben, wieder aktivieren |
-| `dryRun` | bool | No | Nur prüfen und in `diff` berichten, nichts schreiben |
-| `backupFile` | string | No | Pfad, unter dem das vorherige XAML abgelegt wird |
+| `workflowId` | GUID string | Yes | The target workflow |
+| `definitionJson` | string | One of the two | The definition as JSON |
+| `definitionFile` | string | One of the two | Path to a local `.json` file containing the definition |
+| `reactivate` | bool | No | Deactivate an activated workflow, write, then activate it again |
+| `dryRun` | bool | No | Only check and report in `diff`; write nothing |
+| `backupFile` | string | No | Path where the previous XAML is stored |
 
-Die Antwort enthält die vergebenen `stepIds` und das vorherige XAML — in `backup`, oder als Pfad in
-`backupFile`, wenn du einen angegeben hast. Ein aktivierter Workflow wird ohne `reactivate=true`
-abgelehnt (`WF210`). Den **Modus vorher setzen** — er bestimmt, ob das XAML Persistenzpunkte enthalten
-darf.
+The response contains the assigned `stepIds` and the previous XAML — in `backup`, or as a path in
+`backupFile` if you supplied one. An activated workflow is rejected without `reactivate=true`
+(`WF210`). **Set the mode beforehand** — it determines whether the XAML may contain persistence
+points.
 
-**Bei echten Workflows `definitionFile` und `backupFile` nehmen, nicht die Inline-Varianten.** Eine
-Definition mit eingebettetem Signaturbild liegt bei ~28.000 Zeichen, das XAML dahinter bei ~180.000.
-Inline übergeben heißt: jemand tippt das ab, und dabei kippen Zeichen. Der Fehler ist still — das JSON
-bleibt gültig, alle drei Prüfungen laufen sauber durch, kaputt ist nur der base64-Block, den es
-transportiert. Genau so ist im August 2026 in zwei Workflows das Logo in der E-Mail-Signatur
-zerstört worden; aufgefallen ist es erst beim Nachrechnen der PNG-Prüfsummen.
+**For real workflows use `definitionFile` and `backupFile`, not the inline variants.** A definition
+with an embedded signature image runs to ~28,000 characters, the XAML behind it to ~180,000. Passing it
+inline means someone retypes it, and characters flip in the process. The error is silent — the JSON
+stays valid, all three checks pass cleanly, and only the base64 block it transports is broken. That is
+exactly how, in August 2026, the logo in the e-mail signature of two workflows was destroyed; it only
+surfaced when the PNG checksums were recomputed.
 
-**Example prompt:** „Schreibe diese Logik in Workflow abc123"
+**Example prompt:** "Write this logic into workflow abc123"
 
 ---
 
 ### `workflow_restore_xaml`
 
-Setzt ein früher exportiertes XAML unverändert zurück — das Rückgängig zu einem misslungenen
-Schreibvorgang.
+Restores a previously exported XAML unchanged — the undo for a failed write.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflowId` | GUID string | Yes | Der Workflow |
-| `xaml` | string | Eines von beiden | Das wiederherzustellende XAML |
-| `xamlFile` | string | Eines von beiden | Pfad zu der Datei, in der das XAML liegt |
+| `workflowId` | GUID string | Yes | The workflow |
+| `xaml` | string | One of the two | The XAML to restore |
+| `xamlFile` | string | One of the two | Path to the file containing the XAML |
 
-`xamlFile` ist hier der Normalfall: „unverändert zurücksetzen" überlebt das Abschreiben eines
-sechsstelligen Strings nicht. Es passt direkt auf `backupFile` von `workflow_set_definition` und auf
-die Datei, in die ein zu großer Export ausgelagert wurde.
+`xamlFile` is the normal case here: "restore unchanged" does not survive retyping a string whose
+length runs to six digits. It fits directly onto the `backupFile` of `workflow_set_definition` and onto
+the file that an oversized export was offloaded to.
 
-**Example prompt:** „Stelle das XAML von vorhin in Workflow abc123 wieder her"
+**Example prompt:** "Restore the earlier XAML in workflow abc123"
 
 ---
 
 ### `workflow_diagnose_activation`
 
-Findet heraus, **welcher Teil** einer Definition sich nicht aktivieren lässt.
+Finds out **which part** of a definition cannot be activated.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `primaryEntity` | string | Yes | Logischer Name der Primärentität |
-| `definitionJson` | string | Eines von beiden | Die Definition, die nicht aktiviert |
-| `definitionFile` | string | Eines von beiden | Pfad zu einer lokalen `.json`-Datei mit der Definition |
-| `isRealtime` | bool | No | `true` bei einem Echtzeitprozess (Standard `false`) |
+| `primaryEntity` | string | Yes | Logical name of the primary entity |
+| `definitionJson` | string | One of the two | The definition that will not activate |
+| `definitionFile` | string | One of the two | Path to a local `.json` file containing the definition |
+| `isRealtime` | bool | No | `true` for a real-time process (default `false`) |
 
-Aktivierungsfehler sind praktisch nutzlos: `0x80040216` heißt wörtlich „unerwarteter Fehler". Das Tool
-schreibt daher Teilmengen der Definition in Wegwerf-Workflows und aktiviert jede — erst Schritt für
-Schritt, dann bei einer Bedingung Fall für Fall — bis der Verursacher isoliert ist. Die
-Wegwerf-Workflows werden wieder gelöscht.
+Activation errors are practically useless: `0x80040216` literally means "unexpected error". The tool
+therefore writes subsets of the definition into throwaway workflows and activates each one — first
+step by step, then, for a condition, case by case — until the culprit is isolated. The throwaway
+workflows are deleted again afterwards.
 
-Die Antwort enthält `culprit` (den Befund in Worten) und `attempts` (alle Versuche in Reihenfolge, als
-Beleg). Findet sich kein einzelner Schritt, sagt das Tool auch das — dann liegt es am Zusammenspiel,
-typischerweise an einem Verweis auf einen Datensatz, den ein anderer Schritt anlegt.
+The response contains `culprit` (the finding in words) and `attempts` (all attempts in order, as
+evidence). If no single step is to blame, the tool says so as well — then the cause lies in the
+interaction, typically a reference to a record that another step creates.
 
-**Example prompt:** „Warum lässt sich diese Definition nicht aktivieren?"
+**Example prompt:** "Why can't this definition be activated?"
 
 ---
 
-## Codeaktivitäten
+## Code activities
 
 ### `workflow_list_activities`
 
-Listet die verfügbaren Custom Workflow Activities der Umgebung.
+Lists the custom workflow activities available in the environment.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `nameFilter` | string | No | Teilstring des Namens, z. B. `"msdyncrmWorkflowTools"` |
+| `nameFilter` | string | No | Substring of the name, e.g. `"msdyncrmWorkflowTools"` |
 
-**Example prompt:** „Welche Codeaktivitäten gibt es für Teams?"
+**Example prompt:** "Which code activities are there for teams?"
 
 ---
 
 ### `workflow_get_activity_parameters`
 
-Die Parameter einer Aktivität: technischer Name (`dependencyPropertyName`), `dataType` und bei
-Lookups die erlaubten Zielentitäten (`entityNames`).
+The parameters of an activity: technical name (`dependencyPropertyName`), `dataType` and, for
+lookups, the allowed target entities (`entityNames`).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `pluginTypeId` | GUID string | Yes | Aus `workflow_list_activities` |
+| `pluginTypeId` | GUID string | Yes | From `workflow_list_activities` |
 
-Den `assemblyQualifiedName` **wörtlich** übernehmen — er trägt den echten `PublicKeyToken`.
+Take the `assemblyQualifiedName` **verbatim** — it carries the real `PublicKeyToken`.
 
-**Example prompt:** „Welche Parameter hat CheckUserInTeam?"
+**Example prompt:** "What parameters does CheckUserInTeam have?"

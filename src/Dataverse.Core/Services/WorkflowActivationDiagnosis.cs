@@ -127,7 +127,7 @@ public sealed class WorkflowActivationDiagnoser(
         try
         {
             id = await workflows.CreateAsync(orgUrl, $"ZZ Diagnose {Guid.NewGuid():N}", primaryEntity,
-                "Wegwerf-Workflow der Aktivierungsdiagnose", realtime, ct);
+                "Throwaway workflow of the activation diagnosis", realtime, ct);
 
             await workflows.UpdateAsync(orgUrl, id, new Dictionary<string, object?>
             {

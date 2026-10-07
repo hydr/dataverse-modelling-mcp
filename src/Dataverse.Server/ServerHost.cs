@@ -81,7 +81,9 @@ public static class ServerHost
                 };
             })
             .WithToolsFromAssembly(typeof(ServerHost).Assembly)
-            .WithRequestFilters(filters => filters.AddCallToolFilter(ToolSafety.ProductionGuard));
+            .WithRequestFilters(filters => filters
+                .AddCallToolFilter(ToolSafety.ProductionGuard)
+                .AddCallToolFilter(ToolSafety.DryRunFilter));
 
         // Read-only mode: drop every write tool before the server starts, so a client never sees one.
         builder.Services.AddOptions<McpServerOptions>().PostConfigure<ConfigProvider>((options, config) =>

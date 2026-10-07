@@ -75,6 +75,7 @@ public sealed class ViewTools
         [Description("Query type code: 0=Public (default), 1=AdvancedFind, 2=Associated, 4=QuickFind")] int queryType = 0,
         [Description("true to make this the default view of the table")] bool isDefault = false,
         [Description("Optional solution unique name — the new view is added to it as a component")] string? solutionUniqueName = null,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -131,6 +132,7 @@ public sealed class ViewTools
         ConfigProvider config,
         [Description("The view GUID")] string viewId,
         [Description("JSON object with properties to update")] string propertiesJson,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -158,6 +160,7 @@ public sealed class ViewTools
         [Description("The view GUID")] string viewId,
         [Description("Logical name of the attribute to add")] string attributeLogicalName,
         [Description("Column width in pixels (default 100)")] int? width = null,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -183,6 +186,7 @@ public sealed class ViewTools
         [Description("The view GUID")] string viewId,
         [Description("Logical name of the attribute to sort by")] string attributeLogicalName,
         [Description("true for descending order, false for ascending")] bool descending = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try

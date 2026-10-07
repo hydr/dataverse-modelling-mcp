@@ -95,6 +95,7 @@ public sealed class TableTools
         [Description("Plural display name")] string pluralDisplayName,
         [Description("Optional description")] string? description = null,
         [Description("true to publish the table right away (default false)")] bool publish = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -133,6 +134,7 @@ public sealed class TableTools
         [Description("Logical name of the table")] string logicalName,
         [Description("JSON object with properties to update")] string propertiesJson,
         [Description("true to publish the table right away (default false)")] bool publish = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -173,6 +175,7 @@ public sealed class TableTools
         [Description("Logical name of the table")] string tableLogicalName,
         [Description("Full attribute definition as JSON (must include @odata.type, LogicalName, DisplayName, etc.)")] string attributeJson,
         [Description("true to publish the table right away (default false). A PCF control bound to a brand-new column needs the column published first.")] bool publish = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -214,6 +217,7 @@ public sealed class TableTools
         [Description("Logical name of the column to delete")] string columnLogicalName,
         [Description("true to delete even when other components depend on the column (default false)")] bool force = false,
         [Description("true to publish the table after the delete (default false)")] bool publish = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -279,6 +283,7 @@ public sealed class TableTools
         [Description("Logical name of the column")] string columnLogicalName,
         [Description("JSON object with properties to update")] string propertiesJson,
         [Description("true to publish the table right away (default false)")] bool publish = false,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try

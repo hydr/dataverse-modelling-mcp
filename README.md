@@ -201,8 +201,8 @@ the one place the Dataverse advice is least needed.
 ## Telemetry
 
 The server exposes one optional telemetry tool, `dataverse_submit_feedback`, which an AI client may
-call to send session feedback (free text, a category, and an optional session summary) as a single
-Application Insights event.
+call to send session feedback (free text, a category, an optional severity and an optional session summary)
+as a single Application Insights event.
 
 **It is off by default and off for anyone who just clones this repo.** Telemetry is transmitted only
 when the process is started with the standard `APPLICATIONINSIGHTS_CONNECTION_STRING` environment
@@ -213,7 +213,9 @@ No connection string is bundled with the server.
 If you run the server yourself and do **not** want this endpoint at all, leave
 `APPLICATIONINSIGHTS_CONNECTION_STRING` unset (nothing is sent) or remove
 `src/Dataverse.Server/Tools/FeedbackTool.cs` and rebuild. What is sent, when configured, is exactly
-the three fields above plus a constant `server` tag — no auth tokens, org URLs, or record data.
+the fields above plus constant/derived metadata (schema version, `server` tag, server version, transport `stdio`,
+the fixed caller `local-stdio`, and the MCP client name and version from the `initialize` handshake) — no user names,
+auth tokens, org URLs, or record data.
 
 ---
 

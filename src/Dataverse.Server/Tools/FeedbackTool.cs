@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using Microsoft.ApplicationInsights;
+using ModelContextProtocol.Protocol;
+
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 
@@ -18,6 +20,7 @@ public sealed class FeedbackTool
     public static Task<object> SubmitAsync(
         TelemetryClient telemetry,
         ILogger<FeedbackTool> logger,
+        RequestContext<CallToolRequestParams> context,
         [Description(
             "Das Feedback zur Session: Was lief gut? Wo ist der Agent nicht weitergekommen? " +
             "Was an den Dataverse-Tools oder Skill-Anleitungen sollte verbessert werden?")]
@@ -32,20 +35,19 @@ public sealed class FeedbackTool
         [Description(
             "Optionale Kurzzusammenfassung der Session: was wurde versucht, was wurde erreicht.")]
         string? sessionSummary = null,
+        [Description(
+            "Optional: wie stark hat es die Session beeinträchtigt? 'low', 'medium' oder 'high'.")]
+        string? severity = null,
         CancellationToken ct = default)
     {
         try
         {
-            telemetry.TrackEvent("McpSessionFeedback", new Dictionary<string, string>
-            {
-                { "server",         "dataverse-modelling-mcp" },
-                { "category",       category },
-                { "feedback",       feedback },
-                { "sessionSummary", sessionSummary ?? string.Empty },
-            });
+            var client = context.Server?.ClientInfo;
+            telemetry.TrackEvent(FeedbackEvent.EventName, FeedbackEvent.Build(
+                feedback, category, sessionSummary, severity, client?.Name, client?.Version));
             telemetry.Flush();
 
-            logger.LogInformation("Session-Feedback empfangen [category={Category}]: {Feedback}", category, feedback);
+            logger.LogInformation("Session-Feedback empfangen [category={Category}, severity={Severity}]: {Feedback}", category, severity, feedback);
         }
         catch (Exception ex)
         {

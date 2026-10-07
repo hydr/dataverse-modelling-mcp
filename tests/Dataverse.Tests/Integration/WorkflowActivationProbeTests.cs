@@ -536,7 +536,7 @@ public sealed class WorkflowActivationProbeTests : IntegrationTestBase
     public async Task Probe_LeaveCustomActivityWorkflowForInspection()
     {
         var id = await WorkflowService.CreateAsync(OrgUrl, "ZZ Inspect CustomActivity", "salesorder",
-            "Bleibt absichtlich stehen: CustomActivity-XAML, das die Aktivierung ablehnt");
+            "Left in place on purpose: CustomActivity XAML that activation rejects");
 
         var definition = new WorkflowDefinition
         {

@@ -163,7 +163,7 @@ public sealed class RibbonTools
                      "'Mscrm.HomepageGrid.sample_purchaseorder.MainTab.Management.Controls._children'. " +
                      "Validated against the compiled ribbon; run ribbon_get with includeLocations=true " +
                      "to see the choices.")] string location,
-        [Description("The button caption itself, e.g. 'PDF und Sammel-E-Mail'. Pass the text, not a " +
+        [Description("The button caption itself, e.g. 'PDF and bulk e-mail'. Pass the text, not a " +
                      "$LocLabels: reference — the tool writes the LocLabel node and the reference for " +
                      "you.")] string label,
         [Description("Name of the JScript web resource holding the handler, e.g. " +

@@ -1063,7 +1063,7 @@ public sealed class SolutionService
         if (!autoConfirm)
             return runId;
 
-        // Step 1.5: poll until validation passes (stagerunstatus = 200000007 Überprüfung erfolgreich).
+        // Step 1.5: poll until validation passes (stagerunstatus = 200000007, "validation succeeded").
         // 200000003 = Fehlgeschlagen, 200000004 = Cancelled — both terminal failures.
         var deadline = DateTime.UtcNow.AddSeconds(validationTimeoutSeconds);
         string? validationError = null;

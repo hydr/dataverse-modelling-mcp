@@ -1,124 +1,124 @@
-# Binary-Auslieferung über GitHub Releases
+# Binary delivery via GitHub Releases
 
-Das Plugin liefert **keine** vorkompilierte MCP-Server-Binary im Git-Repo aus.
-Stattdessen wird die passende, self-contained Binary aus einem GitHub-Release
-geladen — beim `SessionStart` **und** bei jedem Start des MCP-Servers.
+The plugin does **not** ship a precompiled MCP server binary in the Git repo.
+Instead, the matching self-contained binary is downloaded from a GitHub release —
+on `SessionStart` **and** every time the MCP server starts.
 
-## Beteiligte Teile
+## Moving parts
 
-| Datei | Rolle |
+| File | Role |
 |---|---|
-| `.mcp.json` | Startet den Launcher `scripts/run-server.ps1` (nicht mehr die Binary direkt) |
-| `scripts/run-server.ps1` / `.sh` | Launcher: aktualisiert die Binary, startet sie, reicht stdio durch |
-| `scripts/binary-common.ps1` / `.sh` | Gemeinsame Download-/Auflösungslogik von Hook und Launcher |
-| `hooks/hooks.json` | Registriert den `SessionStart`-Hook (PowerShell **und** bash) |
-| `scripts/ensure-binary.ps1` | SessionStart-Hook (Windows), dünner Wrapper um `binary-common.ps1` |
-| `scripts/ensure-binary.sh` | dito für git-bash; auf echtem Unix weiterhin No-op |
-| `scripts/BINARY_VERSION` | Erwartete Binary-Version — **muss dem Release-Tag entsprechen** |
-| `.github/workflows/release.yml` | Baut & veröffentlicht die Binary als Release-Asset |
+| `.mcp.json` | Starts the launcher `scripts/run-server.ps1` (no longer the binary directly) |
+| `scripts/run-server.ps1` / `.sh` | Launcher: updates the binary, starts it, passes stdio through |
+| `scripts/binary-common.ps1` / `.sh` | Download/resolution logic shared by hook and launcher |
+| `hooks/hooks.json` | Registers the `SessionStart` hook (PowerShell **and** bash) |
+| `scripts/ensure-binary.ps1` | SessionStart hook (Windows), thin wrapper around `binary-common.ps1` |
+| `scripts/ensure-binary.sh` | Same for git-bash; still a no-op on real Unix |
+| `scripts/BINARY_VERSION` | Expected binary version — **must match the release tag** |
+| `.github/workflows/release.yml` | Builds and publishes the binary as a release asset |
 
-## Update ohne Session-Neustart
+## Updating without restarting the session
 
-Weil der Launcher bei **jedem** Serverstart läuft, genügt nach einem Release ein
-**Reconnect im `/mcp`-Menü** — der Serverprozess startet neu, der Launcher zieht die
-neue Version und startet sie. Vorher war die Binary nur über den `SessionStart`-Hook
-aktualisierbar, d. h. erst in der nächsten Session nutzbar.
+Because the launcher runs on **every** server start, after a release a
+**reconnect in the `/mcp` menu** is enough — the server process restarts, the launcher pulls the
+new version and starts it. Previously the binary could only be updated through the `SessionStart`
+hook, i.e. it was only usable in the next session.
 
-Der Hook bleibt erhalten (wärmt den Download vor). Doppelte Downloads gibt es nicht:
-beide Pfade nutzen dieselbe Funktion, die sofort zurückkehrt, wenn die erwartete
-Version bereits installiert ist.
+The hook stays in place (it pre-warms the download). There are no duplicate downloads:
+both paths use the same function, which returns immediately when the expected
+version is already installed.
 
-## Layout auf Platte (versioniert)
-
-```
-<plugin-data>/bin/<version>/DataverseMcp.exe   <- wird ausgeführt
-<plugin-data>/bin/DataverseMcp.exe             <- Legacy-Pfad, Best-Effort-Kopie
-<plugin-data>/bin/.version                     <- Legacy-Marker
-```
-
-Versionierte Verzeichnisse, weil Windows eine **laufende `.exe` nicht überschreiben**
-lässt: Bei parallelen Claude-Sessions oder einem Reconnect, während der alte Prozess
-noch herunterfährt, würde ein In-Place-Update scheitern. Eine neue Version landet in
-einem neuen Verzeichnis, alte Verzeichnisse werden per Best-Effort aufgeräumt
-(gesperrte werden übersprungen und beim nächsten Lauf erneut versucht).
-
-Die Legacy-Kopie unter `bin/DataverseMcp.exe` bleibt bestehen, damit Installationen
-mit älterer `.mcp.json` (die direkt auf diesen Pfad zeigt) weiter starten.
-
-## Namenskonvention
-
-- **Release-Asset:** `DataverseMcp-win-x64.exe` (RID-Suffix, damit spätere
-  Plattformen koexistieren können).
-- **Runtime-Name auf Platte:** `DataverseMcp.exe`. Der Asset-Name wird beim Ablegen
-  auf diesen festen Namen normalisiert.
-
-## stdout-Disziplin (wichtig)
-
-Der Launcher teilt sich stdout mit dem MCP-stdio-Stream. Deshalb schreiben Launcher
-und gemeinsame Logik **ausschließlich nach stderr**; die Binary wird ohne Redirection
-gestartet und erbt stdin/stdout/stderr unverändert. Eine einzige Zeile auf stdout
-(z. B. ein `Write-Host`) würde die MCP-Verbindung zerstören.
-
-Ist GitHub nicht erreichbar, startet der Launcher die bereits installierte Binary und
-warnt nur auf stderr — Offline-Betrieb bleibt möglich. Der Hook bricht dagegen
-weiterhin laut ab.
-
-## Versionskopplung (wichtig)
-
-Der Hook lädt von `releases/download/v${BINARY_VERSION}/DataverseMcp-win-x64.exe`.
-Damit das aufgeht, muss gelten:
+## Layout on disk (versioned)
 
 ```
-scripts/BINARY_VERSION  ==  Release-Tag (ohne 'v')
+<plugin-data>/bin/<version>/DataverseMcp.exe   <- is executed
+<plugin-data>/bin/DataverseMcp.exe             <- legacy path, best-effort copy
+<plugin-data>/bin/.version                     <- legacy marker
+```
+
+Versioned directories, because Windows does **not let you overwrite a running `.exe`**:
+with parallel Claude sessions, or a reconnect while the old process is still
+shutting down, an in-place update would fail. A new version lands in
+a new directory; old directories are cleaned up best-effort
+(locked ones are skipped and retried on the next run).
+
+The legacy copy at `bin/DataverseMcp.exe` is kept so that installations
+with an older `.mcp.json` (which points directly at this path) still start.
+
+## Naming convention
+
+- **Release asset:** `DataverseMcp-win-x64.exe` (RID suffix, so that future
+  platforms can coexist).
+- **Runtime name on disk:** `DataverseMcp.exe`. The asset name is normalised to this
+  fixed name when the file is stored.
+
+## stdout discipline (important)
+
+The launcher shares stdout with the MCP stdio stream. That is why the launcher
+and the shared logic write **only to stderr**; the binary is started without redirection
+and inherits stdin/stdout/stderr unchanged. A single line on stdout
+(e.g. a `Write-Host`) would break the MCP connection.
+
+If GitHub is unreachable, the launcher starts the already installed binary and
+only warns on stderr — offline operation remains possible. The hook, by contrast,
+still fails loudly.
+
+## Version coupling (important)
+
+The hook downloads from `releases/download/v${BINARY_VERSION}/DataverseMcp-win-x64.exe`.
+For that to work, the following must hold:
+
+```
+scripts/BINARY_VERSION  ==  release tag (without 'v')
                         ==  Version in Dataverse.Setup.csproj
                         ==  version in .claude-plugin/plugin.json
 ```
 
-Der Release-Workflow erzwingt das über den Guard-Step „Verify all versions match
-the tag": Passt eine der drei Dateien nicht zum Tag, bricht der Build ab und nennt
-die abweichende Datei. Der Guard verhindert zweierlei — den früheren
-`0.0.0`-Fehler, bei dem gar kein Asset existierte, und das Auseinanderlaufen der
-Plugin-Version, die früher eine eigene Spur hatte (0.18.1 gegen Binary 1.16.1),
-sodass aus der Plugin-Version nicht ablesbar war, welche Binary installiert wird.
+The release workflow enforces this with the guard step "Verify all versions match
+the tag": if any of the three files does not match the tag, the build aborts and names
+the mismatching file. The guard prevents two things — the earlier
+`0.0.0` bug, where no asset existed at all, and drift of the
+plugin version, which used to have its own track (0.18.1 versus binary 1.16.1),
+so the plugin version did not tell you which binary would be installed.
 
-## Authentifizierung
+## Authentication
 
-Das Repo ist öffentlich, der Normalfall braucht deshalb **keine** Anmeldung. Der
-Hook lädt in dieser Reihenfolge:
+The repo is public, so the normal case needs **no** sign-in. The
+hook downloads in this order:
 
-1. **Anonym** über `https://github.com/<repo>/releases/download/v<version>/<asset>`.
-   Das ist der Regelweg: die meisten Nutzer haben weder `gh` noch ein Token, und
-   beides zu verlangen würde sie am Start des Servers hindern.
-2. **`gh` CLI**, falls installiert & authentifiziert (`gh auth status`) — greift,
-   wenn über die Plugin-Option `release_repo` ein **privates** Repo eingetragen ist.
-3. **REST-API mit Token** aus `GITHUB_TOKEN` bzw. `GH_TOKEN` (Bearer). Löst die
-   Asset-ID über `releases/tags/v<version>` auf und lädt sie mit
+1. **Anonymously** via `https://github.com/<repo>/releases/download/v<version>/<asset>`.
+   This is the standard path: most users have neither `gh` nor a token, and
+   requiring either would keep them from starting the server.
+2. **`gh` CLI**, if installed and authenticated (`gh auth status`) — applies
+   when a **private** repo is configured through the plugin option `release_repo`.
+3. **REST API with a token** from `GITHUB_TOKEN` or `GH_TOKEN` (Bearer). Resolves the
+   asset ID via `releases/tags/v<version>` and downloads it with
    `Accept: application/octet-stream`.
 
-Ein privates Repo antwortet auf Weg 1 mit 404, der Hook fällt dann auf 2 und 3
-durch. Schlägt alles fehl, bricht der Hook **laut** ab (kein stilles `exit 0`) und
-nennt den fehlenden Release-Tag.
+A private repo answers path 1 with 404; the hook then falls through to 2 and 3.
+If everything fails, the hook aborts **loudly** (no silent `exit 0`) and
+names the missing release tag.
 
-## Release-Prozess (Binary)
+## Release process (binary)
 
-1. Feature-Branch, Änderungen, PR gegen `master`.
-2. Version erhöhen — in **allen drei** Dateien auf **exakt denselben** Wert, der zugleich der Tag ist:
+1. Feature branch, changes, PR against `master`.
+2. Bump the version — in **all three** files to **exactly the same** value, which is also the tag:
    - `src/Dataverse.Setup/Dataverse.Setup.csproj` → `<Version>`
    - `scripts/BINARY_VERSION`
    - `.claude-plugin/plugin.json` → `version`
 
-   Der Workflow-Schritt „Verify all versions match the tag" vergleicht alle drei mit dem Tag und
-   bricht bei jeder Abweichung ab, mit Angabe der abweichenden Datei. Früher lief die Plugin-Version
-   auf einer eigenen Spur — aus „Plugin 0.18.1" war dann nicht ablesbar, welche Binary drinsteckte.
-3. PR mergen.
-4. `git tag v<Version> && git push origin v<Version>` → der Release-Workflow
-   - packt & pusht das NuGet-Tool `Dataverse.Setup`,
-   - baut den Server self-contained/single-file für `win-x64`,
-   - hängt `DataverseMcp-win-x64.exe` und das `.nupkg` ans GitHub-Release.
+   The workflow step "Verify all versions match the tag" compares all three with the tag and
+   aborts on any mismatch, naming the mismatching file. The plugin version used to run
+   on its own track — "plugin 0.18.1" then did not tell you which binary was inside.
+3. Merge the PR.
+4. `git tag v<Version> && git push origin v<Version>` → the release workflow
+   - packs and pushes the NuGet tool `Dataverse.Setup`,
+   - builds the server self-contained/single-file for `win-x64`,
+   - attaches `DataverseMcp-win-x64.exe` and the `.nupkg` to the GitHub release.
 
-## Lokaler Workaround (ohne Release)
+## Local workaround (without a release)
 
-Solange kein Release existiert, kann die Binary manuell gebaut und platziert werden:
+As long as no release exists, the binary can be built and placed manually:
 
 ```bash
 dotnet publish src/Dataverse.Server -c Release -r win-x64 \
@@ -126,18 +126,18 @@ dotnet publish src/Dataverse.Server -c Release -r win-x64 \
   -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 cp ./publish/Dataverse.Server.exe \
   "$HOME/.claude/plugins/data/dataverse-modelling-mcp-hydr/bin/DataverseMcp.exe"
-# optional, damit der Hook nicht neu lädt:
+# optional, so the hook does not download again:
 printf '%s' "<version>" > \
   "$HOME/.claude/plugins/data/dataverse-modelling-mcp-hydr/bin/.version"
 ```
 
-## Bekannte Einschränkung: Plattformen
+## Known limitation: platforms
 
-`.mcp.json` startet fest `DataverseMcp.exe`. Damit ist das Plugin derzeit
-**Windows-only**. Für Linux/macOS müssten zusätzlich:
+`.mcp.json` hard-codes `DataverseMcp.exe`. That makes the plugin currently
+**Windows-only**. For Linux/macOS, the following would additionally be needed:
 
-- der Workflow `DataverseMcp-linux-x64` / `DataverseMcp-osx-arm64` bauen,
-- die Unix-Branch in `ensure-binary.sh` aktiviert werden,
-- `.mcp.json` den plattformabhängigen Binärnamen auflösen.
+- the workflow builds `DataverseMcp-linux-x64` / `DataverseMcp-osx-arm64`,
+- the Unix branch in `ensure-binary.sh` is enabled,
+- `.mcp.json` resolves the platform-specific binary name.
 
-Bis dahin ist die Unix-Branch der `.sh` ein bewusster No-op mit Hinweis.
+Until then, the Unix branch of the `.sh` is a deliberate no-op with a notice.

@@ -133,7 +133,7 @@ Blocking an operation additionally requires a real-time workflow (`{"mode": 1}`)
       "description": "Only for German leads",
       "conditions": [
         { "attribute": "address1_country", "operator": "Equal",
-          "value": { "kind": "literal", "literal": "Deutschland" } }
+          "value": { "kind": "literal", "literal": "Germany" } }
       ],
       "then": [
         {
@@ -142,7 +142,7 @@ Blocking an operation additionally requires a real-time workflow (`{"mode": 1}`)
           "attributes": [
             { "attribute": "sample_domain",
               "value": { "kind": "field", "fields": ["lead.websiteurl", "lead.emailaddress1"],
-                         "fallback": "unbekannt" } }
+                         "fallback": "unknown" } }
           ]
         }
       ],
@@ -183,11 +183,11 @@ The recipient fields (`from`, `to`, `cc`, `bcc`) are **party lists**, so they ta
 ```json
 {
   "kind": "sendEmail",
-  "description": "Zuweisung melden",
+  "description": "Report assignment",
   "attributes": [
     { "attribute": "from", "value": { "dataType": "PartyList", "literal": "systemuser:<guid>" } },
     { "attribute": "to",   "value": { "kind": "field", "dataType": "PartyList", "fields": ["lead.ownerid"] } },
-    { "attribute": "subject", "value": { "literal": "Neuer Lead zugewiesen" } },
+    { "attribute": "subject", "value": { "literal": "New lead assigned" } },
     { "attribute": "description", "value": { "kind": "concat", "parts": [
         { "literal": "Lead: " }, { "kind": "field", "fields": ["lead.companyname"] } ] } },
     { "attribute": "regardingobjectid",
@@ -196,11 +196,11 @@ The recipient fields (`from`, `to`, `cc`, `bcc`) are **party lists**, so they ta
 }
 ```
 
-`regardingobjectid` verknüpft die E-Mail mit dem auslösenden Datensatz — ohne sie steht sie nirgends
-in der Zeitachse. Für einen HTML-Text ist `description` ein `concat` aus Textbausteinen und Feldern.
+`regardingobjectid` links the e-mail to the triggering record — without it, the e-mail does not
+appear in any timeline. For an HTML body, `description` is a `concat` of text fragments and fields.
 
-Eine E-Mail an ein **Team** kann der Standardschritt nicht auflösen; dafür gibt es
-`msdyncrmWorkflowTools.Class.EmailToTeam` (siehe `workflow-tools.md`).
+The standard step cannot resolve an e-mail to a **team**; for that there is
+`msdyncrmWorkflowTools.Class.EmailToTeam` (see `workflow-tools.md`).
 
 The definition also carries `realtime`, but you do not set it: the server takes it from the workflow
 record, because a real-time process must not contain persistence points and the generated XAML
@@ -215,7 +215,7 @@ instead of `conditions`/`then`; `else` is the default case either way:
 ```json
 {
   "kind": "condition",
-  "description": "Voraussetzungen prüfen",
+  "description": "Check prerequisites",
   "branches": [
     { "conditions": [ { "attribute": "sample_invoicenumber", "operator": "Null" } ],
       "steps": [ { "kind": "stopWorkflow", "outcome": "cancelled" } ] },
@@ -283,12 +283,12 @@ anyway; one that needs a value gets `WF073` if you leave it out.
 
 | `kind` | Meaning | Example |
 |---|---|---|
-| `literal` | Constant | `{"kind":"literal","literal":"Aktiv","dataType":"String"}` |
+| `literal` | Constant | `{"kind":"literal","literal":"Active","dataType":"String"}` |
 | `literal` with `literals` | A set of constants, for `In`/`NotIn` | `{"kind":"literal","dataType":"OptionSetValue","literals":["1","2","3"]}` |
-| `field` | One or more fields, first non-empty wins, optional fallback | `{"kind":"field","fields":["lead.websiteurl","lead.emailaddress1"],"fallback":"unbekannt"}` |
+| `field` | One or more fields, first non-empty wins, optional fallback | `{"kind":"field","fields":["lead.websiteurl","lead.emailaddress1"],"fallback":"unknown"}` |
 | `stepOutput` | Output of an earlier code activity | `{"kind":"stepOutput","stepOutput":"Domain"}` |
 | `now` | Current date and time, evaluated at run time | `{"kind":"now","dataType":"DateTime"}` |
-| `concat` | Several values joined into one string | `{"kind":"concat","dataType":"String","parts":[{"literal":"Nr. "},{"kind":"field","fields":["invoice.sample_invoicenumber"]}]}` |
+| `concat` | Several values joined into one string | `{"kind":"concat","dataType":"String","parts":[{"literal":"No. "},{"kind":"field","fields":["invoice.sample_invoicenumber"]}]}` |
 
 `concat` is what an e-mail body is made of: constants and field values in order, nested as deep as
 needed. `now` works both as a written value and as the right-hand side of a date comparison

@@ -1,113 +1,113 @@
 ---
 name: modeling-patterns
-description: Patterns fuer das Anlegen und Aendern von Dataverse-Tabellen, Spalten und Relationships (One-to-Many, Many-to-Many, Lookup-Strategien, Naming-Konventionen). Use when the user is designing or modifying a Dataverse / Dynamics 365 schema, adding tables/columns, planning a data model, or considering relationship choices.
+description: Patterns for creating and changing Dataverse tables, columns and relationships (Tabellen, Spalten anlegen/aendern; One-to-Many, Many-to-Many, lookup strategies, naming conventions). Use when the user is designing or modifying a Dataverse / Dynamics 365 schema, adding tables/columns, planning a data model, or considering relationship choices.
 ---
 
-# Dataverse-Modellierungs-Patterns
+# Dataverse modeling patterns
 
-Das Plugin stellt Tools bereit, um Dataverse-Schemas zu lesen, zu vergleichen
-und zu veraendern. Default-Vorgehen: erst lesen, dann aendern.
+The plugin provides tools to read, compare and change Dataverse schemas.
+Default approach: read first, then change.
 
-## Workflow fuer Neuanlagen
+## Workflow for new components
 
-1. **Schema verstehen** — vorhandene Tabellen und Naming-Konventionen pruefen, bevor neue angelegt werden.
-2. **Naming-Konvention** — ein konsistenter Publisher-Praefix (hier im Beispiel `sample_`) fuer Custom-Entitaeten und -Spalten. Tabellen Singular, Spalten in `lower_snake_case_logical_name`.
-3. **Primary Column** waehlen — fuer Lookup-fokussierte Tabellen oft `sample_name`, fuer Order-/Transaktions-Tabellen ein business-relevanter Identifier.
-4. **Relationships planen** — One-to-Many vs Many-to-Many bewusst entscheiden:
-   - One-to-Many: 1 Parent referenziert von N Children. Default.
-   - Many-to-Many: nur wenn beide Seiten symmetrisch und keine Zusatzattribute pro Relation. Sonst lieber Junction-Entity.
-5. **Cascade-Behaviors** beruecksichtigen — bei `delete: cascade` immer pruefen ob Children wirklich mitgeloescht werden sollen.
+1. **Understand the schema** — check existing tables and naming conventions before creating new ones.
+2. **Naming convention** — a consistent publisher prefix (in this example `sample_`) for custom entities and columns. Table names singular, columns in `lower_snake_case_logical_name`.
+3. **Choose the primary column** — for lookup-focused tables often `sample_name`, for order/transaction tables a business-relevant identifier.
+4. **Plan relationships** — decide deliberately between One-to-Many and Many-to-Many:
+   - One-to-Many: 1 parent referenced by N children. The default.
+   - Many-to-Many: only if both sides are symmetric and there are no extra attributes per relation. Otherwise prefer a junction entity.
+5. **Consider cascade behaviors** — with `delete: cascade`, always check whether the children really should be deleted along with the parent.
 
-## Empfehlungen
+## Recommendations
 
-- Vor dem Schema-Change ein *Trockenlauf* mit "diff"-Tool, falls vorhanden.
-- Neue Tabellen sollten in einer dedizierten Standard-Solution landen, nicht im Default Solution.
-- `picklist`-Felder (Choices) global anlegen, nicht lokal pro Tabelle, wenn Wiederverwendung absehbar.
+- Before a schema change, do a *dry run* with a "diff" tool, if one is available.
+- New tables should land in a dedicated standard solution, not in the Default Solution.
+- Create `picklist` fields (choices) globally rather than locally per table when reuse is foreseeable.
 
-## Fallen, die Zeit kosten
+## Traps that cost time
 
-Alles hier gegen eine echte Umgebung oder die Microsoft-Doku belegt.
+Everything here has been verified against a real environment or the Microsoft documentation.
 
-### Managed Properties sind keine Booleans
+### Managed properties are not booleans
 
 `IsValidForAdvancedFind`, `IsAuditEnabled`, `IsCustomizable`, `IsRenameable`,
-`CanModifyAdditionalSettings`, `IsGlobalFilterEnabled`, `IsSortableEnabled` und `RequiredLevel` sind
-auf einer **Spalte** Managed Properties und erwarten ein Objekt. `column_add`, `column_update` und
-`table_update` normalisieren einen nackten Wert inzwischen selbst und melden das unter
-`normalizedManagedProperties` — die Tabelle mit den `ManagedPropertyLogicalName`-Werten steht in
+`CanModifyAdditionalSettings`, `IsGlobalFilterEnabled`, `IsSortableEnabled` and `RequiredLevel` are
+managed properties on a **column** and expect an object. `column_add`, `column_update` and
+`table_update` now normalise a bare value themselves and report it under
+`normalizedManagedProperties` — the table of `ManagedPropertyLogicalName` values is in
 [`docs/tools/tables.md`](../../docs/tools/tables.md#managed-properties).
 
-Der Unterschied, der leicht übersehen wird: `IsValidForAdvancedFind` ist auf einer **Spalte** eine
-Managed Property, auf einer **Tabelle** ein gewöhnliches `Edm.Boolean`.
+The difference that is easy to miss: `IsValidForAdvancedFind` is a managed property on a **column**,
+but an ordinary `Edm.Boolean` on a **table**.
 
-### `componentId` ist immer die `objectid`, nie die `solutioncomponentid`
+### `componentId` is always the `objectid`, never the `solutioncomponentid`
 
-Für Tabellen und Spalten also die `MetadataId`. Die `solutioncomponentid` ist der Primärschlüssel der
-Mitgliedschaftszeile und führt in `solution_remove_component` zu
-`0x8004f021 Cannot find solution component`. `solution_get` liefert beides getrennt.
+For tables and columns that means the `MetadataId`. The `solutioncomponentid` is the primary key of the
+membership row and makes `solution_remove_component` fail with
+`0x8004f021 Cannot find solution component`. `solution_get` returns both separately.
 
-### `rootcomponentbehavior` entscheidet, welche Solution die Änderung trägt
+### `rootcomponentbehavior` decides which solution carries the change
 
-0 = Unterkomponenten einbinden (Formulare und Spalten reisen automatisch mit und bekommen **keine**
-eigene Mitgliedschaftszeile), 1 = nicht einbinden, 2 = nur als Shell. Dieselbe Tabelle liegt
-regelmäßig in mehreren Solutions mit unterschiedlichem Verhalten — deshalb ist „die Spalte der
-Solution hinzufügen" in der einen ein No-op und in der nächsten nötig. `solution_get` gibt den Wert
-pro Root-Komponente aus, `solution_add_component` sagt hinterher, ob wirklich eine Zeile entstanden
-ist.
+0 = include subcomponents (forms and columns travel along automatically and get **no**
+membership row of their own), 1 = do not include, 2 = shell only. The same table regularly sits
+in several solutions with different behavior — which is why "add the column to the
+solution" is a no-op in one and necessary in the next. `solution_get` returns the value
+per root component, and `solution_add_component` reports afterwards whether a row was actually
+created.
 
-### Ein PCF-Update braucht einen Versionssprung
+### A PCF update needs a version bump
 
-Ein Solution-Import übernimmt ein Code-Component nur, wenn die Version im `ControlManifest`
-**höher** ist als die gespeicherte — und meldet in beiden Fällen Erfolg. `solution_import` vergleicht
-das nach dem Import und warnt (`customControlWarnings`). `pac pcf push` umgeht die Versionsprüfung
-bewusst, deshalb „funktioniert" es in genau dieser Lage.
+A solution import only takes over a code component if the version in the `ControlManifest` is
+**higher** than the stored one — and reports success in both cases. `solution_import` compares
+this after the import and warns (`customControlWarnings`). `pac pcf push` deliberately bypasses the
+version check, which is why it "works" in exactly this situation.
 
-### Formulare nicht über rohe FormXML anfassen
+### Do not touch forms through raw FormXML
 
-`form_get` liefert die Struktur (Tabs → Spalten → Sections → Zellen → Controls) statt XML und löst
-dabei auf, welches Code-Component an einer Zelle hängt — in der Zelle steht nur ein generischer
-Classid plus `uniqueid`, der Rest in einer separaten `controlDescription`. `form_add_control`,
-`form_replace_control` und `form_remove_tab` kapseln die vier Details, an denen man sonst scheitert:
-Publisher-Prefix im Component-Namen, alle drei Form-Faktoren, generischer Classid samt `uniqueid`,
-und eine gebundene Spalte muss vorher publiziert sein. Einzelheiten in
+`form_get` returns the structure (tabs → columns → sections → cells → controls) instead of XML and in
+the process resolves which code component is attached to a cell — the cell itself only holds a generic
+classid plus `uniqueid`, the rest lives in a separate `controlDescription`. `form_add_control`,
+`form_replace_control` and `form_remove_tab` encapsulate the four details that otherwise trip you up:
+the publisher prefix in the component name, all three form factors, the generic classid together with
+`uniqueid`, and a bound column must be published beforehand. Details in
 [`docs/tools/forms.md`](../../docs/tools/forms.md).
 
-### `systemform` hat kein `modifiedon`
+### `systemform` has no `modifiedon`
 
-Ein `$select=modifiedon` quittiert Dataverse mit
-`0x80060888 Could not find a property named 'modifiedon'`. `modifiedby` und `_modifiedby_value`
-fehlen ebenfalls. Zum Vergleichen von Ständen gibt es `versionnumber` (BigInt), `version`,
-`overwritetime` und `publishedon`.
+Dataverse answers a `$select=modifiedon` with
+`0x80060888 Could not find a property named 'modifiedon'`. `modifiedby` and `_modifiedby_value`
+are missing as well. To compare states, use `versionnumber` (BigInt), `version`,
+`overwritetime` and `publishedon`.
 
-### Ein Rücklesen direkt nach dem Schreiben beweist nichts
+### Reading back right after writing proves nothing
 
-**Ein Rücklesen ohne Wartezeit bzw. ohne Publish ist kein Beweis dafür, dass der Schreibvorgang
-verworfen wurde.** Es sind zwei verschiedene Mechanismen, und sie verhalten sich unterschiedlich —
-gegen eine echte Umgebung gemessen:
+**A read-back without waiting or without a publish is no proof that the write was
+discarded.** There are two different mechanisms, and they behave differently —
+measured against a real environment:
 
-| Schreibvorgang | Rücklesen ohne Publish |
+| Write operation | Read-back without publish |
 |---|---|
-| `systemform.formxml` (`PATCH`, HTTP 204) | **wird nie aktuell** — nach 120 s noch alte `formxml` und alte `versionnumber` |
-| dasselbe Formular nach `publish_customizations` | sofort aktuell, `versionnumber` sprang 12345678 → 23456789 |
-| Metadaten anlegen | sichtbar nach ~3 s |
-| Metadaten ändern (`PUT`) | aktuell nach ~3 s |
-| Metadaten löschen | verschwunden nach ~16 s |
+| `systemform.formxml` (`PATCH`, HTTP 204) | **never becomes current** — after 120 s still the old `formxml` and old `versionnumber` |
+| the same form after `publish_customizations` | current immediately, `versionnumber` jumped 12345678 → 23456789 |
+| Create metadata | visible after ~3 s |
+| Change metadata (`PUT`) | current after ~3 s |
+| Delete metadata | gone after ~16 s |
 
-**Beim Formular ist es kein Cache.** Ein `PATCH` schreibt die *unpublizierte* Fassung, ein `GET`
-liefert die *publizierte* — bis zum Publish sind das schlicht zwei verschiedene Stände. Warten hilft
-hier nicht, nur `publish_customizations(entities='<tabelle>')`.
+**For forms it is not a cache.** A `PATCH` writes the *unpublished* version, a `GET`
+returns the *published* one — until the publish, these are simply two different states. Waiting does
+not help here, only `publish_customizations(entities='<table>')`.
 
-**Bei Metadaten ist es Eventual Consistency.** `EntityDefinitions` zieht von selbst nach, ganz ohne
-Publish. Der Publish wird trotzdem gebraucht, damit *Clients* die Änderung sehen.
+**For metadata it is eventual consistency.** `EntityDefinitions` catches up on its own, without any
+publish. The publish is still needed so that *clients* see the change.
 
-Praktisch: nach einem Formular-Schreibvorgang publizieren und dann lesen; nach einem
-Metadaten-Schreibvorgang kurz warten und erneut lesen. Die metadatenschreibenden Tools haben dafür
-ein `publish`-Flag und melden im Ergebnis, wenn sie nicht publiziert haben.
+In practice: after a form write, publish and then read; after a
+metadata write, wait briefly and read again. The metadata-writing tools have a
+`publish` flag for this and report in the result when they did not publish.
 
-## Lokales MCP
+## Local MCP
 
-Dieses MCP laeuft als lokale C#-Konsolenanwendung. Die Binary wird nicht direkt
-gestartet, sondern ueber den Launcher `scripts/run-server.ps1`, der sie bei jedem
-Serverstart auf die in `scripts/BINARY_VERSION` gepinnte Version bringt und aus
-dem passenden GitHub-Release laedt. Falls der Start fehlschlaegt, pruefe
-`release_repo` und den `${CLAUDE_PLUGIN_DATA}/bin/`-Pfad.
+This MCP runs as a local C# console application. The binary is not started directly,
+but through the launcher `scripts/run-server.ps1`, which on every
+server start brings it to the version pinned in `scripts/BINARY_VERSION` and downloads it from
+the matching GitHub release. If startup fails, check
+`release_repo` and the `${CLAUDE_PLUGIN_DATA}/bin/` path.

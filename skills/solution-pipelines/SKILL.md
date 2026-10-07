@@ -39,7 +39,7 @@ Expert reference for deploying Dataverse solutions through Power Platform Pipeli
 
 ## The 3-/4-call Maker-UI workflow
 
-When a user clicks "Bereitstellung" on a stage card in the Maker UI, the browser makes three or four sequential calls (depending on whether the solution has pflicht-zu-setzende environment variables / connection references on the target). Our `solution_deploy_pipeline` mirrors them when `autoConfirm=true`. Documented here for the case the tool needs extending.
+When a user clicks "Bereitstellung" (Deploy) on a stage card in the Maker UI, the browser makes three or four sequential calls (depending on whether the solution has mandatory environment variables / connection references on the target). Our `solution_deploy_pipeline` mirrors them when `autoConfirm=true`. Documented here for the case the tool needs extending.
 
 ### Step 1 — POST: create stage run, kick off validation
 ```http
@@ -60,7 +60,7 @@ Validation now runs server-side; the row's `stagerunstatus` walks through Nicht 
 
 ### Step 2a (optional) — PATCH: set environment variables & connection-reference overrides
 
-Only sent if the solution has any pflicht-zu-setzende EnvVars or ConnRefs on the target. The UI shows this as the "Umgebungsvariablen"-step in the dialog. Skip when there are none.
+Only sent if the solution has any mandatory EnvVars or ConnRefs on the target. The UI shows this as the "Umgebungsvariablen" (environment variables) step in the dialog. Skip when there are none.
 
 ```http
 PATCH {pipelineHostOrgUrl}/api/data/v9.0/deploymentstageruns({runId})
@@ -159,9 +159,9 @@ Illustrative placeholders showing the shape of a pipeline setup. All IDs are ten
 | Item | Value |
 |---|---|
 | **Pipeline-Host org URL** | `https://orgexample.crm4.dynamics.com` |
-| Pipeline „Example" `deploymentpipelineid` | `10000000-0000-0000-0000-000000000001` |
-| Stage „contoso-staging" `deploymentstageid` | `20000000-0000-0000-0000-000000000002` (first stage, `previous=null`) |
-| Stage „contoso-prod" (Prod) `deploymentstageid` | `20000000-0000-0000-0000-000000000003` (`previous=contoso-staging`) |
+| Pipeline "Example" `deploymentpipelineid` | `10000000-0000-0000-0000-000000000001` |
+| Stage "contoso-staging" `deploymentstageid` | `20000000-0000-0000-0000-000000000002` (first stage, `previous=null`) |
+| Stage "contoso-prod" (Prod) `deploymentstageid` | `20000000-0000-0000-0000-000000000003` (`previous=contoso-staging`) |
 | Dev-env mapping (contoso-dev) `deploymentenvironmentid` | `30000000-0000-0000-0000-000000000004` |
 | contoso-dev Power-Platform `environmentid` | `40000000-0000-0000-0000-000000000005` |
 | Admin account with `prvImportCustomization` | `admin@contoso.com` |

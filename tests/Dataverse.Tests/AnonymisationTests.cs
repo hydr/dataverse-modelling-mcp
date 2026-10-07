@@ -127,7 +127,7 @@ public sealed class AnonymisationTests
         Assert.That(offenders, Is.Empty,
             "Identifiers from a real environment must not reach the public repository — use sample_* "
             + "for tables and columns, Contoso* for solutions and namespaces, and synthetic GUIDs. "
-            + "See the \"Keine Firmen-interna im öffentlichen Repo\" section of CLAUDE.md. Found:\n"
+            + "See the \"No company internals in the public repository\" section of CLAUDE.md. Found:\n"
             + string.Join("\n", offenders));
     }
 

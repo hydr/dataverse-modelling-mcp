@@ -208,7 +208,7 @@ Returns the full definition with resolved enum names and a decoded parameter lis
 
 Always follow with `publish_customizations` for the table.
 
-**Example prompt:** "Add a form command 'EA-ER-Differenz auflösen' to sample_purchaseorder that calls
+**Example prompt:** "Add a form command 'Resolve price difference' to sample_purchaseorder that calls
 Sample.PurchaseOrder.CorrectPrice.onFormButton in sample_purchaseorder_correct_price.js with PrimaryControl"
 
 ---

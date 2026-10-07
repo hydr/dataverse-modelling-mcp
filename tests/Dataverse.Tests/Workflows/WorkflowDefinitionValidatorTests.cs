@@ -308,7 +308,7 @@ public sealed class WorkflowDefinitionValidatorTests
         var result = Validate(new WorkflowStep
         {
             Kind = WorkflowStepKind.Condition,
-            Description = "Nur deutsche Leads",
+            Description = "German leads only",
             Conditions =
             [
                 new WorkflowCondition

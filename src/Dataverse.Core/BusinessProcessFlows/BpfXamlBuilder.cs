@@ -8,7 +8,7 @@ using Dataverse.Core.Workflows;
 public sealed record BpfBuildResult(string Xaml, IReadOnlyList<BpfBuiltStage> Stages);
 
 /// <param name="StepIds">The <c>ProcessStepId</c> of each step, in order.</param>
-public sealed record BpfBuiltStage(string Name, string Entity, string StageId, IReadOnlyList<string> StepIds);
+public sealed record BpfBuiltStage(string Name, string Entity, string? StageId, IReadOnlyList<string?> StepIds);
 
 /// <summary>
 /// Turns a <see cref="BpfDefinition"/> into business-process-flow XAML, in the shape the current
@@ -65,11 +65,12 @@ public static class BpfXamlBuilder
         foreach (var stage in resolved.Stages.Where(s => s.Relationship is not null))
         {
             var rel = stage.Relationship!;
-            relationships.Append($"<Sequence DisplayName=\"RelationshipStep{Next()}\">")
-                .Append($"<mcwb:StageRelationship AttributeName=\"{Xml(rel.Attribute ?? string.Empty)}\" ")
-                .Append($"RelationshipName=\"{Xml(rel.Name)}\" ")
-                .Append($"SourceStageId=\"{rel.FromStageId}\" TargetStageId=\"{stage.StageId}\" />")
-                .Append("</Sequence>");
+            foreach (var source in RelationshipSources(stage, resolved))
+                relationships.Append($"<Sequence DisplayName=\"RelationshipStep{Next()}\">")
+                    .Append($"<mcwb:StageRelationship AttributeName=\"{Xml(rel.Attribute ?? string.Empty)}\" ")
+                    .Append($"RelationshipName=\"{Xml(rel.Name)}\" ")
+                    .Append($"SourceStageId=\"{source}\" TargetStageId=\"{stage.StageId}\" />")
+                    .Append("</Sequence>");
         }
 
         var body = new StringBuilder();
@@ -83,7 +84,7 @@ public static class BpfXamlBuilder
             var entityNumber = Next();
             var stageNumber = Next();
             var inner = new StringBuilder();
-            var stepIds = new List<string>();
+            var stepIds = new List<string?>();
 
             foreach (var step in stage.Source.Steps)
             {
@@ -124,6 +125,26 @@ public static class BpfXamlBuilder
         }
 
         return new BpfBuildResult(Envelope(processId, body.ToString()), built);
+    }
+
+    /// <summary>
+    /// Every stage a relationship is recorded for: one transition per way into the stage. Several ways
+    /// from the same table — two branches merging into a stage on the next table — share the
+    /// relationship. An explicit <c>fromStage</c> restricts it to that one.
+    /// </summary>
+    internal static IEnumerable<string> RelationshipSources(BpfResolvedStage stage, BpfResolvedDefinition resolved)
+    {
+        var rel = stage.Relationship!;
+        var sourceEntity = resolved.Stages[rel.FromIndex].Entity;
+        yield return rel.FromStageId;
+
+        if (!string.IsNullOrWhiteSpace(stage.Source.Relationship?.FromStage))
+            yield break;
+
+        foreach (var p in stage.Predecessors.Where(p => p != rel.FromIndex))
+            if (string.Equals(resolved.Stages[p].Entity, sourceEntity, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(sourceEntity, stage.Entity, StringComparison.OrdinalIgnoreCase))
+                yield return resolved.Stages[p].StageId;
     }
 
     private static string BuildStep(

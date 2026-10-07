@@ -50,7 +50,7 @@ internal static class BpfTestData
             new BpfStage
             {
                 Name = "Assess",
-                Steps = [new BpfStep { Attribute = "numberofemployees" }, new BpfStep { Attribute = "sample_score" }],
+                Steps = [new BpfStep { Attribute = "numberofemployees", Required = true }, new BpfStep { Attribute = "sample_score", Required = true }],
                 Branch = new BpfBranching
                 {
                     Branches =

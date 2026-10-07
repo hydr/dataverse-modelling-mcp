@@ -7,6 +7,10 @@ public sealed record BpfFieldInfo(string AttributeType, string? DisplayName);
 /// <summary>A workflow, action or flow a process refers to.</summary>
 /// <param name="Category">0 classic workflow, 3 custom process action, 5 cloud flow.</param>
 /// <param name="UniqueName">The message name of an action; what the XAML stores as its <c>UniqueName</c>.</param>
+/// <param name="FlowTrigger">
+/// For a cloud flow: its trigger, as "type", "type/kind" or "type/operationId" from the flow's
+/// <c>clientdata</c> — e.g. "Request/Button" for an instant flow, "Recurrence" for a scheduled one.
+/// </param>
 public sealed record BpfProcessInfo(
     Guid Id,
     string Name,
@@ -14,7 +18,8 @@ public sealed record BpfProcessInfo(
     int Category,
     string? PrimaryEntity,
     bool IsActivated,
-    bool OnDemand);
+    bool OnDemand,
+    string? FlowTrigger = null);
 
 /// <summary>
 /// What builder and validator know about the environment: the attributes of the tables a definition

@@ -133,21 +133,37 @@ public static class BpfXamlParser
                     stages[lastIndex].StageId!, stages[lastIndex + 1].StageId!, unrecognised);
         }
 
-        // Inherited tables are left implicit so the definition reads like a hand-written one.
-        var simplified = new List<BpfStage>();
-        string? previous = primaryEntity;
-        foreach (var stage in stages)
-        {
-            simplified.Add(string.Equals(stage.Entity, previous, StringComparison.OrdinalIgnoreCase)
+        // Tables the resolver infers anyway are left implicit, so the definition reads like a
+        // hand-written one. Every stage still has its table here, so each inference sees the real ones.
+        var explicitDefinition = new BpfDefinition { PrimaryEntity = primaryEntity, Stages = stages };
+        var simplified = stages
+            .Select((stage, i) => string.Equals(stage.Entity, BpfStageResolver.InheritedEntity(explicitDefinition, i),
+                StringComparison.OrdinalIgnoreCase)
                 ? stage with { Entity = null }
-                : stage);
-            previous = stage.Entity;
+                : stage)
+            .ToList();
+
+        // Same for a relationship's source stage.
+        var withoutSources = simplified.ToList();
+        for (var i = 0; i < stages.Count; i++)
+        {
+            if (simplified[i].Relationship is not { FromStage: { } fromStage } rel)
+                continue;
+
+            var probe = new BpfDefinition
+            {
+                PrimaryEntity = primaryEntity,
+                Stages = stages.Select((s, n) => n == i ? s with { Relationship = rel with { FromStage = null } } : s).ToList()
+            };
+            var inferred = BpfStageResolver.Resolve(probe, assignMissingIds: false).Stages[i].Relationship;
+            if (inferred is not null && string.Equals(inferred.FromStageId, fromStage, StringComparison.OrdinalIgnoreCase))
+                withoutSources[i] = simplified[i] with { Relationship = rel with { FromStage = null } };
         }
 
         var definition = new BpfDefinition
         {
             PrimaryEntity = primaryEntity,
-            Stages = simplified,
+            Stages = withoutSources,
             LanguageCode = language,
             Workflows = processWorkflows
         };
@@ -402,6 +418,16 @@ public static class BpfXamlParser
             return stages;
         }
 
+        // The same relationship for a second way in: what the builder writes when ways from one table
+        // merge into this stage. Without a fromStage the definition means exactly that.
+        if (stages[index].Relationship is { } existing
+            && string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+        {
+            var merged = stages.ToList();
+            merged[index] = merged[index] with { Relationship = existing with { FromStage = null } };
+            return merged;
+        }
+
         if (stages[index].Relationship is not null)
         {
             unrecognised.Add($"Stage '{stages[index].Name}' is entered through more than one relationship; "
@@ -409,14 +435,11 @@ public static class BpfXamlParser
             return stages;
         }
 
-        // The source is only worth stating when the default would pick another one.
-        var defaultSource = index > 0 ? stages[index - 1].StageId : null;
-        var fromStage = string.Equals(defaultSource, sourceId, StringComparison.OrdinalIgnoreCase) ? null : sourceId;
-
+        // The source is always stated here; Parse drops it again where the resolver infers the same.
         var copy = stages.ToList();
         copy[index] = copy[index] with
         {
-            Relationship = new BpfRelationship { Name = name, Attribute = attribute, FromStage = fromStage }
+            Relationship = new BpfRelationship { Name = name, Attribute = attribute, FromStage = sourceId }
         };
         return copy;
     }

@@ -124,35 +124,89 @@ public static class BpfDefinitionValidator
             ValidateTriggers(stage.Workflows, $"{path}.workflows", BpfTriggerEvent.StageEvents, Error);
 
             if (stage.Branch is { } branching)
-                ValidateBranching(branching, stage, stages, $"{path}.branch", Error, Warning);
+                ValidateBranching(branching, stage, entity, stages, $"{path}.branch", Error, Warning);
 
-            // ---- cross-table transition
-            var previousEntity = i == 0 ? definition.PrimaryEntity : resolved.Stages[i - 1].Entity;
-            var crossesTables = i > 0 && !string.Equals(entity, previousEntity, StringComparison.OrdinalIgnoreCase);
-
-            if (stage.Relationship is { } rel)
+            // ---- table: inherited from the stages leading here, which must agree
+            if (resolved.Stages[i].AmbiguousEntity)
             {
-                if (string.IsNullOrWhiteSpace(rel.Name))
-                    Error("BPF041", $"{path}.relationship.name", "The relationship has no name.",
-                        "Set 'name' to the schema name of the 1:N relationship, e.g. \"opportunity_originating_lead\".");
-
-                if (!string.IsNullOrWhiteSpace(rel.FromStage) && BpfStageResolver.Find(stages, rel.FromStage!) is null)
-                    Error("BPF042", $"{path}.relationship.fromStage", $"'{rel.FromStage}' names no stage.",
-                        "Use the key, name or id of the stage the process comes from — or leave it out.");
-
-                if (resolved.Stages[i].Relationship is { } r
-                    && string.Equals(resolved.Stages[r.FromIndex].Entity, entity, StringComparison.OrdinalIgnoreCase))
-                    Warning("BPF043", $"{path}.relationship",
-                        $"The stage is entered from a stage on the same table ('{entity}'); the relationship is not used.",
-                        "Remove 'relationship', or set 'fromStage' to the stage on the other table.");
+                var tables = resolved.Stages[i].Predecessors.Select(p => resolved.Stages[p].Entity)
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+                Error("BPF044", $"{path}.entity",
+                    $"Stage '{stage.Name}' names no table and is reached from stages on different tables ({string.Join(", ", tables)}).",
+                    "Set 'entity' on the stage. A stage without one continues on the table of the stages leading to it.");
             }
-            else if (crossesTables)
+
+            ValidateCrossTableEntry(i, path);
+        }
+
+        // Every way into a stage from another table needs the relationship the platform follows to
+        // find the record — whether the way is the main path or a branch.
+        void ValidateCrossTableEntry(int i, string path)
+        {
+            var stage = stages[i];
+            var current = resolved.Stages[i];
+            var entity = current.Entity;
+            var crossing = current.Predecessors
+                .Where(p => !string.Equals(resolved.Stages[p].Entity, entity, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (stage.Relationship is not { } rel)
             {
-                Error("BPF040", $"{path}.relationship",
-                    $"The stage moves the process from '{previousEntity}' to '{entity}' without a relationship.",
-                    $"Add 'relationship' with the 1:N relationship between {previousEntity} and {entity}, "
-                    + "e.g. {\"name\":\"opportunity_originating_lead\",\"attribute\":\"originatingleadid\"}. "
-                    + "describe_table lists a table's relationships.");
+                if (crossing.Count > 0)
+                {
+                    var from = resolved.Stages[crossing[0]];
+                    Error("BPF040", $"{path}.relationship",
+                        $"Stage '{stage.Name}' is on '{entity}', but is reached from stage '{from.Source.Name}' on "
+                        + $"'{from.Entity}', and has no relationship.",
+                        $"Add 'relationship' with the 1:N relationship from {from.Entity} to {entity} (the lookup on "
+                        + $"{entity} pointing at {from.Entity}), e.g. {{\"name\":\"opportunity_originating_lead\"}}. "
+                        + $"bpf_find_relationships with fromEntity='{from.Entity}', toEntity='{entity}' lists the candidates.");
+                }
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(rel.Name))
+                Error("BPF041", $"{path}.relationship.name", "The relationship has no name.",
+                    "Set 'name' to the schema name of the 1:N relationship, e.g. \"opportunity_originating_lead\".");
+
+            if (!string.IsNullOrWhiteSpace(rel.FromStage) && BpfStageResolver.Find(stages, rel.FromStage!) is null)
+                Error("BPF042", $"{path}.relationship.fromStage", $"'{rel.FromStage}' names no stage.",
+                    "Use the key, name or id of the stage the process comes from — or leave it out.");
+
+            if (current.Relationship is not { } r)
+                return;
+
+            var source = resolved.Stages[r.FromIndex];
+            if (string.Equals(source.Entity, entity, StringComparison.OrdinalIgnoreCase))
+            {
+                Warning("BPF043", $"{path}.relationship",
+                    $"The relationship starts at stage '{source.Source.Name}', which is on the same table ('{entity}'); it is not used.",
+                    crossing.Count > 0
+                        ? $"Set 'fromStage' to \"{resolved.Stages[crossing[0]].Source.Name}\", the stage on the other table."
+                        : "Remove 'relationship': nothing leads here from another table.");
+                return;
+            }
+
+            // The relationship is recorded for every way in from the source's table — unless fromStage
+            // pins it to one. A way in from yet another table cannot share it.
+            foreach (var other in crossing.Where(p => p != r.FromIndex))
+            {
+                var o = resolved.Stages[other];
+                if (string.Equals(o.Entity, source.Entity, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrWhiteSpace(rel.FromStage))
+                        Warning("BPF045", $"{path}.relationship.fromStage",
+                            $"Stage '{stage.Name}' is also reached from '{o.Source.Name}', but 'fromStage' records the "
+                            + $"relationship for '{source.Source.Name}' only.",
+                            "Remove 'fromStage': the relationship is then recorded for every way in from "
+                            + $"{source.Entity}.");
+                }
+                else
+                    Error("BPF045", $"{path}.relationship",
+                        $"Stage '{stage.Name}' is reached from '{source.Source.Name}' ({source.Entity}) and from "
+                        + $"'{o.Source.Name}' ({o.Entity}); one relationship cannot cover both tables.",
+                        "Route both ways through one table first, or give each its own stage on this table.");
             }
         }
 
@@ -223,7 +277,7 @@ public static class BpfDefinitionValidator
     }
 
     private static void ValidateBranching(
-        BpfBranching branching, BpfStage stage, List<BpfStage> stages, string path,
+        BpfBranching branching, BpfStage stage, string entity, List<BpfStage> stages, string path,
         Action<string, string, string, string> error, Action<string, string, string, string> warning)
     {
         if (branching.Branches.Count == 0)
@@ -243,14 +297,17 @@ public static class BpfDefinitionValidator
                     "Add a comparison, e.g. {\"attribute\":\"budgetamount\",\"operator\":\"GreaterThan\","
                     + "\"value\":{\"kind\":\"literal\",\"dataType\":\"Money\",\"literal\":\"10000\"}}.");
 
-            if (branch.LogicalOperator is { } op && op is not ("And" or "Or" or "and" or "or"))
+            if (branch.LogicalOperator is { } op && !IsLogicalOperator(op))
                 error("BPF016", $"{branchPath}.logicalOperator", $"Unknown logical operator '{op}'.", "Use \"And\" or \"Or\".");
 
             CheckTarget(branch.Next, $"{branchPath}.next");
-            ValidateComparisons(branch.Conditions, $"{branchPath}.conditions", error, warning);
+            ValidateComparisons(branch.Conditions, $"{branchPath}.conditions", entity, error, warning);
         }
 
-        if (!string.IsNullOrWhiteSpace(branching.Else))
+        if (string.Equals(branching.Else, BpfStageResolver.End, StringComparison.OrdinalIgnoreCase))
+            error("BPF012", $"{path}.else", "A branch cannot end the process; 'else' must name a stage.",
+                "Point 'else' at a stage. To end the process on that way, give the target stage \"next\": \"end\".");
+        else if (!string.IsNullOrWhiteSpace(branching.Else))
             CheckTarget(branching.Else!, $"{path}.else");
         else
             warning("BPF026", $"{path}.else", "The condition has no 'else' stage.",
@@ -261,6 +318,10 @@ public static class BpfDefinitionValidator
         // else on save ("only steps of the previous stage can be used").
         var stepFields = stage.Steps.Where(s => s.Kind == BpfStepKind.Field && !string.IsNullOrWhiteSpace(s.Attribute))
             .Select(s => s.Attribute!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requiredFields = stage.Steps
+            .Where(s => s.Kind == BpfStepKind.Field && s.Required && !string.IsNullOrWhiteSpace(s.Attribute))
+            .Select(s => s.Attribute!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var optionalReported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var b = 0; b < branching.Branches.Count; b++)
             CheckStepFields(branching.Branches[b].Conditions, $"{path}.branches[{b}].conditions");
 
@@ -286,6 +347,15 @@ public static class BpfDefinitionValidator
                         $"'{field}' is not a data step of stage '{stage.Name}'.",
                         "A branch can only compare the fields this stage asks for. Add a data step for "
                         + $"'{field}' to the stage, or compare another field.");
+
+                foreach (var (field, fieldPath) in used.Where(u => stepFields.Contains(u.Field) && !requiredFields.Contains(u.Field)))
+                    if (optionalReported.Add(field))
+                        warning("BPF028", fieldPath,
+                            $"'{field}' is not required, but the branch reads it. The generated check only runs once "
+                            + "every field the stage's conditions read has a value; while one is empty, no case "
+                            + "applies and the process continues on 'next'.",
+                            $"Set \"required\": true on the data step for '{field}', unless continuing on 'next' is "
+                            + "the intended outcome while it is empty.");
             }
         }
 
@@ -307,7 +377,7 @@ public static class BpfDefinitionValidator
     }
 
     private static void ValidateComparisons(
-        List<WorkflowCondition> conditions, string path,
+        List<WorkflowCondition> conditions, string path, string entity,
         Action<string, string, string, string> error, Action<string, string, string, string> warning)
     {
         for (var i = 0; i < conditions.Count; i++)
@@ -317,10 +387,10 @@ public static class BpfDefinitionValidator
 
             if (condition.IsGroup)
             {
-                if (condition.GroupOperator is { } groupOperator && groupOperator is not ("And" or "Or" or "and" or "or"))
+                if (condition.GroupOperator is { } groupOperator && !IsLogicalOperator(groupOperator))
                     error("BPF016", $"{conditionPath}.groupOperator", $"Unknown logical operator '{groupOperator}'.",
                         "Use \"And\" or \"Or\".");
-                ValidateComparisons(condition.Conditions!, $"{conditionPath}.conditions", error, warning);
+                ValidateComparisons(condition.Conditions!, $"{conditionPath}.conditions", entity, error, warning);
                 continue;
             }
 
@@ -334,6 +404,21 @@ public static class BpfDefinitionValidator
                 error("BPF018", conditionPath, "A branch can only compare columns of the stage's own table.",
                     "Remove 'entity', 'via', 'fromStep', 'fromStepOutput' and 'stepOutput'. To branch on "
                     + "another table, put the condition on a stage of that table.");
+
+            if (condition.Value is { } compared
+                && (!string.IsNullOrWhiteSpace(compared.Via) || !string.IsNullOrWhiteSpace(compared.FromStep)
+                    || !string.IsNullOrWhiteSpace(compared.FromStepOutput) || !string.IsNullOrWhiteSpace(compared.StepOutput)))
+                error("BPF018", $"{conditionPath}.value", "A branch can only compare against columns of the stage's own table.",
+                    "Remove 'via', 'fromStep', 'fromStepOutput' and 'stepOutput' from 'value'.");
+
+            foreach (var (field, f) in (condition.Value?.Fields ?? []).Select((x, n) => (x, n)))
+            {
+                var parts = field.Split('.', 2);
+                if (parts.Length == 2 && !string.Equals(parts[0], entity, StringComparison.OrdinalIgnoreCase))
+                    error("BPF018", $"{conditionPath}.value.fields[{f}]",
+                        $"'{field}' reads table '{parts[0]}', but the stage is on '{entity}'.",
+                        $"Name a column of the stage's table, e.g. \"{parts[1]}\" or \"{entity}.{parts[1]}\".");
+            }
 
             var op = WorkflowXamlBuilder.MapOperator(condition.Operator ?? string.Empty);
             if (!KnownOperators.Contains(op))
@@ -392,10 +477,40 @@ public static class BpfDefinitionValidator
             {
                 error("BPF051", $"$.stages[{i}].next", $"The main path loops back to stage '{stages[i].Name}'.",
                     "Break the loop: the path has to end. Use \"end\" as 'next' on the last stage of a branch.");
-                break;
+                return;
             }
         }
+
+        // A branch back to a stage already passed: the designer offers no such target, and an instance
+        // could never finish on that way.
+        var state = new int[stages.Count];   // 0 new, 1 on the current walk, 2 done
+        bool Walk(int index)
+        {
+            state[index] = 1;
+            foreach (var successor in BpfStageResolver.SuccessorsOf(stages, index))
+            {
+                if (state[successor] == 1)
+                {
+                    error("BPF052", $"$.stages[{index}]",
+                        $"Stage '{stages[index].Name}' leads back to '{stages[successor].Name}', which comes before it on the way there.",
+                        "A process cannot loop. Point the branch or 'next' at a later stage, or end the path with \"next\": \"end\". "
+                        + "To send a record back, move the instance with bpf_instance_move instead.");
+                    return true;
+                }
+
+                if (state[successor] == 0 && Walk(successor))
+                    return true;
+            }
+
+            state[index] = 2;
+            return false;
+        }
+
+        Walk(0);
     }
+
+    private static bool IsLogicalOperator(string op) =>
+        op.Equals("And", StringComparison.OrdinalIgnoreCase) || op.Equals("Or", StringComparison.OrdinalIgnoreCase);
 
     private static void CheckUnique(
         IEnumerable<(string? Value, string Path)> values, string what, Action<string, string, string, string> error)

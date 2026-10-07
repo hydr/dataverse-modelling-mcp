@@ -1,16 +1,28 @@
 namespace Dataverse.Core.BusinessProcessFlows;
 
 /// <summary>A stage with everything the definition leaves implicit worked out.</summary>
-/// <param name="Entity">The stage's table — its own, or inherited from the stage before.</param>
+/// <param name="Entity">
+/// The stage's table — its own, or inherited from the stages that lead to it (see
+/// <see cref="BpfStageResolver"/>).
+/// </param>
 /// <param name="NextStageId">Id of the following stage on the main path, or null at the end.</param>
 /// <param name="Relationship">The cross-table transition into this stage, with its source resolved.</param>
+/// <param name="Predecessors">
+/// Positions of the stages that lead here — through their main path or one of their branches.
+/// </param>
+/// <param name="AmbiguousEntity">
+/// True when the stage names no table and the stages leading to it are on different tables, so
+/// there is nothing sensible to inherit.
+/// </param>
 public sealed record BpfResolvedStage(
     BpfStage Source,
     int Index,
     string StageId,
     string Entity,
     string? NextStageId,
-    BpfResolvedRelationship? Relationship);
+    BpfResolvedRelationship? Relationship,
+    IReadOnlyList<int> Predecessors,
+    bool AmbiguousEntity = false);
 
 /// <param name="FromStageId">Id of the source stage; empty while the definition has no ids yet.</param>
 /// <param name="FromIndex">Position of the source stage in the definition.</param>
@@ -28,8 +40,16 @@ public sealed record BpfResolvedDefinition(IReadOnlyList<BpfResolvedStage> Stage
 /// Works out stage ids, tables, the main path and relationship sources from a definition.
 /// </summary>
 /// <remarks>
-/// Shared by builder and validator, so that both read a reference the same way: a stage is named by
-/// its <c>key</c>, its id or its name, in that order of precedence, ignoring case.
+/// <para>
+/// Shared by builder, parser and validator, so that all three read a definition the same way: a stage
+/// is named by its <c>key</c>, its id or its name, in that order of precedence, ignoring case.
+/// </para>
+/// <para>
+/// A stage without <c>entity</c> continues on the table of the stages that <em>lead</em> to it — over
+/// the main path or a branch — not on that of the stage listed above it. Listing order only decides
+/// the default <c>next</c>. A stage nothing leads to falls back to the stage listed above it; one that
+/// is reached from stages on different tables has to name its table.
+/// </para>
 /// </remarks>
 public static class BpfStageResolver
 {
@@ -54,15 +74,8 @@ public static class BpfStageResolver
             }
         }
 
-        // Tables first: a stage without one continues on the table of the stage before it.
-        var entities = new List<string>();
-        var current = definition.PrimaryEntity;
-        foreach (var stage in stages)
-        {
-            current = string.IsNullOrWhiteSpace(stage.Entity) ? current : stage.Entity!;
-            entities.Add(current);
-        }
-
+        var predecessors = PredecessorsOf(stages);
+        var (entities, ambiguous) = EntitiesOf(stages, definition.PrimaryEntity, predecessors);
         var nextIds = stages.Select((stage, i) => NextOf(stages, i)?.StageId).ToList();
 
         var resolved = new List<BpfResolvedStage>();
@@ -73,19 +86,43 @@ public static class BpfStageResolver
 
             if (stage.Relationship is { } rel)
             {
-                var from = !string.IsNullOrWhiteSpace(rel.FromStage)
-                    ? Find(stages, rel.FromStage!)
-                    : PredecessorOf(stages, i);
+                var fromIndex = !string.IsNullOrWhiteSpace(rel.FromStage)
+                    ? stages.IndexOf(Find(stages, rel.FromStage!)!)
+                    : DefaultSourceOf(i, entities, predecessors);
 
-                if (from is not null)
+                if (fromIndex >= 0)
                     relationship = new BpfResolvedRelationship(
-                        rel.Name, rel.Attribute, from.StageId ?? string.Empty, stages.IndexOf(from));
+                        rel.Name, rel.Attribute, stages[fromIndex].StageId ?? string.Empty, fromIndex);
             }
 
-            resolved.Add(new BpfResolvedStage(stage, i, stage.StageId ?? string.Empty, entities[i], nextIds[i], relationship));
+            resolved.Add(new BpfResolvedStage(stage, i, stage.StageId ?? string.Empty, entities[i], nextIds[i],
+                relationship, predecessors[i], ambiguous[i]));
         }
 
         return new BpfResolvedDefinition(resolved);
+    }
+
+    /// <summary>
+    /// The table a stage would have without its own <c>entity</c>: that of the stages leading to it,
+    /// or — when nothing leads there — of the stage listed above it. Null when the stages leading to
+    /// it disagree. The parser uses this to leave out tables a reader can infer.
+    /// </summary>
+    public static string? InheritedEntity(BpfDefinition definition, int index)
+    {
+        if (index == 0)
+            return definition.PrimaryEntity;
+
+        var stages = definition.Stages;
+        var predecessors = PredecessorsOf(stages);
+        var (entities, _) = EntitiesOf(stages, definition.PrimaryEntity, predecessors);
+
+        var leading = predecessors[index].Select(p => entities[p]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return leading.Count switch
+        {
+            1 => leading[0],
+            0 => entities[index - 1],
+            _ => null
+        };
     }
 
     /// <summary>The stage that follows <c>stages[index]</c> on the main path, or null at the end.</summary>
@@ -99,24 +136,81 @@ public static class BpfStageResolver
         return string.Equals(next, End, StringComparison.OrdinalIgnoreCase) ? null : Find(stages, next!);
     }
 
-    /// <summary>
-    /// Where a cross-table stage is entered from: the one stage whose main path or branch leads to it,
-    /// or else the stage listed before it.
-    /// </summary>
-    private static BpfStage? PredecessorOf(List<BpfStage> stages, int index)
+    /// <summary>Every stage a stage can lead to: its next stage and its branch targets, distinct.</summary>
+    public static IReadOnlyList<int> SuccessorsOf(List<BpfStage> stages, int index)
     {
-        var target = stages[index];
+        var result = new List<int>();
+        if (NextOf(stages, index) is { } next)
+            result.Add(stages.IndexOf(next));
 
-        var leadingHere = stages
-            .Where((s, i) => i != index
-                             && (ReferenceEquals(NextOf(stages, i), target)
-                                 || BranchTargets(s).Any(t => ReferenceEquals(Find(stages, t), target))))
-            .ToList();
+        foreach (var target in BranchTargets(stages[index]))
+            if (Find(stages, target) is { } t && !result.Contains(stages.IndexOf(t)))
+                result.Add(stages.IndexOf(t));
 
-        if (leadingHere.Count == 1)
-            return leadingHere[0];
+        return result;
+    }
 
-        return index > 0 ? stages[index - 1] : null;
+    /// <summary>
+    /// Where a cross-table stage is entered from when its relationship does not say: the one stage
+    /// leading here from another table, else the one stage leading here at all, else the stage listed
+    /// above it.
+    /// </summary>
+    private static int DefaultSourceOf(int index, IReadOnlyList<string> entities, IReadOnlyList<IReadOnlyList<int>> predecessors)
+    {
+        var leading = predecessors[index];
+        var crossing = leading.Where(p => !string.Equals(entities[p], entities[index], StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (crossing.Count >= 1)
+            return crossing[0];
+        if (leading.Count == 1)
+            return leading[0];
+        return index - 1;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<int>> PredecessorsOf(List<BpfStage> stages)
+    {
+        var result = stages.Select(_ => new List<int>()).ToList();
+        for (var i = 0; i < stages.Count; i++)
+            foreach (var successor in SuccessorsOf(stages, i))
+                if (successor != i && !result[successor].Contains(i))
+                    result[successor].Add(i);
+
+        return result;
+    }
+
+    private static (string[] Entities, bool[] Ambiguous) EntitiesOf(
+        List<BpfStage> stages, string primaryEntity, IReadOnlyList<IReadOnlyList<int>> predecessors)
+    {
+        var entities = new string?[stages.Count];
+        var ambiguous = new bool[stages.Count];
+        var visiting = new bool[stages.Count];
+
+        string? EntityOf(int i)
+        {
+            if (entities[i] is not null)
+                return entities[i];
+            if (!string.IsNullOrWhiteSpace(stages[i].Entity))
+                return entities[i] = stages[i].Entity!;
+            if (i == 0)
+                return entities[i] = primaryEntity;
+            if (visiting[i])
+                return null;   // a loop; resolved from another entry point
+
+            visiting[i] = true;
+            var leading = predecessors[i].Select(EntityOf).OfType<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            visiting[i] = false;
+
+            if (leading.Count > 1)
+                ambiguous[i] = true;
+
+            return entities[i] = leading.Count == 1 ? leading[0] : EntityOf(i - 1) ?? primaryEntity;
+        }
+
+        for (var i = 0; i < stages.Count; i++)
+            EntityOf(i);
+
+        return (entities.Select(e => e ?? primaryEntity).ToArray(), ambiguous);
     }
 
     /// <summary>Every stage reference in a stage's branching.</summary>

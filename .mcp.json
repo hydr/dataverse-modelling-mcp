@@ -1,17 +1,9 @@
 {
   "mcpServers": {
     "dataverse-modelling": {
-      "command": "powershell",
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch",
       "args": [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${CLAUDE_PLUGIN_ROOT}/scripts/run-server.ps1",
-        "-PluginRoot",
         "${CLAUDE_PLUGIN_ROOT}",
-        "-PluginData",
         "${CLAUDE_PLUGIN_DATA}"
       ],
       "env": {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# run-server.sh — MCP launcher (git-bash / Unix pendant of run-server.ps1).
+# run-server.sh — MCP launcher on macOS/Linux (via scripts/launch) and in git-bash;
+# the Unix pendant of run-server.ps1.
 #
 # Runs on every server start, i.e. also on "Reconnect" in the /mcp menu. It first
 # makes sure the binary for the expected version is installed and then execs it,

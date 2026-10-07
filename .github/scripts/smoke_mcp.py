@@ -1,6 +1,6 @@
 """Start an MCP server binary, send `initialize` and `tools/list` over stdio, and check the answers.
 
-Usage: python3 smoke_mcp.py <binary> [expected-min-tools]
+Usage: python3 smoke_mcp.py <expected-min-tools> <command> [args...]
 Exits non-zero when the server does not answer within 60 s or answers wrongly. No Dataverse
 access is needed: neither call touches the environment.
 """
@@ -9,10 +9,10 @@ import subprocess
 import sys
 import threading
 
-binary = sys.argv[1]
-min_tools = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+min_tools = int(sys.argv[1])
+command = sys.argv[2:]
 
-proc = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, text=True)
+proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, text=True)
 timer = threading.Timer(60, proc.kill)
 timer.start()
 

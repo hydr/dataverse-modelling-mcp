@@ -63,7 +63,19 @@ jobs:
       # win-x64 is cross-built on Linux and cannot run here.
       - name: Smoke test
         if: matrix.rid != 'win-x64'
-        run: python3 .github/scripts/smoke_mcp.py "./out/${{ matrix.asset }}" 100
+        run: python3 .github/scripts/smoke_mcp.py 100 "./out/${{ matrix.asset }}"
+
+      # The plugin's real start path on this OS: scripts/launch -> run-server.sh ->
+      # binary-common.sh picks the asset name for the platform. The binary is pre-placed
+      # where the launcher expects it, so the fast path runs without a download.
+      - name: Smoke test through the plugin launcher
+        if: matrix.rid != 'win-x64'
+        run: |
+          VERSION="$(tr -d '[:space:]' < scripts/BINARY_VERSION)"
+          DATA="$RUNNER_TEMP/plugin-data"
+          mkdir -p "$DATA/bin/$VERSION"
+          cp "./out/${{ matrix.asset }}" "$DATA/bin/$VERSION/DataverseMcp"
+          python3 .github/scripts/smoke_mcp.py 100 ./scripts/launch "$PWD" "$DATA"
 
       - uses: actions/upload-artifact@v4
         with:

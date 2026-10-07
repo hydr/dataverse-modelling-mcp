@@ -20,7 +20,12 @@ Default approach: read first, then change.
 
 ## Recommendations
 
-- Before a schema change, do a *dry run* with a "diff" tool, if one is available.
+- Before a schema change you are unsure about, call the tool with `dryRun: true` (offered by
+  `table_*`, `column_*`, `view_*` and `role_*` writes). Nothing is changed; the result lists the
+  exact requests — show them to the user before running the call for real. An update's dry run
+  contains the full merged definition it would PUT.
+- A write refused with "production environment" is the production guard. Do not work around it:
+  plan the change with `dryRun: true`, build it in a dev environment, promote the solution.
 - New tables should land in a dedicated standard solution, not in the Default Solution.
 - Create `picklist` fields (choices) globally rather than locally per table when reuse is foreseeable.
 

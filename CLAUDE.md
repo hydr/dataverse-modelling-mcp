@@ -65,7 +65,7 @@ commit messages or PR texts. This has happened before (v1.19.0 carried 77 `xv_*`
 
 Standard Dataverse tables (`account`, `contact`, `invoice`, `salesorder`, `product`) are harmless
 and stay. So does the **publisher identity** of the repository in `LICENSE`, `SECURITY.md`,
-`README.md`, `.claude-plugin/plugin.json` and `Dataverse.Setup.csproj` — that one is intended.
+`README.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and `Dataverse.Setup.csproj` — that one is intended.
 
 Check before committing:
 

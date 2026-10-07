@@ -35,33 +35,65 @@ Plus `dataverse_submit_feedback` — an **optional** telemetry tool that is iner
 
 ---
 
-## Prerequisites
+## Quickstart
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
-- An Azure AD tenant with a Dataverse / Power Platform environment
-- (Optional) [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) for automated app registration
+You need two things, whichever way you install:
 
----
+- A **Dataverse / Power Platform environment** — preferably a dev or trial environment, not production.
+- An **Azure AD app registration** that is a public client with redirect URI `http://localhost` and
+  the delegated Dataverse permission `user_impersonation` (details in
+  [docs/authentication.md](docs/authentication.md#app-registration-requirements)). The setup wizard
+  in option B creates one for you if the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
+  is installed.
 
-## Setup
+### A. Claude Code plugin (Windows)
 
-Clone the repo and run the setup wizard:
+Inside Claude Code:
+
+```
+/plugin marketplace add hydr/dataverse-modelling-mcp
+/plugin install dataverse-modelling-mcp@dataverse-modelling
+```
+
+Claude Code asks for the environment URL and the app's client ID. On the first server start the
+plugin downloads the server binary from the latest GitHub release — no .NET SDK, no clone. The first
+tool call opens a browser for sign-in. The plugin also brings the [skills](#skills).
+
+The release binary is Windows-only for now; on macOS and Linux use option B.
+
+### B. dotnet tool (Windows, macOS, Linux — any MCP client)
+
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download).
+
+```powershell
+dotnet tool install -g Dataverse.ModellingMcp.Setup
+dataverse-modelling-mcp            # setup wizard: app registration, sign-in, environment
+claude mcp add dataverse-modelling-mcp -- dataverse-modelling-mcp server
+```
+
+The wizard:
+
+1. Optionally creates or locates an Azure AD app registration via the Azure CLI
+2. Opens a browser for interactive sign-in (delegated auth — no secret required)
+3. Asks for the environment URL, environment ID and region
+4. Writes `config.json` and caches the token in the OS keychain / DPAPI
+5. Prints the `claude mcp add` command
+
+Any other MCP client (GitHub Copilot, Cursor, …) starts the server with the command
+`dataverse-modelling-mcp server` over stdio.
+
+### C. From source
 
 ```powershell
 git clone https://github.com/hydr/dataverse-modelling-mcp
 cd dataverse-modelling-mcp
 dotnet run --project src/Dataverse.Setup
+claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server
 ```
 
-The wizard will:
+### Configuration
 
-1. Optionally create or locate an Azure AD app registration via Azure CLI
-2. Open a browser for interactive login (delegated auth — no secret required)
-3. List available Dataverse environments and let you choose one
-4. Write `config.json` and cache the token to the OS keychain / DPAPI
-5. Print the `claude mcp add` command to register the server with Claude Code
-
-### Config file location
+The server reads `config.json`, written by the setup wizard:
 
 | OS | Path |
 |----|------|
@@ -69,13 +101,16 @@ The wizard will:
 | macOS | `~/.dataverse-modelling-mcp/config.json` |
 | Linux | `~/.config/dataverse-modelling-mcp/config.json` |
 
-### Register with Claude Code
+Without a `config.json` it falls back to environment variables — this is how the plugin passes its
+settings:
 
-After setup, run the printed command, for example:
-
-```
-claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server
-```
+| Variable | Required | Meaning |
+|---|---|---|
+| `DATAVERSE_URL` | yes | Environment URL, e.g. `https://contoso.crm4.dynamics.com` |
+| `AZURE_CLIENT_ID` | yes | Client ID of the app registration |
+| `AZURE_TENANT_ID` | no | Tenant ID; default: the tenant the account signs in to |
+| `DATAVERSE_ENVIRONMENT_ID` | no | Power Platform environment GUID — needed only for the cloud flow tools |
+| `POWER_PLATFORM_REGION` | no | Region for the cloud flow tools, default `europe` |
 
 ---
 

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dataverse-modelling-mcp",
   "displayName": "Dataverse Modelling MCP",
-  "version": "1.21.2",
+  "version": "1.22.0",
   "description": "Local C# MCP server for modelling Dataverse: tables, columns, views, classic workflows, business process flows, cloud flows and command bar buttons. Plugin, binary and tool versions are identical; on every server start the launcher brings the binary to the version pinned in scripts/BINARY_VERSION.",
   "author": {
     "name": "Crossvertise GmbH",
@@ -30,6 +30,19 @@
       "type": "string",
       "title": "Azure AD Tenant ID",
       "description": "Optional. Default: the tenant of the plugin environment.",
+      "required": false
+    },
+    "environment_id": {
+      "type": "string",
+      "title": "Power Platform Environment ID",
+      "description": "Optional. The environment GUID (Power Platform admin center → Environments). Needed only for the cloud flow tools.",
+      "required": false
+    },
+    "region": {
+      "type": "string",
+      "title": "Power Platform region",
+      "description": "Optional. Region of the environment for the cloud flow tools, e.g. 'europe' or 'unitedstates'.",
+      "default": "europe",
       "required": false
     },
     "release_repo": {

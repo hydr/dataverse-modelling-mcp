@@ -4,6 +4,14 @@ using Dataverse.Core.Config;
 using Microsoft.Identity.Client;
 using Spectre.Console;
 
+// `dataverse-modelling-mcp server` runs the MCP server itself (stdio), so the dotnet tool is a
+// complete install. Nothing may be written to stdout before this point.
+if (args.Length > 0 && args[0] == "server")
+{
+    await Dataverse.Server.ServerHost.RunAsync(args[1..]);
+    return;
+}
+
 AnsiConsole.Write(new FigletText("Dataverse Modelling MCP").Color(Color.Blue));
 AnsiConsole.MarkupLine("[bold cyan]Setup Wizard[/]");
 AnsiConsole.WriteLine();
@@ -167,7 +175,7 @@ AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("[bold green]Setup complete![/]");
 AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("To add this MCP server to Claude Code, run:");
-AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server[/]");
-AnsiConsole.WriteLine();
-AnsiConsole.MarkupLine("Or, if installed as a dotnet tool:");
 AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-modelling-mcp -- dataverse-modelling-mcp server[/]");
+AnsiConsole.WriteLine();
+AnsiConsole.MarkupLine("Running from a clone of the repository instead:");
+AnsiConsole.MarkupLine("[bold]  claude mcp add dataverse-modelling-mcp -- dotnet run --project /path/to/src/Dataverse.Server[/]");

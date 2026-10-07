@@ -19,7 +19,9 @@
         "AZURE_CLIENT_ID": "${user_config.client_id}",
         "AZURE_TENANT_ID": "${user_config.tenant_id}",
         "DATAVERSE_ENVIRONMENT_ID": "${user_config.environment_id}",
-        "POWER_PLATFORM_REGION": "${user_config.region}"
+        "POWER_PLATFORM_REGION": "${user_config.region}",
+        "DATAVERSE_READ_ONLY": "${user_config.read_only}",
+        "DATAVERSE_ALLOW_PRODUCTION_WRITES": "${user_config.allow_production_writes}"
       }
     }
   }

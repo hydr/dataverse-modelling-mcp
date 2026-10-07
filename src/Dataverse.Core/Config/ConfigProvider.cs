@@ -137,6 +137,16 @@ public sealed class ConfigProvider
 public sealed class DataverseMcpConfig
 {
     public AuthConfig? Auth { get; set; }
+
+    /// <summary>Expose only read-only tools. Also switched on by DATAVERSE_READ_ONLY=true.</summary>
+    public bool ReadOnly { get; set; }
+
+    /// <summary>
+    /// Allow write tools against a production environment. Off by default; also switched on by
+    /// DATAVERSE_ALLOW_PRODUCTION_WRITES=true.
+    /// </summary>
+    public bool AllowProductionWrites { get; set; }
+
     public string? ActiveEnvironment { get; set; }
     public Dictionary<string, EnvironmentConfig>? Environments { get; set; }
 }

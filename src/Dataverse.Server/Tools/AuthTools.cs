@@ -11,7 +11,7 @@ public sealed class AuthTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "auth_relogin")]
+    [McpServerTool(Name = "auth_relogin", ReadOnly = true)]
     [Description(
         "Force an interactive re-login for the Dataverse connection. Clears ALL cached accounts and " +
         "opens the system browser with an account picker (Prompt.SelectAccount), then blocks until " +

@@ -74,7 +74,7 @@ public sealed class BusinessProcessFlowTools
 
     // ---------------------------------------------------------------- read
 
-    [McpServerTool(Name = "bpf_list")]
+    [McpServerTool(Name = "bpf_list", ReadOnly = true)]
     [Description("List business process flows, optionally for one table, in the order the platform applies " +
                  "them to new records: by process order, processes without one last, equal orders by name " +
                  "(the platform defines no order between those). uniqueName is also the logical name of the " +
@@ -97,7 +97,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_get_definition")]
+    [McpServerTool(Name = "bpf_get_definition", ReadOnly = true)]
     [Description("Read a business process flow as an editable JSON definition — stages, steps, branches, " +
                  "relationships and triggered workflows, in the shape bpf_set_definition accepts. To change " +
                  "a process: read, edit, write back. Keep the stageId/stepId values: running instances " +
@@ -153,7 +153,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_validate_definition")]
+    [McpServerTool(Name = "bpf_validate_definition", ReadOnly = true)]
     [Description("Check a business-process-flow definition without writing anything: structure, paths and " +
                  "branches, the designer's own rules, and — against live metadata — tables, columns, " +
                  "relationships and the workflows/actions/flows it refers to. Returns issues with a code, " +
@@ -219,7 +219,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_find_relationships")]
+    [McpServerTool(Name = "bpf_find_relationships", ReadOnly = true)]
     [Description("List the 1:N relationships a stage on toEntity can be reached through from a stage on " +
                  "fromEntity — what a cross-table stage's 'relationship' takes. These are the lookups on " +
                  "toEntity that point at fromEntity; 'name' goes into relationship.name.")]
@@ -243,7 +243,7 @@ public sealed class BusinessProcessFlowTools
 
     // ---------------------------------------------------------------- write
 
-    [McpServerTool(Name = "bpf_create")]
+    [McpServerTool(Name = "bpf_create", ReadOnly = false, Destructive = false)]
     [Description("Create a business process flow from a definition — no designer needed. The definition is " +
                  "validated first; nothing is created while an error remains. Created as a draft unless " +
                  "activate=true. The FIRST activation creates the table that stores the instances (named " +
@@ -291,7 +291,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_set_definition")]
+    [McpServerTool(Name = "bpf_set_definition", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Rewrite a business process flow from a definition. Works on an ACTIVATED process — the " +
                  "platform updates stages and the instance table in place (a new table in the process gets " +
                  "its lookup column during the write). Stages and steps without an id are matched to the " +
@@ -368,7 +368,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_update")]
+    [McpServerTool(Name = "bpf_update", ReadOnly = false, Destructive = true)]
     [Description("Rename a business process flow or change its description. The unique name (and with it the " +
                  "instance table) cannot change.")]
     public static async Task<string> BpfUpdate(
@@ -396,7 +396,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_set_state")]
+    [McpServerTool(Name = "bpf_set_state", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Activate or deactivate a business process flow. The first activation creates the instance " +
                  "table and takes about two minutes; afterwards it is quick. Until users are granted access " +
                  "(bpf_grant_access), only System Administrator and System Customizer see the process. Pass " +
@@ -433,7 +433,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_delete")]
+    [McpServerTool(Name = "bpf_delete", ReadOnly = false, Destructive = true)]
     [Description("Delete a business process flow. Irreversible: its instance table and every instance go with " +
                  "it (the table disappears asynchronously, shortly after). An activated process must be " +
                  "deactivated first — pass deactivateFirst=true. Export the XAML first if in doubt.")]
@@ -459,7 +459,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_set_order")]
+    [McpServerTool(Name = "bpf_set_order", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Set the order of a table's business process flows. A new record gets the first process " +
                  "(in this order) the user has access to. Listed processes come first, in the given order; " +
                  "the others follow in their current order, as bpf_list shows it — processes without an " +
@@ -490,7 +490,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_grant_access")]
+    [McpServerTool(Name = "bpf_grant_access", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Give security roles access to a business process flow — what the designer's 'Edit security " +
                  "roles' does. Access to a process is access to its instance table, so this grants the " +
                  "table's privileges at organisation level (or only Read with readOnly=true). Additive: " +
@@ -528,7 +528,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_export_xaml")]
+    [McpServerTool(Name = "bpf_export_xaml", ReadOnly = true)]
     [Description("Export the raw XAML of a business process flow, as-is — a restore point before a change. " +
                  "Pass file to write it to disk instead of returning it.")]
     public static async Task<string> BpfExportXaml(
@@ -559,7 +559,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_restore_xaml")]
+    [McpServerTool(Name = "bpf_restore_xaml", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Write a previously exported XAML back verbatim, to undo a change (from bpf_export_xaml or " +
                  "the backup of bpf_set_definition). Works on an activated process. Prefer xamlFile.")]
     public static async Task<string> BpfRestoreXaml(
@@ -591,7 +591,7 @@ public sealed class BusinessProcessFlowTools
 
     // ---------------------------------------------------------------- instances
 
-    [McpServerTool(Name = "bpf_instance_list")]
+    [McpServerTool(Name = "bpf_instance_list", ReadOnly = true)]
     [Description("List the business-process-flow instances running over one record, across all processes — " +
                  "the most recently touched first, which is the one the form shows. Gives each instance's " +
                  "active stage and status.")]
@@ -616,7 +616,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_instance_start")]
+    [McpServerTool(Name = "bpf_instance_start", ReadOnly = false, Destructive = false)]
     [Description("Start a business process flow on a record — creates an instance on the first stage (or on " +
                  "stageId, which must lie on the main path within the primary table). A record holds one " +
                  "instance per process: if it already has one, that one is returned with created=false and " +
@@ -657,7 +657,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_instance_move")]
+    [McpServerTool(Name = "bpf_instance_move", ReadOnly = false, Destructive = false)]
     [Description("Move an instance to another stage: back to any stage it has passed, or forward to the stage " +
                  "that follows the active one (its next stage or a branch target) — one stage at a time, as " +
                  "in the form. The traversed path is kept consistent. Moving onto a stage of another table " +
@@ -693,7 +693,7 @@ public sealed class BusinessProcessFlowTools
         }
     }
 
-    [McpServerTool(Name = "bpf_instance_set_status")]
+    [McpServerTool(Name = "bpf_instance_set_status", ReadOnly = false, Destructive = false)]
     [Description("Finish, abandon or reactivate a business-process-flow instance. 'finished' is only possible " +
                  "on the last stage of the path.")]
     public static async Task<string> BpfInstanceSetStatus(

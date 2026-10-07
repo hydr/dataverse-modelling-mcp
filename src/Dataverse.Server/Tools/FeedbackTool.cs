@@ -10,7 +10,7 @@ namespace Dataverse.Server.Tools;
 [McpServerToolType]
 public sealed class FeedbackTool
 {
-    [McpServerTool(Name = "dataverse_submit_feedback")]
+    [McpServerTool(Name = "dataverse_submit_feedback", ReadOnly = true)]
     [Description(
         "Optional telemetry feedback on the current session. Sent ONLY if the server operator has " +
         "configured Application Insights (environment variable APPLICATIONINSIGHTS_CONNECTION_STRING); " +

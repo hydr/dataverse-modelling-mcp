@@ -11,7 +11,7 @@ public sealed class RecordTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "record_upsert")]
+    [McpServerTool(Name = "record_upsert", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description(
         "Create-or-update (upsert) a single Dataverse row via PATCH {entitySet}({recordId}) WITHOUT an " +
         "If-Match header, so a row with a CLIENT-SPECIFIED GUID is created if it does not exist yet " +

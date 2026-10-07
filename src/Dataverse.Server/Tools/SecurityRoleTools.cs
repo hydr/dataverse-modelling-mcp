@@ -12,7 +12,7 @@ public sealed class SecurityRoleTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "role_list")]
+    [McpServerTool(Name = "role_list", ReadOnly = true)]
     [Description("List Security Roles in the Dataverse environment.")]
     public static async Task<string> RoleList(
         SecurityRoleService svc,
@@ -32,7 +32,7 @@ public sealed class SecurityRoleTools
         }
     }
 
-    [McpServerTool(Name = "role_get")]
+    [McpServerTool(Name = "role_get", ReadOnly = true)]
     [Description("Get a Security Role including its privileges.")]
     public static async Task<string> RoleGet(
         SecurityRoleService svc,
@@ -57,7 +57,7 @@ public sealed class SecurityRoleTools
         }
     }
 
-    [McpServerTool(Name = "role_create")]
+    [McpServerTool(Name = "role_create", ReadOnly = false, Destructive = false)]
     [Description("Create a new Security Role in a business unit.")]
     public static async Task<string> RoleCreate(
         SecurityRoleService svc,
@@ -82,7 +82,7 @@ public sealed class SecurityRoleTools
         }
     }
 
-    [McpServerTool(Name = "role_update")]
+    [McpServerTool(Name = "role_update", ReadOnly = false, Destructive = true)]
     [Description("Add or remove privileges on a Security Role.")]
     public static async Task<string> RoleUpdate(
         SecurityRoleService svc,

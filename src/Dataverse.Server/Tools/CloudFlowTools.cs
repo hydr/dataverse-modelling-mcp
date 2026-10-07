@@ -11,7 +11,7 @@ public sealed class CloudFlowTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "flow_list")]
+    [McpServerTool(Name = "flow_list", ReadOnly = true)]
     [Description("List Power Automate Cloud Flows in the configured environment.")]
     public static async Task<string> FlowList(
         CloudFlowService svc,
@@ -32,7 +32,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get")]
+    [McpServerTool(Name = "flow_get", ReadOnly = true)]
     [Description("Get the full definition of a Cloud Flow.")]
     public static async Task<string> FlowGet(
         CloudFlowService svc,
@@ -54,7 +54,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_create")]
+    [McpServerTool(Name = "flow_create", ReadOnly = false, Destructive = false)]
     [Description(
         "Create a new Cloud Flow. " +
         "If solutionUniqueName is provided, creates a solution-aware flow directly in Dataverse " +
@@ -105,7 +105,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_set_state")]
+    [McpServerTool(Name = "flow_set_state", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Enable or disable a Cloud Flow.")]
     public static async Task<string> FlowSetState(
         CloudFlowService svc,
@@ -126,7 +126,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get_runs")]
+    [McpServerTool(Name = "flow_get_runs", ReadOnly = true)]
     [Description("Get the run history of a Cloud Flow.")]
     public static async Task<string> FlowGetRuns(
         CloudFlowService svc,
@@ -148,7 +148,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_list_versions")]
+    [McpServerTool(Name = "flow_list_versions", ReadOnly = true)]
     [Description("List version history of a solution-aware Cloud Flow (latest first). Only works for solution flows.")]
     public static async Task<string> FlowListVersions(
         FlowVersionService svc,
@@ -169,7 +169,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get_version")]
+    [McpServerTool(Name = "flow_get_version", ReadOnly = true)]
     [Description("Get metadata for a single Cloud Flow version (no snapshot content; that is not exposed by the componentversion table).")]
     public static async Task<string> FlowGetVersion(
         FlowVersionService svc,
@@ -192,7 +192,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_publish")]
+    [McpServerTool(Name = "flow_publish", ReadOnly = false, Destructive = true)]
     [Description("Publish the current draft of a solution-aware Cloud Flow. Creates a new Published component version (snapshot). By default the flow is NOT activated — pass activateFlow=true to publish-and-activate in one call.")]
     public static async Task<string> FlowPublish(
         FlowVersionService svc,
@@ -213,7 +213,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_save_draft")]
+    [McpServerTool(Name = "flow_save_draft", ReadOnly = false, Destructive = true)]
     [Description("Save a draft of a solution-aware Cloud Flow without publishing. Creates an Update component version row but does not promote the changes to the live runtime.")]
     public static async Task<string> FlowSaveDraft(
         FlowVersionService svc,
@@ -235,7 +235,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_restore_version")]
+    [McpServerTool(Name = "flow_restore_version", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Restore a Cloud Flow to a previous version. Creates a new draft on the flow with the chosen snapshot; the draft must still be published to take effect at runtime.")]
     public static async Task<string> FlowRestoreVersion(
         FlowVersionService svc,
@@ -257,7 +257,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get_clientdata")]
+    [McpServerTool(Name = "flow_get_clientdata", ReadOnly = true)]
     [Description("Get the raw stringified clientdata of a solution-aware Cloud Flow (the full Logic Apps wrapper including connectionReferences, definition, schemaVersion). Use this when you need to mutate the flow's JSON locally — flow_get only returns the inner definition and loses connectionReferences.")]
     public static async Task<string> FlowGetClientData(
         FlowVersionService svc,
@@ -277,7 +277,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_patch_action_input")]
+    [McpServerTool(Name = "flow_patch_action_input", ReadOnly = false, Destructive = true)]
     [Description("Surgically update one parameter on a single action's inputs.parameters object inside a solution-aware Cloud Flow. Avoids round-tripping the full clientdata. Common use cases: replace a List action's fetchXml, change a Compose action's input, add a recipient. Optionally publishes the draft immediately.")]
     public static async Task<string> FlowPatchActionInput(
         FlowVersionService svc,
@@ -302,7 +302,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_save_draft_and_publish")]
+    [McpServerTool(Name = "flow_save_draft_and_publish", ReadOnly = false, Destructive = true)]
     [Description("Atomic save-draft + publish on a solution-aware Cloud Flow. Mirrors the Maker UI 'Save and Publish' button. Use when you have the full new clientdata in hand.")]
     public static async Task<string> FlowSaveDraftAndPublish(
         FlowVersionService svc,
@@ -325,7 +325,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "fetchxml_validate")]
+    [McpServerTool(Name = "fetchxml_validate", ReadOnly = true)]
     [Description("Read-only sanity check for a FetchXML: runs it against Dataverse, reports whether it parses and how many rows it returns. Optionally returns the first N raw row samples. Use as a pre-flight check before patching the FetchXML into a flow action.")]
     public static async Task<string> FetchXmlValidate(
         FlowVersionService svc,
@@ -347,7 +347,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_trigger_run")]
+    [McpServerTool(Name = "flow_trigger_run", ReadOnly = false, Destructive = false)]
     [Description("Manually trigger a Cloud Flow run via the PA Flow API (equivalent of the Maker UI 'Run flow' button). Returns the newly created RunId. For Recurrence-triggered flows the default triggerName 'Recurrence' is correct.")]
     public static async Task<string> FlowTriggerRun(
         CloudFlowService svc,
@@ -368,7 +368,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_wait_for_run")]
+    [McpServerTool(Name = "flow_wait_for_run", ReadOnly = true)]
     [Description("Block (server-side polling) until a flow run reaches a terminal state (anything other than 'Running'), or the timeout elapses. Returns the final run status incl. error code if any. Default timeout 300s, poll every 10s.")]
     public static async Task<string> FlowWaitForRun(
         CloudFlowService svc,
@@ -391,7 +391,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get_run_actions")]
+    [McpServerTool(Name = "flow_get_run_actions", ReadOnly = true)]
     [Description("List all actions of a single run with status, error code/message, and outputs link. Uses the per-run actions endpoint that is stable even when the run-detail $expand=properties/actions intermittently fails with HTML runtime errors.")]
     public static async Task<string> FlowGetRunActions(
         CloudFlowService svc,
@@ -412,7 +412,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_get_action_outputs")]
+    [McpServerTool(Name = "flow_get_action_outputs", ReadOnly = true)]
     [Description("Fetch the JSON outputs of a single action in a run (resolves the SAS-signed outputsLink). Returns the raw body as a string — useful for inspecting Compose outputs, ListRecords result counts, or failed-action error bodies.")]
     public static async Task<string> FlowGetActionOutputs(
         CloudFlowService svc,
@@ -434,7 +434,7 @@ public sealed class CloudFlowTools
         }
     }
 
-    [McpServerTool(Name = "flow_describe")]
+    [McpServerTool(Name = "flow_describe", ReadOnly = true)]
     [Description("Get a human-readable description of a Cloud Flow's trigger and actions.")]
     public static async Task<string> FlowDescribe(
         CloudFlowService svc,

@@ -72,7 +72,7 @@ public sealed class CommandTools
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "command_list")]
+    [McpServerTool(Name = "command_list", ReadOnly = true)]
     [Description("List the modern commands (appaction rows) bound to a table, i.e. all rows whose " +
                  "contextvalue matches the logical name. Includes the managed system commands that " +
                  "were migrated from the classic ribbon (origin=Migrated) as well as hand-authored " +
@@ -95,7 +95,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_get")]
+    [McpServerTool(Name = "command_get", ReadOnly = true)]
     [Description("Get the full definition of a modern command, including its decoded JavaScript " +
                  "parameter list with resolved type names. " + SemanticsNote)]
     public static async Task<string> CommandGet(
@@ -123,7 +123,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_create")]
+    [McpServerTool(Name = "command_create", ReadOnly = false, Destructive = false)]
     [Description("Create a JavaScript-backed modern command on a table's command bar. The lookups are " +
                  "bound through their navigation property names ContextEntity (target collection " +
                  "'entities', value = the table's MetadataId) and OnClickEventJavaScriptWebResourceId " +
@@ -237,7 +237,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_update")]
+    [McpServerTool(Name = "command_update", ReadOnly = false, Destructive = true)]
     [Description("Update properties of a modern command. Convenience arguments cover the common " +
                  "fields; propertiesJson is merged on top for anything else. Note that origin cannot " +
                  "be changed after create — Dataverse accepts the PATCH and keeps the old value; " +
@@ -349,7 +349,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_delete")]
+    [McpServerTool(Name = "command_delete", ReadOnly = false, Destructive = true)]
     [Description("Delete a modern command (appaction row). Publish the table afterwards so the " +
                  "button disappears from the client.")]
     public static async Task<string> CommandDelete(
@@ -375,7 +375,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_list_component_libraries")]
+    [McpServerTool(Name = "command_list_component_libraries", ReadOnly = true)]
     [Description("List the canvas component libraries of the environment (canvasapp rows with " +
                  "canvasapptype=1) — the only place a modern command's Power Fx visibility formula can " +
                  "live. " + LibraryNote)]
@@ -405,7 +405,7 @@ public sealed class CommandTools
         }
     }
 
-    [McpServerTool(Name = "command_list_icons")]
+    [McpServerTool(Name = "command_list_icons", ReadOnly = true)]
     [Description("List the fontIcon values command_create will accept: the statically known-good set " +
                  "unioned with the icons actually used by commands in this environment. " + IconNote)]
     public static async Task<string> CommandListIcons(

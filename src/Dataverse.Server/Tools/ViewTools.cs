@@ -11,7 +11,7 @@ public sealed class ViewTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "view_list")]
+    [McpServerTool(Name = "view_list", ReadOnly = true)]
     [Description("List saved views for a Dataverse table.")]
     public static async Task<string> ViewList(
         ViewService svc,
@@ -32,7 +32,7 @@ public sealed class ViewTools
         }
     }
 
-    [McpServerTool(Name = "view_get")]
+    [McpServerTool(Name = "view_get", ReadOnly = true)]
     [Description("Get the full definition of a saved view, including its FetchXml and LayoutXml.")]
     public static async Task<string> ViewGet(
         ViewService svc,
@@ -57,7 +57,7 @@ public sealed class ViewTools
         }
     }
 
-    [McpServerTool(Name = "view_create")]
+    [McpServerTool(Name = "view_create", ReadOnly = false, Destructive = false)]
     [Description("Create a new saved view for a Dataverse table from FetchXml + LayoutXml. " +
                  "Optionally runs AddSolutionComponent for the new view (component type 26 = SavedQuery). " +
                  "Note: Dataverse does not create a standalone SavedQuery row in solutioncomponents for this — " +
@@ -124,7 +124,7 @@ public sealed class ViewTools
         }
     }
 
-    [McpServerTool(Name = "view_update")]
+    [McpServerTool(Name = "view_update", ReadOnly = false, Destructive = true)]
     [Description("Update properties of a saved view (e.g. name, fetchxml, layoutxml).")]
     public static async Task<string> ViewUpdate(
         ViewService svc,
@@ -150,7 +150,7 @@ public sealed class ViewTools
         }
     }
 
-    [McpServerTool(Name = "view_add_column")]
+    [McpServerTool(Name = "view_add_column", ReadOnly = false, Destructive = false)]
     [Description("Add a column to the layout of an existing saved view.")]
     public static async Task<string> ViewAddColumn(
         ViewService svc,
@@ -175,7 +175,7 @@ public sealed class ViewTools
         }
     }
 
-    [McpServerTool(Name = "view_set_sort")]
+    [McpServerTool(Name = "view_set_sort", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Set the sort order on a saved view's FetchXml.")]
     public static async Task<string> ViewSetSort(
         ViewService svc,

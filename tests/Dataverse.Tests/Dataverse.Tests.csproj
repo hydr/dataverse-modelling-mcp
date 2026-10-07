@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Dataverse.Core\Dataverse.Core.csproj" />
+    <ProjectReference Include="..\..\src\Dataverse.Server\Dataverse.Server.csproj" />
   </ItemGroup>
 
   <ItemGroup>

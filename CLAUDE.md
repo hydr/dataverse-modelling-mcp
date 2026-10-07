@@ -90,8 +90,10 @@ jeder Änderung mitziehen:
 | Neues Feld im Definitionsmodell | `SKILL.md` |
 | Neues Tool | Tool-Map in `SKILL.md` **und** `docs/tools/<bereich>.md` |
 | Erkenntnis über das XAML-Format | `docs/classic-workflows-reference.md` |
+| BPF: neuer Code, neues Modellfeld, neues Tool | `skills/business-process-flows/SKILL.md` (Tools auch `docs/tools/business-process-flows.md`) |
+| BPF: Erkenntnis über das XAML-Format | `docs/business-process-flows-reference.md` |
 
-`DocumentationCoverageTests` prüft die ersten drei automatisch und schlägt fehl, wenn etwas fehlt —
+`DocumentationCoverageTests` prüft die ersten drei (und die BPF-Zeile) automatisch und schlägt fehl, wenn etwas fehlt —
 Verlassen muss man sich also nur beim vierten Punkt auf Disziplin.
 
 ## Git-Konventionen

@@ -506,6 +506,75 @@ public static class WorkflowXamlBuilder
              + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>";
     }
 
+    /// <summary>One case of a condition whose branches carry foreign content.</summary>
+    /// <param name="BranchId">DisplayName of the branch node, e.g. <c>ConditionBranchStep7</c>.</param>
+    /// <param name="ThenXaml">Activities of the branch, already rendered.</param>
+    internal sealed record ConditionCase(
+        string BranchId,
+        List<WorkflowCondition> Conditions,
+        string? LogicalOperator,
+        string? Description,
+        string ThenXaml);
+
+    /// <summary>
+    /// Renders a <c>ConditionSequence</c> for another kind of process — business process flows use the
+    /// same comparison encoding as classic workflows, only the branches hold <c>SetNextStage</c>
+    /// instead of steps.
+    /// </summary>
+    /// <param name="entity">Table the comparisons read; it is the "primaryEntity" of the expression.</param>
+    /// <param name="otherwise">The default case (<c>Condition="True"</c>), or null.</param>
+    internal static string BuildConditionSequence(
+        string displayName, string entity, IReadOnlyList<ConditionCase> cases, ConditionCase? otherwise)
+    {
+        var state = new BuildState(entity, WorkflowActivityCatalog.Empty) { UsesQueryTypes = true };
+        var scopes = new List<StepScope>();
+        var activities = new StringBuilder();
+
+        foreach (var @case in cases)
+        {
+            var ctx = new StepScope(@case.BranchId);
+            scopes.Add(ctx);
+
+            var conditionVar = $"{@case.BranchId}_condition";
+            ctx.DeclareVariable(conditionVar, "x:Boolean", defaultFalse: true);
+            EmitConditionList(@case.Conditions, @case.LogicalOperator, conditionVar, ctx, activities, state);
+            activities.Append(RawBranch(@case.BranchId, $"[{conditionVar}]", @case.ThenXaml, @case.Description));
+        }
+
+        if (otherwise is not null)
+            activities.Append(RawBranch(otherwise.BranchId, "True", otherwise.ThenXaml, otherwise.Description));
+
+        return $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("ConditionSequence")}\" DisplayName=\"{Xml(displayName)}\">"
+             + "<mxswa:ActivityReference.Arguments>"
+             + "<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Wait\">False</InArgument>"
+             + "</mxswa:ActivityReference.Arguments>"
+             + "<mxswa:ActivityReference.Properties>"
+             + RenderSharedVariables(scopes)
+             + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{activities}</sco:Collection>"
+             + $"<x:Boolean x:Key=\"ContainsElseBranch\">{(otherwise is null ? "False" : "True")}</x:Boolean>"
+             + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>";
+    }
+
+    /// <summary>A branch node around pre-rendered content, with the case's name as Description.</summary>
+    private static string RawBranch(string branchId, string conditionExpression, string thenXaml, string? description)
+    {
+        var then = $"<mxswa:ActivityReference x:Key=\"Then\" AssemblyQualifiedName=\"{CrmActivity("Composite")}\" DisplayName=\"{branchId}\">"
+                 + "<mxswa:ActivityReference.Properties>"
+                 + "<sco:Collection x:TypeArguments=\"Variable\" x:Key=\"Variables\" />"
+                 + $"<sco:Collection x:TypeArguments=\"Activity\" x:Key=\"Activities\">{thenXaml}</sco:Collection>"
+                 + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>";
+
+        return $"<mxswa:ActivityReference AssemblyQualifiedName=\"{CrmActivity("ConditionBranch")}\" DisplayName=\"{branchId}\">"
+             + "<mxswa:ActivityReference.Arguments>"
+             + $"<InArgument x:TypeArguments=\"x:Boolean\" x:Key=\"Condition\">{conditionExpression}</InArgument>"
+             + "</mxswa:ActivityReference.Arguments>"
+             + "<mxswa:ActivityReference.Properties>"
+             + then
+             + "<x:Null x:Key=\"Else\" />"
+             + $"<x:String x:Key=\"Description\">{Xml(description ?? string.Empty)}</x:String>"
+             + "</mxswa:ActivityReference.Properties></mxswa:ActivityReference>";
+    }
+
     private static void EmitStage(WorkflowStep step, BuildState state, StringBuilder sb)
     {
         var inner = new StringBuilder();
@@ -1081,7 +1150,7 @@ public static class WorkflowXamlBuilder
     /// </remarks>
     private static string CreateEntityReferenceLiteral(string literal, StepScope ctx, StringBuilder sb)
     {
-        var parts = literal.Split(':');
+        var parts = literal.Split(':', 3);
         if (parts.Length < 2 || !Guid.TryParse(parts[1], out var id))
             throw new NotSupportedException(
                 $"'{literal}' is not a valid record reference. Expected \"entity:guid\", " +

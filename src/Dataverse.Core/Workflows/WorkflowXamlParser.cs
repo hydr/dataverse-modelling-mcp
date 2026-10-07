@@ -270,6 +270,66 @@ public static class WorkflowXamlParser
         List<string> unrecognised, List<string> notes)
     {
         var isWait = string.Equals(ArgumentValue(element, "Wait"), "True", StringComparison.OrdinalIgnoreCase);
+
+        var branches = new List<WorkflowConditionBranch>();
+        List<WorkflowStep>? @else = null;
+
+        foreach (var @case in ReadConditionCases(element, primaryEntity))
+        {
+            var branchSteps = @case.Then is null
+                ? []
+                : ParseSteps(ActivitiesOf(@case.Then), primaryEntity, unrecognised, notes);
+
+            if (@case.IsDefault)
+            {
+                @else = branchSteps;
+            }
+            else
+            {
+                branches.Add(new WorkflowConditionBranch
+                {
+                    BranchId = @case.BranchId,
+                    Conditions = @case.Conditions,
+                    LogicalOperator = @case.LogicalOperator,
+                    Steps = branchSteps
+                });
+            }
+        }
+
+        var single = branches.Count == 1 ? branches[0] : null;
+
+        return new WorkflowStep
+        {
+            Kind = isWait ? WorkflowStepKind.Wait : WorkflowStepKind.Condition,
+            StepId = stepId,
+            Description = description,
+            // A single case keeps the short form, so simple conditions read as before.
+            Conditions = single?.Conditions,
+            LogicalOperator = single?.LogicalOperator,
+            Then = single?.Steps,
+            Branches = single is null ? branches : null,
+            Else = @else
+        };
+    }
+
+    /// <summary>One case of a <c>ConditionSequence</c>, with its content left unparsed.</summary>
+    /// <param name="Then">The <c>Then</c> composite holding the case's activities, or null.</param>
+    /// <param name="IsDefault">The "otherwise" case: <c>Condition="True"</c> with no comparisons.</param>
+    internal sealed record ConditionCaseReading(
+        string? BranchId,
+        List<WorkflowCondition> Conditions,
+        string? LogicalOperator,
+        string? Description,
+        XElement? Then,
+        bool IsDefault);
+
+    /// <summary>
+    /// Reads the cases of a <c>ConditionSequence</c> — comparisons and their combination per case —
+    /// without interpreting what the cases do. Classic workflows put steps there, business process
+    /// flows a <c>SetNextStage</c>.
+    /// </summary>
+    internal static List<ConditionCaseReading> ReadConditionCases(XElement element, string primaryEntity)
+    {
         var activities = ActivitiesOf(element).ToList();
         var chain = ValueChain.Of(element);
 
@@ -294,8 +354,7 @@ public static class WorkflowXamlParser
         // The activities appear in execution order: the comparisons of a case, then its
         // ConditionBranch. Walking them in that order assigns every comparison to the right case —
         // no need to decode the branch-based variable names.
-        var branches = new List<WorkflowConditionBranch>();
-        List<WorkflowStep>? @else = null;
+        var cases = new List<ConditionCaseReading>();
 
         // Comparisons and their combination are collected by the variable each writes its result to,
         // because the combination is a tree: EvaluateLogicalCondition takes a left and a right operand,
@@ -331,11 +390,6 @@ public static class WorkflowXamlParser
             if (!aqn.Contains(".ConditionBranch"))
                 continue;
 
-            var inner = PropertyElement(activity, "Then");
-            var branchSteps = inner is null
-                ? []
-                : ParseSteps(ActivitiesOf(inner), primaryEntity, unrecognised, notes);
-
             var root = (ArgumentValue(activity, "Condition") ?? string.Empty).Trim('[', ']');
             var (conditions, logical) = ReadConditionTree(root, comparisons, combinations);
 
@@ -344,39 +398,24 @@ public static class WorkflowXamlParser
                 string.Equals(ArgumentValue(activity, "Condition"), "True", StringComparison.OrdinalIgnoreCase)
                 && conditions.Count == 0;
 
-            if (isElseBranch)
-            {
-                @else = branchSteps;
-            }
-            else
-            {
-                branches.Add(new WorkflowConditionBranch
-                {
-                    BranchId = SplitDisplayName(Attr(activity, "DisplayName")).StepId,
-                    Conditions = conditions,
-                    LogicalOperator = logical,
-                    Steps = branchSteps
-                });
-            }
+            var descriptionElement = PropertyElement(activity, "Description");
+            var caseDescription = descriptionElement?.Name.LocalName == "String"
+                ? descriptionElement.Value
+                : null;
+
+            cases.Add(new ConditionCaseReading(
+                SplitDisplayName(Attr(activity, "DisplayName")).StepId,
+                conditions,
+                logical,
+                string.IsNullOrEmpty(caseDescription) ? null : caseDescription,
+                PropertyElement(activity, "Then"),
+                isElseBranch));
 
             comparisons.Clear();
             combinations.Clear();
         }
 
-        var single = branches.Count == 1 ? branches[0] : null;
-
-        return new WorkflowStep
-        {
-            Kind = isWait ? WorkflowStepKind.Wait : WorkflowStepKind.Condition,
-            StepId = stepId,
-            Description = description,
-            // A single case keeps the short form, so simple conditions read as before.
-            Conditions = single?.Conditions,
-            LogicalOperator = single?.LogicalOperator,
-            Then = single?.Steps,
-            Branches = single is null ? branches : null,
-            Else = @else
-        };
+        return cases;
     }
 
     /// <summary>
@@ -1058,7 +1097,12 @@ public static class WorkflowXamlParser
             if (parameters.Contains("WorkflowPropertyType.EntityReference", StringComparison.Ordinal))
             {
                 var tokens = ArgumentTokens(parameters);
-                var entity = tokens.FirstOrDefault(t => t.IsString).Value;
+                var strings = tokens.Where(t => t.IsString).Select(t => t.Value).ToList();
+                var entity = strings.FirstOrDefault();
+
+                // The second string is the record's display label. The designer leaves it empty in
+                // workflows, but a business process flow shows it — dropping it blanks the value there.
+                var label = strings.Count > 1 && !string.IsNullOrEmpty(strings[1]) ? strings[1] : null;
 
                 // The id lives in the variable the second CreateCrmType refers to.
                 var idVariable = tokens
@@ -1075,7 +1119,7 @@ public static class WorkflowXamlParser
                     {
                         Kind = WorkflowValueKind.Literal,
                         DataType = "EntityReference",
-                        Literal = $"{entity}:{id}"
+                        Literal = label is null ? $"{entity}:{id}" : $"{entity}:{id}:{label}"
                     };
             }
 
@@ -1120,7 +1164,9 @@ public static class WorkflowXamlParser
         return match.Groups[1].Value switch
         {
             "String" => "String",
-            "Int" => "Integer",
+            // The enum member is "Integer" — what the builder writes and the designer too; "Int" is
+            // kept for whatever wrote it that way before.
+            "Integer" or "Int" => "Integer",
             "Boolean" => "Boolean",
             "DateTime" => "DateTime",
             "Decimal" => "Decimal",

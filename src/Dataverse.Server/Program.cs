@@ -46,6 +46,7 @@ builder.Services.AddSingleton<ComponentDependencyService>();
 builder.Services.AddSingleton<EntitySolutionMapService>();
 builder.Services.AddSingleton<WebResourceUsageService>();
 builder.Services.AddSingleton<FormService>();
+builder.Services.AddSingleton<BusinessProcessFlowService>();
 
 // Config provider — reads config.json and wires up the token provider
 builder.Services.AddSingleton<ConfigProvider>();

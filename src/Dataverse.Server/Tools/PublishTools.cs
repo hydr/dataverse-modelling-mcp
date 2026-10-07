@@ -11,7 +11,7 @@ public sealed class PublishTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "publish_customizations")]
+    [McpServerTool(Name = "publish_customizations", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Publish customizations so clients pick them up. Runs PublishXml with a " +
                  "ParameterXml assembled from the given components, or PublishAllXml when all=true. " +
                  "Needed after nearly every Web API change to forms, views, ribbons, modern " +

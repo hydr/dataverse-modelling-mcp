@@ -13,7 +13,7 @@ public sealed class WebResourceTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "webresource_list")]
+    [McpServerTool(Name = "webresource_list", ReadOnly = true)]
     [Description("List web resources, optionally filtered by a name prefix (e.g. 'sample_' or " +
                  "'sample_purchaseorder'). Returns webresourceid, name, displayname and the " +
                  "webresourcetype (1=HTML, 2=CSS, 3=JScript, 4=XML, 5=PNG, 6=JPG, 7=GIF, 8=XAP, " +
@@ -36,7 +36,7 @@ public sealed class WebResourceTools
         }
     }
 
-    [McpServerTool(Name = "webresource_get")]
+    [McpServerTool(Name = "webresource_get", ReadOnly = true)]
     [Description("Get a web resource by name or id. Text formats (HTML, CSS, JScript, XML, XSL, SVG, " +
                  "RESX) come back with their decoded content; binary formats report only the byte size. " +
                  "Note: the content returned is the PUBLISHED content — an unpublished change is not " +
@@ -74,7 +74,7 @@ public sealed class WebResourceTools
         }
     }
 
-    [McpServerTool(Name = "webresource_usages")]
+    [McpServerTool(Name = "webresource_usages", ReadOnly = true)]
     [Description("Find where a web resource is referenced — ask before deleting one. Searches the " +
                  "platform's own dependency tracking plus the documents that name a web resource: " +
                  "form XML, ribbon diffs, the site map, and the lookups on modern commands. Pass " +
@@ -105,7 +105,7 @@ public sealed class WebResourceTools
         }
     }
 
-    [McpServerTool(Name = "webresource_upsert")]
+    [McpServerTool(Name = "webresource_upsert", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Create or update a web resource. Pass either filePath (read from disk) or content " +
                  "(inline text); the payload is Base64-encoded for Dataverse. On create the " +
                  "webResourceType is inferred from the file extension when not given " +

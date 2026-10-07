@@ -11,7 +11,7 @@ public sealed class SolutionTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "solution_list")]
+    [McpServerTool(Name = "solution_list", ReadOnly = true)]
     [Description("List all visible solutions in the Dataverse environment.")]
     public static async Task<string> SolutionList(
         SolutionService svc,
@@ -30,7 +30,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_get")]
+    [McpServerTool(Name = "solution_get", ReadOnly = true)]
     [Description("Get a solution by unique name, including its complete component list. Each " +
                  "component carries its objectid as componentId (for a table or column: its " +
                  "MetadataId — that is the id solution_add_component and solution_remove_component " +
@@ -60,7 +60,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_create")]
+    [McpServerTool(Name = "solution_create", ReadOnly = false, Destructive = false)]
     [Description("Create a new unmanaged solution.")]
     public static async Task<string> SolutionCreate(
         SolutionService svc,
@@ -83,7 +83,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_export")]
+    [McpServerTool(Name = "solution_export", ReadOnly = true)]
     [Description("Export a solution as a zip. If filePath is given, writes the zip to disk and returns the path + size (recommended for large solutions). Otherwise returns the base64-encoded zip content inline.")]
     public static async Task<string> SolutionExport(
         SolutionService svc,
@@ -105,7 +105,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_import")]
+    [McpServerTool(Name = "solution_import", ReadOnly = false, Destructive = true)]
     [Description("Import a solution asynchronously (ImportSolutionAsync + ImportJob polling). " +
                  "Provide EITHER filePath (read zip from disk, recommended) OR zipBase64. Blocks " +
                  "until the import finishes, then returns success plus any per-component errors " +
@@ -139,7 +139,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_add_component")]
+    [McpServerTool(Name = "solution_add_component", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Add a component to a solution, then verify that a membership row was really " +
                  "created. AddSolutionComponent reports success even when it changes nothing: a " +
                  "column or form whose table is already in the solution with rootcomponentbehavior " +
@@ -169,7 +169,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_remove_component")]
+    [McpServerTool(Name = "solution_remove_component", ReadOnly = false, Destructive = true)]
     [Description("Remove a component from a solution. componentId must be the component's own " +
                  "objectid — for a table or column its MetadataId, as returned by solution_get. " +
                  "Passing the solutioncomponentid of the membership row instead fails with " +
@@ -200,7 +200,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_uninstall")]
+    [McpServerTool(Name = "solution_uninstall", ReadOnly = false, Destructive = true)]
     [Description("Uninstall a solution by deleting it. For a managed solution this removes its " +
                  "components too, and there is no undo. Runs as a DRY RUN by default: every root " +
                  "component is checked with RetrieveDependenciesForDelete and the blockers are " +
@@ -227,7 +227,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_check_layers")]
+    [McpServerTool(Name = "solution_check_layers", ReadOnly = true)]
     [Description("Show the solution layers of a single component — the same stack the Maker's " +
                  "\"Solution Layers\" view displays (source: the msdyn_componentlayer virtual table). " +
                  "Layers come back bottom-up: each one overrides the layers before it, and the last " +
@@ -255,7 +255,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "solution_remove_active_layer")]
+    [McpServerTool(Name = "solution_remove_active_layer", ReadOnly = false, Destructive = true)]
     [Description("Remove the active customization layer for a component (calls RemoveActiveCustomizations).")]
     public static async Task<string> SolutionRemoveActiveLayer(
         SolutionService svc,
@@ -279,7 +279,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "pipeline_list")]
+    [McpServerTool(Name = "pipeline_list", ReadOnly = true)]
     [Description("List all Power Platform Pipelines visible on a Pipeline-Host environment. The Pipeline-Host is typically a dedicated env (NOT the source/target) where the deploymentpipeline rows live.")]
     public static async Task<string> PipelineList(
         SolutionService svc,
@@ -299,7 +299,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "pipeline_stages")]
+    [McpServerTool(Name = "pipeline_stages", ReadOnly = true)]
     [Description("List the stages of a Power Platform Pipeline, including each stage's target deployment environment.")]
     public static async Task<string> PipelineStages(
         SolutionService svc,
@@ -320,7 +320,7 @@ public sealed class SolutionTools
         }
     }
 
-    [McpServerTool(Name = "pipeline_environments")]
+    [McpServerTool(Name = "pipeline_environments", ReadOnly = true)]
     [Description("List the deployment-environment mappings on a Pipeline-Host. Maps Power-Platform env GUIDs to their pipeline-internal mapping rows (needed as devDeploymentEnvironmentId for deploys).")]
     public static async Task<string> PipelineEnvironments(
         SolutionService svc,
@@ -350,7 +350,7 @@ public sealed class SolutionTools
     // kept intact, so the feature can be revived if a viable auth path appears. See the solution-pipelines
     // skill ("Token-AppId blocker") and memory project_pipeline_headless_appid_blocked for details.
 
-    [McpServerTool(Name = "pipeline_run_status")]
+    [McpServerTool(Name = "pipeline_run_status", ReadOnly = true)]
     [Description("Get the status of a deployment stage run by id. Includes stagerunstatus, operation, operationstatus, validation results, error message. Returns formatted values where available.")]
     public static async Task<string> PipelineRunStatus(
         SolutionService svc,

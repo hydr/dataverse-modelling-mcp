@@ -102,7 +102,7 @@ The server reads `config.json`, written by the setup wizard:
 | Linux | `~/.config/dataverse-modelling-mcp/config.json` |
 
 Without a `config.json` it falls back to environment variables — this is how the plugin passes its
-settings:
+settings. The two safety switches at the bottom also apply on top of a `config.json`:
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -111,6 +111,28 @@ settings:
 | `AZURE_TENANT_ID` | no | Tenant ID; default: the tenant the account signs in to |
 | `DATAVERSE_ENVIRONMENT_ID` | no | Power Platform environment GUID — needed only for the cloud flow tools |
 | `POWER_PLATFORM_REGION` | no | Region for the cloud flow tools, default `europe` |
+| `DATAVERSE_READ_ONLY` | no | `true` exposes only read tools — see [Security & safety](#security--safety) |
+| `DATAVERSE_ALLOW_PRODUCTION_WRITES` | no | `true` lifts the production guard |
+
+---
+
+## Security & safety
+
+"An AI changes my Dataverse schema?" — yes, and this is what keeps that in bounds:
+
+| Concern | Answer |
+|---|---|
+| **Whose rights?** | Yours. The server signs in **as you** (delegated OAuth, MSAL) and Dataverse enforces your security roles on every call. No client secret, no service account, no application user. |
+| **Production?** | **Write tools refuse to run against production** — organizations of type Customer/Secondary and the tenant's Default environment, as Dataverse reports them. Model in a dev or sandbox environment and promote with a solution or pipeline. Opt out explicitly with `DATAVERSE_ALLOW_PRODUCTION_WRITES=true` (plugin: *Allow writes to production*). |
+| **Just looking?** | **Read-only mode** (`DATAVERSE_READ_ONLY=true`, plugin: *Read-only mode*, or `"readOnly": true` in `config.json`) removes all 56 write tools — the client never even sees them. 57 read tools remain. |
+| **What will this call do?** | Every tool carries MCP annotations — `readOnlyHint`, `destructiveHint`, `idempotentHint` — so the client can tell reading from changing from deleting, and ask before the latter. In Claude Code every tool call needs your approval unless you allow it. |
+| **Undo?** | Before overwriting, export: `workflow_export_xaml` / `workflow_restore_xaml`, `bpf_export_xaml` / `bpf_restore_xaml`, `flow_list_versions` / `flow_restore_version`, `solution_export`. `solution_check_layers` shows what sits on top of a component. |
+| **Where does data go?** | Only to your Dataverse and Power Platform endpoints. Tokens stay in the OS keychain / DPAPI. Telemetry is off unless the operator sets it up — see [Telemetry](#telemetry). |
+
+Two honest limits: the production guard checks the environment type on the first write and lets
+the call through (with a warning on stderr) if Dataverse does not reveal the type. And delegated
+rights cut both ways — in an environment where you are System Administrator, so is the AI. A
+dedicated dev environment is still the best guard.
 
 ---
 

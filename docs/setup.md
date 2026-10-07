@@ -49,6 +49,8 @@ The wizard will:
     "clientId": "your-aad-app-client-id",
     "tenantId": "your-tenant-id-or-null"
   },
+  "readOnly": false,
+  "allowProductionWrites": false,
   "activeEnvironment": "prod",
   "environments": {
     "prod": {
@@ -59,6 +61,11 @@ The wizard will:
   }
 }
 ```
+
+`readOnly` exposes only the read tools; `allowProductionWrites` lifts the guard that stops write
+tools against production environments. Both default to `false`, and the environment variables
+`DATAVERSE_READ_ONLY` / `DATAVERSE_ALLOW_PRODUCTION_WRITES` can switch them on as well. Details:
+[Security & safety](../README.md#security--safety).
 
 ## Registering with Claude Code
 

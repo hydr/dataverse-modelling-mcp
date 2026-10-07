@@ -11,7 +11,7 @@ public sealed class FormTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "form_list")]
+    [McpServerTool(Name = "form_list", ReadOnly = true)]
     [Description("List model-driven forms (systemform), optionally filtered to one table and/or " +
                  "form type (2=Main, 6=QuickViewForm, 7=QuickCreate, 8=Dialog, 0=Dashboard, " +
                  "11=Card). Returns formid, name, table, type and label, formactivationstate " +
@@ -37,7 +37,7 @@ public sealed class FormTools
         }
     }
 
-    [McpServerTool(Name = "form_get")]
+    [McpServerTool(Name = "form_get", ReadOnly = true)]
     [Description("Get a form as a STRUCTURE rather than as raw FormXML: tabs → columns → sections " +
                  "→ cells → controls, each control with its id, classid and resolved class name, " +
                  "the column it is bound to, and — for a code component — the component name from " +
@@ -69,7 +69,7 @@ public sealed class FormTools
         }
     }
 
-    [McpServerTool(Name = "form_add_control")]
+    [McpServerTool(Name = "form_add_control", ReadOnly = false, Destructive = false)]
     [Description("Add a control to a section of a form. For a code component (PCF) pass " +
                  "customControlName — the STORED customcontrol.name including the publisher prefix " +
                  "(e.g. 'sample_Contoso.DocumentViewer'); the manifest name without the " +
@@ -105,7 +105,7 @@ public sealed class FormTools
         }
     }
 
-    [McpServerTool(Name = "form_replace_control")]
+    [McpServerTool(Name = "form_replace_control", ReadOnly = false, Destructive = true)]
     [Description("Replace a control in place, keeping its cell — the way an old preview or a " +
                  "foreign control gets swapped for a code component. Identify the old control by " +
                  "its id or its uniqueid (both come from form_get). Any controlDescription " +
@@ -136,7 +136,7 @@ public sealed class FormTools
         }
     }
 
-    [McpServerTool(Name = "form_remove_tab")]
+    [McpServerTool(Name = "form_remove_tab", ReadOnly = false, Destructive = true)]
     [Description("Remove a whole tab from a form, identified by its id, name or label. Control " +
                  "descriptions left behind by the removed controls are cleaned up, since a dangling " +
                  "description points at a control the form no longer has. A form cannot have zero " +

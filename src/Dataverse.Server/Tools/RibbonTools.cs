@@ -39,7 +39,7 @@ public sealed class RibbonTools
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "ribbon_get")]
+    [McpServerTool(Name = "ribbon_get", ReadOnly = true)]
     [Description("Read a table's classic ribbon DIFFERENCE — the customisations this org added, not the " +
                  "whole ribbon. Source is the row-wise storage behind RibbonDiffXml: one ribbondiff row " +
                  "per <CustomAction> (diffid + rdx), one ribboncommand row per <CommandDefinition>, one " +
@@ -70,7 +70,7 @@ public sealed class RibbonTools
         }
     }
 
-    [McpServerTool(Name = "ribbon_get_merged")]
+    [McpServerTool(Name = "ribbon_get_merged", ReadOnly = true)]
     [Description("Return a table's MERGED (compiled) ribbon XML via RetrieveEntityRibbon — the " +
                  "out-of-the-box ribbon with every solution's RibbonDiffXml applied, i.e. what the " +
                  "app actually renders. Use this, not ribbon_get, to answer \"is anything still " +
@@ -123,7 +123,7 @@ public sealed class RibbonTools
         }
     }
 
-    [McpServerTool(Name = "ribbon_add_button")]
+    [McpServerTool(Name = "ribbon_add_button", ReadOnly = false, Destructive = false)]
     [Description("Add a JavaScript-backed button to a table's classic ribbon. Ribbons cannot be written " +
                  "through the Web API, so this performs the solution round-trip: create a throwaway " +
                  "unmanaged solution, add the table WITHOUT subcomponents (AddSolutionComponent with " +
@@ -235,7 +235,7 @@ public sealed class RibbonTools
         }
     }
 
-    [McpServerTool(Name = "ribbon_remove_button")]
+    [McpServerTool(Name = "ribbon_remove_button", ReadOnly = false, Destructive = true)]
     [Description("Remove a classic ribbon button. IMPORTANT — this does NOT work by importing an empty " +
                  "<CustomActions />: an empty section reads as 'not specified', so the omitted entry " +
                  "survives, even after PublishAllXml, and deleting the solution that imported it changes " +

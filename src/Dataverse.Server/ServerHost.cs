@@ -6,7 +6,9 @@ using Dataverse.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Dataverse.Core.Safety;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace Dataverse.Server;
 
@@ -58,6 +60,7 @@ public static class ServerHost
         builder.Services.AddSingleton<WebResourceUsageService>();
         builder.Services.AddSingleton<FormService>();
         builder.Services.AddSingleton<BusinessProcessFlowService>();
+        builder.Services.AddSingleton<EnvironmentTypeService>();
 
         // Config provider — reads config.json and wires up the token provider
         builder.Services.AddSingleton<ConfigProvider>();
@@ -77,7 +80,15 @@ public static class ServerHost
                     Version = typeof(ServerHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
                 };
             })
-            .WithToolsFromAssembly(typeof(ServerHost).Assembly);
+            .WithToolsFromAssembly(typeof(ServerHost).Assembly)
+            .WithRequestFilters(filters => filters.AddCallToolFilter(ToolSafety.ProductionGuard));
+
+        // Read-only mode: drop every write tool before the server starts, so a client never sees one.
+        builder.Services.AddOptions<McpServerOptions>().PostConfigure<ConfigProvider>((options, config) =>
+        {
+            if (ToolSafety.Settings(config).ReadOnly && options.ToolCollection is { } tools)
+                Console.Error.WriteLine($"Read-only mode: {ToolSafety.RemoveWriteTools(tools)} write tools disabled.");
+        });
 
         // Detect transport flag (default: stdio)
         if (args.Contains("--transport") &&

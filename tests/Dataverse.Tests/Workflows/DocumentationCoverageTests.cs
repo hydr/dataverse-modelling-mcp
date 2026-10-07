@@ -97,7 +97,7 @@ public sealed class DocumentationCoverageTests
     {
         var tools = Regex.Matches(
                 Read("src", "Dataverse.Server", "Tools", "WorkflowTools.cs"),
-                @"McpServerTool\(Name = ""(workflow_\w+)""\)")
+                @"McpServerTool\(Name = ""(workflow_\w+)""")
             .Cast<Match>()
             .Select(m => m.Groups[1].Value)
             .Distinct(StringComparer.Ordinal)
@@ -170,7 +170,7 @@ public sealed class DocumentationCoverageTests
     {
         var tools = Regex.Matches(
                 Read("src", "Dataverse.Server", "Tools", "BusinessProcessFlowTools.cs"),
-                @"McpServerTool\(Name = ""(bpf_\w+)""\)")
+                @"McpServerTool\(Name = ""(bpf_\w+)""")
             .Cast<Match>()
             .Select(m => m.Groups[1].Value)
             .ToList();

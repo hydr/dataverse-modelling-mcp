@@ -11,7 +11,7 @@ public sealed class EnvironmentVariableTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "envvar_list")]
+    [McpServerTool(Name = "envvar_list", ReadOnly = true)]
     [Description("List all environment variable definitions and their current values.")]
     public static async Task<string> EnvVarList(
         EnvironmentVariableService svc,
@@ -30,7 +30,7 @@ public sealed class EnvironmentVariableTools
         }
     }
 
-    [McpServerTool(Name = "envvar_get")]
+    [McpServerTool(Name = "envvar_get", ReadOnly = true)]
     [Description("Get an environment variable definition and its current value by schema name.")]
     public static async Task<string> EnvVarGet(
         EnvironmentVariableService svc,
@@ -52,7 +52,7 @@ public sealed class EnvironmentVariableTools
         }
     }
 
-    [McpServerTool(Name = "envvar_set")]
+    [McpServerTool(Name = "envvar_set", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Set the current value of an environment variable.")]
     public static async Task<string> EnvVarSet(
         EnvironmentVariableService svc,

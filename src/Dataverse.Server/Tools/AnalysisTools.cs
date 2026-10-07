@@ -14,7 +14,7 @@ public sealed class AnalysisTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "component_dependencies")]
+    [McpServerTool(Name = "component_dependencies", ReadOnly = true)]
     [Description("List everything that depends on a component — ask this before deleting anything. " +
                  "Wraps RetrieveDependenciesForDelete and resolves the GUIDs and type codes it " +
                  "returns into names, so the answer is readable. canDelete=true means nothing in " +
@@ -42,7 +42,7 @@ public sealed class AnalysisTools
         }
     }
 
-    [McpServerTool(Name = "entity_solution_map")]
+    [McpServerTool(Name = "entity_solution_map", ReadOnly = true)]
     [Description("Show which solutions contain a table, with each one's rootcomponentbehavior and " +
                  "the subcomponents it holds explicitly. Answers \"which solution carries this " +
                  "change?\" — the question hangs entirely on rootcomponentbehavior (0 = include " +

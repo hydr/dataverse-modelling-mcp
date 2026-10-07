@@ -13,7 +13,7 @@ public sealed class WorkflowTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    [McpServerTool(Name = "workflow_list")]
+    [McpServerTool(Name = "workflow_list", ReadOnly = true)]
     [Description("List Classic Workflows in the configured Dataverse environment.")]
     public static async Task<string> WorkflowList(
         WorkflowService svc,
@@ -34,7 +34,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_get")]
+    [McpServerTool(Name = "workflow_get", ReadOnly = true)]
     [Description("Get the full definition of a Classic Workflow, including its XAML.")]
     public static async Task<string> WorkflowGet(
         WorkflowService svc,
@@ -59,7 +59,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_export_xaml")]
+    [McpServerTool(Name = "workflow_export_xaml", ReadOnly = true)]
     [Description("Export the raw XAML definition of a Classic Workflow, as-is. " +
                  "Use for inspection, backup or diffing. Always call this before changing a workflow " +
                  "so you have a restore point (write it back with workflow_restore_xaml). " +
@@ -88,7 +88,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_create")]
+    [McpServerTool(Name = "workflow_create", ReadOnly = false, Destructive = false)]
     [Description("Create a new Classic Workflow (draft) for a given primary entity and return its id. " +
                  "The workflow starts with an empty but valid XAML skeleton; add logic with " +
                  "workflow_set_definition, then activate with workflow_set_state. " +
@@ -114,7 +114,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_update")]
+    [McpServerTool(Name = "workflow_update", ReadOnly = false, Destructive = true)]
     [Description("Update metadata properties of a Classic Workflow via OData PATCH. " +
                  "Updatable fields: name, description, " +
                  "primaryentity, scope (1=User,2=BU,3=ParentChildBU,4=Org), " +
@@ -165,7 +165,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_set_state")]
+    [McpServerTool(Name = "workflow_set_state", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Activate or deactivate a Classic Workflow.")]
     public static async Task<string> WorkflowSetState(
         WorkflowService svc,
@@ -189,7 +189,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_delete")]
+    [McpServerTool(Name = "workflow_delete", ReadOnly = false, Destructive = true)]
     [Description("Delete one or more Classic Workflows. Irreversible — export the XAML first if the " +
                  "logic might be needed again (workflow_export_xaml). " +
                  "Activating a workflow makes Dataverse store a second row (type=2, the activation " +
@@ -300,7 +300,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_assign")]
+    [McpServerTool(Name = "workflow_assign", ReadOnly = false, Destructive = false)]
     [Description("Assign a Classic Workflow to a different owner (user or team).")]
     public static async Task<string> WorkflowAssign(
         WorkflowService svc,
@@ -327,7 +327,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_list_activities")]
+    [McpServerTool(Name = "workflow_list_activities", ReadOnly = true)]
     [Description("List all Custom Workflow Activities (code activities) registered in Dataverse, including their AssemblyQualifiedName for use in XAML.")]
     public static async Task<string> WorkflowListActivities(
         WorkflowService svc,
@@ -347,7 +347,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_get_activity_parameters")]
+    [McpServerTool(Name = "workflow_get_activity_parameters", ReadOnly = true)]
     [Description("Get the Input and Output parameters of a Custom Workflow Activity, needed to wire up arguments in XAML.")]
     public static async Task<string> WorkflowGetActivityParameters(
         WorkflowService svc,
@@ -372,7 +372,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_explain")]
+    [McpServerTool(Name = "workflow_explain", ReadOnly = true)]
     [Description("Explain a Classic Workflow in readable form: triggers, execution settings and the " +
                  "full step tree with conditions and field assignments. Start here when asked what a " +
                  "workflow does. If the report ends with a 'Not understood' section, the workflow uses " +
@@ -398,7 +398,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_get_definition")]
+    [McpServerTool(Name = "workflow_get_definition", ReadOnly = true)]
     [Description("Read a Classic Workflow's logic as an editable JSON definition (the same shape " +
                  "workflow_set_definition accepts). Use this to modify an existing workflow: read, " +
                  "change the JSON, write it back. IMPORTANT: only write it back when " +
@@ -435,7 +435,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_validate_definition")]
+    [McpServerTool(Name = "workflow_validate_definition", ReadOnly = true)]
     [Description("Check a workflow definition without writing anything. Validates structure, " +
                  "completeness, value expressions and — against live metadata — that every table and " +
                  "attribute exists. Returns issues with a code, a JSON path, the problem and the fix. " +
@@ -478,7 +478,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_set_definition")]
+    [McpServerTool(Name = "workflow_set_definition", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Write a workflow's logic from a JSON definition. This is the supported way to author " +
                  "Classic Workflow logic: step ids, DisplayNames and variables are generated so the " +
                  "Dataverse designer can still render the result. " +
@@ -550,7 +550,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_diagnose_activation")]
+    [McpServerTool(Name = "workflow_diagnose_activation", ReadOnly = false, Destructive = false)]
     [Description("Find out WHICH PART of a definition Dataverse refuses to activate. " +
                  "Activation errors say almost nothing on their own (0x80040216 is literally " +
                  "'an unexpected error occurred'), so this writes subsets of the definition into " +
@@ -598,7 +598,7 @@ public sealed class WorkflowTools
         }
     }
 
-    [McpServerTool(Name = "workflow_restore_xaml")]
+    [McpServerTool(Name = "workflow_restore_xaml", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Write a previously exported XAML back verbatim, to undo a change. " +
                  "Takes the string from workflow_export_xaml or the 'backup' field of " +
                  "workflow_set_definition. The workflow must be a draft. " +
@@ -677,7 +677,7 @@ public sealed class WorkflowTools
         AllowTrailingCommas = true
     };
 
-    [McpServerTool(Name = "workflow_validate")]
+    [McpServerTool(Name = "workflow_validate", ReadOnly = true)]
     [Description("Quick health check of a stored Classic Workflow (has XAML, has a primary entity, " +
                  "is activated). For checking a definition you are about to write, use " +
                  "workflow_validate_definition instead.")]

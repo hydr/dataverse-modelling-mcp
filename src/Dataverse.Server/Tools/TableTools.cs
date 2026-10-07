@@ -40,7 +40,7 @@ public sealed class TableTools
         return (true, null);
     }
 
-    [McpServerTool(Name = "table_list")]
+    [McpServerTool(Name = "table_list", ReadOnly = true)]
     [Description("List Dataverse tables (entities) in the configured environment.")]
     public static async Task<string> TableList(
         TableService svc,
@@ -61,7 +61,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "table_get")]
+    [McpServerTool(Name = "table_get", ReadOnly = true)]
     [Description("Get the full definition of a Dataverse table, including all columns.")]
     public static async Task<string> TableGet(
         TableService svc,
@@ -83,7 +83,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "table_create")]
+    [McpServerTool(Name = "table_create", ReadOnly = false, Destructive = false)]
     [Description("Create a new custom Dataverse table. The table is not visible to clients until it " +
                  "is published — pass publish=true, or run publish_customizations afterwards.")]
     public static async Task<string> TableCreate(
@@ -119,7 +119,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "table_update")]
+    [McpServerTool(Name = "table_update", ReadOnly = false, Destructive = true)]
     [Description("Update metadata properties of an existing Dataverse table. Pass only the " +
                  "properties you want to change: the metadata endpoint rejects PATCH and only " +
                  "accepts a PUT of the complete definition, so the tool reads the current " +
@@ -159,7 +159,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "column_add")]
+    [McpServerTool(Name = "column_add", ReadOnly = false, Destructive = false)]
     [Description("Add a new column (attribute) to a Dataverse table. Managed properties " +
                  "(IsValidForAdvancedFind, IsAuditEnabled, IsCustomizable, IsRenameable, " +
                  "CanModifyAdditionalSettings, IsGlobalFilterEnabled, IsSortableEnabled, " +
@@ -199,7 +199,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "column_delete")]
+    [McpServerTool(Name = "column_delete", ReadOnly = false, Destructive = true)]
     [Description("Delete a column from a Dataverse table. IRREVERSIBLE — it takes the stored data " +
                  "with it. By default the column's dependencies are checked first and the delete is " +
                  "refused if anything (a form, a view, a workflow) still uses it; the blockers come " +
@@ -264,7 +264,7 @@ public sealed class TableTools
         }
     }
 
-    [McpServerTool(Name = "column_update")]
+    [McpServerTool(Name = "column_update", ReadOnly = false, Destructive = true)]
     [Description("Update properties of a column on a Dataverse table. Pass only the properties you " +
                  "want to change: the metadata endpoint rejects PATCH and only accepts a PUT of the " +
                  "complete definition, so the tool reads the current definition and lays your " +

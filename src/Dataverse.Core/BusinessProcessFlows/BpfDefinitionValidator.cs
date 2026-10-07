@@ -98,6 +98,16 @@ public static class BpfDefinitionValidator
 
             if (string.IsNullOrWhiteSpace(stage.Name))
                 Error("BPF003", $"{path}.name", "The stage has no name.", "Set 'name'; it is the label in the process bar.");
+            else if (string.Equals(stage.Name.Trim(), BpfStageResolver.End, StringComparison.OrdinalIgnoreCase)
+                     && string.IsNullOrWhiteSpace(stage.Key))
+                Warning("BPF053", $"{path}.name",
+                    $"A stage named '{stage.Name}' cannot be referred to by its name: \"next\": \"{stage.Name}\" ends the path instead.",
+                    "Give the stage a 'key' and refer to it by that, or rename it.");
+
+            // The platform refuses a stage without a step: "StageStep does not have at least one StepStep".
+            if (stage.Steps.Count == 0)
+                Error("BPF022", $"{path}.steps", "The stage has no steps; the platform refuses to save it (0x80060416).",
+                    "Add at least one step, e.g. {\"attribute\":\"description\"}.");
 
             if (!BpfStageCategory.IsValid(stage.Category))
                 Error("BPF007", $"{path}.category", $"Unknown stage category '{stage.Category}'.",
@@ -159,7 +169,7 @@ public static class BpfDefinitionValidator
                         $"Stage '{stage.Name}' is on '{entity}', but is reached from stage '{from.Source.Name}' on "
                         + $"'{from.Entity}', and has no relationship.",
                         $"Add 'relationship' with the 1:N relationship from {from.Entity} to {entity} (the lookup on "
-                        + $"{entity} pointing at {from.Entity}), e.g. {{\"name\":\"opportunity_originating_lead\"}}. "
+                        + $"{entity} pointing at {from.Entity}): {{\"name\":\"<schema name>\"}}. "
                         + $"bpf_find_relationships with fromEntity='{from.Entity}', toEntity='{entity}' lists the candidates.");
                 }
 
@@ -304,6 +314,14 @@ public static class BpfDefinitionValidator
             ValidateComparisons(branch.Conditions, $"{branchPath}.conditions", entity, error, warning);
         }
 
+        // A case leading where 'else' leads changes nothing.
+        if (!string.IsNullOrWhiteSpace(branching.Else) && BpfStageResolver.Find(stages, branching.Else!) is { } elseTarget)
+            for (var b = 0; b < branching.Branches.Count; b++)
+                if (ReferenceEquals(BpfStageResolver.Find(stages, branching.Branches[b].Next), elseTarget))
+                    warning("BPF029", $"{path}.branches[{b}].next",
+                        $"The case leads to '{elseTarget.Name}', where 'else' leads anyway; it changes nothing.",
+                        "Point it at another stage, or remove the case.");
+
         if (string.Equals(branching.Else, BpfStageResolver.End, StringComparison.OrdinalIgnoreCase))
             error("BPF012", $"{path}.else", "A branch cannot end the process; 'else' must name a stage.",
                 "Point 'else' at a stage. To end the process on that way, give the target stage \"next\": \"end\".");
@@ -417,7 +435,7 @@ public static class BpfDefinitionValidator
                 if (parts.Length == 2 && !string.Equals(parts[0], entity, StringComparison.OrdinalIgnoreCase))
                     error("BPF018", $"{conditionPath}.value.fields[{f}]",
                         $"'{field}' reads table '{parts[0]}', but the stage is on '{entity}'.",
-                        $"Name a column of the stage's table, e.g. \"{parts[1]}\" or \"{entity}.{parts[1]}\".");
+                        $"Name a column of '{entity}', the stage's table — written plain or with the prefix \"{entity}.\".");
             }
 
             var op = WorkflowXamlBuilder.MapOperator(condition.Operator ?? string.Empty);

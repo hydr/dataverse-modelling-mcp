@@ -81,7 +81,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             $"api/data/v9.2/workflows?$select={Select}&$filter={Uri.EscapeDataString(filter)}&$orderby=primaryentity,processorder",
             ct: ct);
 
-        return rows.Select(r => new BpfSummary(
+        return InPlatformOrder(rows.Select(r => new BpfSummary(
             r.TryGetGuid("workflowid"),
             r.GetStringOrEmpty("name"),
             r.GetStringOrNull("uniquename"),
@@ -90,8 +90,25 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             NullableInt(r, "processorder"),
             r.GetInt32OrZero("businessprocesstype") == 1 ? "task flow" : "business process flow",
             r.TryGetProperty("ismanaged", out var m) && m.ValueKind == JsonValueKind.True,
-            r.GetDateTimeOrNull("modifiedon"))).ToList();
+            r.GetDateTimeOrNull("modifiedon"))));
     }
+
+    /// <summary>
+    /// Per table in the order the platform applies them: by process order, processes without one
+    /// last (OData sorts null first, the platform does not), then by name.
+    /// </summary>
+    /// <remarks>
+    /// A process created through the Web API has no process order unless one is set; equal orders
+    /// (the shipped processes often all have 0) have no defined order between them — the name is
+    /// only a stable tie-break here.
+    /// </remarks>
+    public static IReadOnlyList<BpfSummary> InPlatformOrder(IEnumerable<BpfSummary> processes) =>
+        processes
+            .OrderBy(p => p.PrimaryEntity, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.ProcessOrder is null)
+            .ThenBy(p => p.ProcessOrder)
+            .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     public async Task<BpfDetail?> GetAsync(string orgUrl, Guid processId, CancellationToken ct = default)
     {
@@ -287,7 +304,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 if (step.Kind != BpfStepKind.Field || string.IsNullOrWhiteSpace(step.Attribute))
                     continue;
 
-                CheckAttribute(stage.Entity, step.Attribute!, $"{path}.steps[{j}].attribute", displayable: true);
+                CheckAttribute(stage.Entity, step.Attribute!, $"{path}.steps[{j}].attribute", displayable: true, required: step.Required);
             }
 
             if (stage.Source.Branch is { } branching)
@@ -329,7 +346,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 ? replaced
                 : c.IsGroup ? c with { Conditions = Replace(c.Conditions!, map) } : c).ToList();
 
-        BpfFieldInfo? CheckAttribute(string entity, string attribute, string path, bool displayable)
+        BpfFieldInfo? CheckAttribute(string entity, string attribute, string path, bool displayable, bool required = false)
         {
             if (!catalog.Knows(entity) || catalog.IsMissing(entity))
                 return null;
@@ -352,6 +369,11 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 issues.Add(new("error", "BPF302", path,
                     $"'{entity}.{attribute}' is of type {info.AttributeType}, which a data step cannot show.",
                     "Pick a column of a type the form can edit (text, number, date, choice, lookup, …)."));
+            else if (displayable && !info.Updatable)
+                issues.Add(new("warning", "BPF313", path,
+                    $"'{entity}.{attribute}' cannot be changed by users; the data step only shows it"
+                    + (required ? ", and as a required step it blocks the stage while it is empty." : "."),
+                    "Pick a column users can edit, unless showing the value is the point."));
 
             return info;
         }
@@ -433,7 +455,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             {
                 issues.Add(new("error", "BPF308", path,
                     $"'{info.Name}' ({CategoryName(info.Category)}{(info.Category == 0 && !info.OnDemand ? ", not on-demand" : "")}) "
-                    + $"cannot be used as {(kind == "trigger" ? "a triggered workflow" : $"a {kind} step")}.",
+                    + $"cannot be used as {(kind == "trigger" ? "a triggered workflow" : kind == BpfStepKind.Action ? "an action step" : $"a {kind} step")}.",
                     kind switch
                     {
                         BpfStepKind.Flow => "A flow step needs an instant cloud flow.",
@@ -723,7 +745,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
             var attributesRaw = await client.GetRawAsync(orgUrl,
                 $"api/data/v9.2/EntityDefinitions(LogicalName='{Uri.EscapeDataString(entity)}')/Attributes"
-                + "?$select=LogicalName,AttributeType,DisplayName,AttributeOf", ct: ct);
+                + "?$select=LogicalName,AttributeType,DisplayName,AttributeOf,IsValidForUpdate", ct: ct);
 
             var attributes = new Dictionary<string, BpfFieldInfo>(StringComparer.OrdinalIgnoreCase);
             foreach (var a in JsonDocument.Parse(attributesRaw).RootElement.GetProperty("value").EnumerateArray())
@@ -737,7 +759,8 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                     continue;
 
                 // The label goes into the XAML tagged with the process language, so it has to be in it.
-                attributes[name] = new BpfFieldInfo(a.GetStringOrEmpty("AttributeType"), LabelOf(a, "DisplayName", language));
+                attributes[name] = new BpfFieldInfo(a.GetStringOrEmpty("AttributeType"), LabelOf(a, "DisplayName", language),
+                    !a.TryGetProperty("IsValidForUpdate", out var updatable) || updatable.ValueKind != JsonValueKind.False);
             }
 
             return (true, enabled, attributes);
@@ -842,11 +865,18 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         CancellationToken ct = default)
     {
         var (validation, completed, fields) = await ValidateAsync(orgUrl, definition, ct);
-        uniqueName ??= await DeriveUniqueNameAsync(orgUrl, name, solutionUniqueName, ct);
+        var prefix = string.IsNullOrWhiteSpace(solutionUniqueName) ? null : await PublisherPrefixAsync(orgUrl, solutionUniqueName!, ct);
+        uniqueName ??= DeriveUniqueName(name, prefix ?? "new");
 
         var nameIssues = await CheckUniqueNameAsync(orgUrl, uniqueName, ct);
+        if (prefix is not null && nameIssues.Count == 0 && !uniqueName.StartsWith(prefix + "_", StringComparison.Ordinal))
+            nameIssues.Add(new("warning", "BPF009", "uniqueName",
+                $"'{uniqueName}' does not carry the prefix '{prefix}_' of the solution's publisher; the instance table gets "
+                + "that name anyway.",
+                $"Use \"{prefix}_…\" unless the other prefix is intended."));
         if (nameIssues.Count > 0)
-            validation = new WorkflowValidationResult(false, validation.Issues.Concat(nameIssues).ToList());
+            validation = new WorkflowValidationResult(
+                validation.CanSave && nameIssues.All(i => i.Severity != "error"), validation.Issues.Concat(nameIssues).ToList());
 
         if (!validation.CanSave)
             return (new BpfSaveResult(false, Guid.Empty, [], validation, null,
@@ -869,6 +899,9 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             ["primaryentity"] = completed.PrimaryEntity,
             // Without scope the platform's validation dereferences null — see the class remarks.
             ["scope"] = 4,
+            // Without one the process has no place in the table's order; the platform then ranks it
+            // after all others. Last place is what a designer-created process gets as well.
+            ["processorder"] = await NextProcessOrderAsync(orgUrl, completed.PrimaryEntity, ct),
             ["xaml"] = build.Xaml
         };
 
@@ -884,10 +917,11 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         {
             try
             {
-                await SetStateAsync(orgUrl, id, true, ct);
-                message = $"Created and activated. Instances are stored in table '{uniqueName}'.";
+                var added = await SetStateAsync(orgUrl, id, true, solutionUniqueName, ct);
+                message = $"Created and activated. Instances are stored in table '{uniqueName}'."
+                          + (added ? $" The table was added to solution '{solutionUniqueName}' as well, which an export needs." : string.Empty);
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 // The process exists either way; losing its id here would leave an orphan behind.
                 logger.LogWarning(ex, "Activation of business process flow {Id} failed", id);
@@ -898,7 +932,11 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         else
         {
             message = "Created as a draft. Activate it with bpf_set_state; the first activation creates the "
-                      + $"instance table '{uniqueName}' and takes about two minutes.";
+                      + $"instance table '{uniqueName}' and takes about two minutes."
+                      + (string.IsNullOrWhiteSpace(solutionUniqueName)
+                          ? string.Empty
+                          : $" Pass solutionUniqueName='{solutionUniqueName}' there too: the solution can only be exported "
+                            + "together with that table.");
         }
 
         return (new BpfSaveResult(true, id, build.Stages, validation, null, message), uniqueName);
@@ -966,7 +1004,8 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
         if (!plan.Validation.CanSave)
             return new BpfSaveResult(false, processId, [], plan.Validation, null,
-                $"Nothing was written: {plan.Validation.ErrorCount} error(s) must be fixed first.");
+                $"Nothing was written: {plan.Validation.ErrorCount} error(s) must be fixed first.",
+                dryRun ? TryDescribeChange(plan.Current.Definition, plan.Definition) : null);
 
         // Described before building: the builder gives new stages their ids.
         var diff = DescribeChange(plan.Current.Definition, plan.Definition);
@@ -1024,6 +1063,35 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 ["statuscode"] = activate ? 2 : 1
             }, ct);
 
+    /// <summary>
+    /// Activates or deactivates; after an activation also adds the instance table to
+    /// <paramref name="solutionUniqueName"/>. A solution holding the process exports only together
+    /// with that table (<c>0x80060376</c>), and the table only exists from the first activation on.
+    /// </summary>
+    /// <returns>True when the table was added to the solution.</returns>
+    public async Task<bool> SetStateAsync(
+        string orgUrl, Guid processId, bool activate, string? solutionUniqueName, CancellationToken ct = default)
+    {
+        await SetStateAsync(orgUrl, processId, activate, ct);
+        if (!activate || string.IsNullOrWhiteSpace(solutionUniqueName))
+            return false;
+
+        var detail = await GetAsync(orgUrl, processId, ct)
+                     ?? throw new InvalidOperationException($"Business process flow {processId} not found.");
+        var raw = await client.GetRawAsync(orgUrl,
+            $"api/data/v9.2/EntityDefinitions(LogicalName='{Uri.EscapeDataString(detail.UniqueName ?? string.Empty)}')?$select=MetadataId", ct: ct);
+        var tableId = JsonDocument.Parse(raw).RootElement.TryGetGuid("MetadataId");
+
+        await client.ExecuteActionAsync(orgUrl, "AddSolutionComponent", new
+        {
+            ComponentId = tableId,
+            ComponentType = 1,   // table
+            SolutionUniqueName = solutionUniqueName,
+            AddRequiredComponents = false
+        }, ct);
+        return true;
+    }
+
     /// <summary>Deletes a process; an activated one is deactivated first when asked to.</summary>
     public async Task DeleteAsync(string orgUrl, Guid processId, bool deactivateFirst, CancellationToken ct = default)
     {
@@ -1055,7 +1123,8 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             throw new InvalidOperationException(
                 $"Not a process of table '{primaryEntity}': {string.Join(", ", unknown)}. bpf_list shows them.");
 
-        // Unlisted processes keep their relative order after the listed ones.
+        // Unlisted processes keep their relative order after the listed ones — the order the platform
+        // applies (ListAsync sorts that way); ties and missing orders become a definite order here.
         var rest = existing.Where(e => !orderedIds.Contains(e.ProcessId)).Select(e => e.ProcessId);
         var order = orderedIds.Concat(rest).ToList();
 
@@ -1501,9 +1570,20 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         foreach (var stage in removed)
         {
             var raw = await client.GetRawAsync(orgUrl,
-                $"api/data/v9.2/{table.EntitySetName}?$select=businessprocessflowinstanceid&$top=5000"
-                + $"&$filter=_activestageid_value eq {stage.StageId} and statecode eq 0", ct: ct);
-            var count = JsonDocument.Parse(raw).RootElement.GetProperty("value").GetArrayLength();
+                $"api/data/v9.2/{table.EntitySetName}?$select=businessprocessflowinstanceid,statecode&$top=5000"
+                + $"&$filter=_activestageid_value eq {stage.StageId}", ct: ct);
+            var rows = JsonDocument.Parse(raw).RootElement.GetProperty("value").EnumerateArray().ToList();
+            var count = rows.Count(r => r.GetInt32OrZero("statecode") == 0);
+            var closed = rows.Count - count;
+
+            // Finished and aborted instances can be reactivated — onto a stage that is gone by then.
+            if (closed > 0)
+                issues.Add(new WorkflowValidationIssue("warning", "BPF060", "$.stages",
+                    $"Stage '{stage.Name}' ({stage.StageId}) is removed; {closed} finished or aborted instance(s) end on it. "
+                    + "Reactivated, they would stand on a stage that no longer exists.",
+                    "If the stage was renamed or changed, keep its 'stageId'. Otherwise this only matters if those "
+                    + "instances are ever reactivated."));
+
             if (count == 0)
                 continue;
 
@@ -1545,6 +1625,19 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         }
     }
 
+    /// <summary>The change of a definition that may still be broken — null when it cannot be described.</summary>
+    private static IReadOnlyList<string>? TryDescribeChange(BpfDefinition before, BpfDefinition after)
+    {
+        try
+        {
+            return DescribeChange(before, after);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>One line per change between two definitions, matched by stage and step id.</summary>
     public static IReadOnlyList<string> DescribeChange(BpfDefinition before, BpfDefinition after)
     {
@@ -1557,7 +1650,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             id is null ? "end" : stages.FirstOrDefault(st => Id(st.StageId) == Id(id))?.Source.Name ?? id;
         string Targets(IReadOnlyList<BpfResolvedStage> stages, BpfResolvedStage stage) =>
             string.Join(", ", BpfStageResolver.BranchTargets(stage.Source)
-                .Select(t => BpfStageResolver.Find(stages.Select(x => x.Source).ToList(), t)?.Name ?? t));
+                .Select(t => BpfStageResolver.Find(stages.Select(x => x.Source).ToList(), t)?.Name ?? t).Distinct());
 
         var old = beforeResolved.Where(st => !string.IsNullOrEmpty(st.StageId)).ToDictionary(st => Id(st.StageId));
         var matched = new HashSet<string>();
@@ -1688,26 +1781,32 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     private static WorkflowCondition StripEntity(WorkflowCondition c) =>
         c.IsGroup ? c with { Conditions = c.Conditions!.Select(StripEntity).ToList() } : c with { Entity = null };
 
-    private async Task<string> DeriveUniqueNameAsync(string orgUrl, string name, string? solution, CancellationToken ct)
+    /// <summary>Customization prefix of a solution's publisher.</summary>
+    private async Task<string> PublisherPrefixAsync(string orgUrl, string solution, CancellationToken ct)
     {
-        var prefix = "new";
-        if (!string.IsNullOrWhiteSpace(solution))
-        {
-            var raw = await client.GetRawAsync(orgUrl,
-                $"api/data/v9.2/solutions?$select=uniquename&$filter=uniquename eq '{Escape(solution!)}'"
-                + "&$expand=publisherid($select=customizationprefix)", ct: ct);
-            var row = JsonDocument.Parse(raw).RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
-            if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty("publisherid", out var pub)
-                && pub.GetStringOrNull("customizationprefix") is { Length: > 0 } p)
-                prefix = p;
-            else
-                throw new InvalidOperationException($"Solution '{solution}' not found.");
-        }
+        var raw = await client.GetRawAsync(orgUrl,
+            $"api/data/v9.2/solutions?$select=uniquename&$filter=uniquename eq '{Escape(solution)}'"
+            + "&$expand=publisherid($select=customizationprefix)", ct: ct);
+        var row = JsonDocument.Parse(raw).RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
+        if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty("publisherid", out var pub)
+            && pub.GetStringOrNull("customizationprefix") is { Length: > 0 } p)
+            return p;
+        throw new InvalidOperationException($"Solution '{solution}' not found.");
+    }
 
+    private static string DeriveUniqueName(string name, string prefix)
+    {
         var slug = Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]", string.Empty);
         if (slug.Length == 0)
             slug = "process";
         return $"{prefix}_{slug}"[..Math.Min(prefix.Length + 1 + slug.Length, 40)];
+    }
+
+    /// <summary>One past the highest process order of the table's business process flows.</summary>
+    private async Task<int> NextProcessOrderAsync(string orgUrl, string primaryEntity, CancellationToken ct)
+    {
+        var existing = await ListAsync(orgUrl, primaryEntity, includeTaskFlows: false, ct);
+        return existing.Max(p => p.ProcessOrder) is { } highest ? highest + 1 : 1;
     }
 
     private async Task<List<WorkflowValidationIssue>> CheckUniqueNameAsync(string orgUrl, string uniqueName, CancellationToken ct)

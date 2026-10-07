@@ -6,6 +6,7 @@ using System.Text.Json;
 using Dataverse.Core.Auth;
 using Dataverse.Core.BusinessProcessFlows;
 using Dataverse.Core.Clients;
+using Dataverse.Core.Models;
 using Dataverse.Core.Services;
 using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -108,8 +109,8 @@ public sealed class BusinessProcessFlowServiceTests
     public async Task SetDefinition_RenameWithoutStageId_WithActiveInstances_IsRefused()
     {
         GivenActiveProcess();
-        _dataverse.On("GET", $"{UniqueName}s?$select=businessprocessflowinstanceid&$top=5000&$filter=_activestageid_value eq {StageB}",
-            new { value = new[] { new { businessprocessflowinstanceid = Instance } } });
+        _dataverse.On("GET", $"{UniqueName}s?$select=businessprocessflowinstanceid,statecode&$top=5000&$filter=_activestageid_value eq {StageB}",
+            new { value = new[] { new { businessprocessflowinstanceid = Instance, statecode = 0 } } });
 
         var renamed = new BpfDefinition
         {
@@ -136,7 +137,7 @@ public sealed class BusinessProcessFlowServiceTests
     {
         GivenActiveProcess();
         _dataverse.On("GET", $"{UniqueName}s?$select=businessprocessflowinstanceid",
-            new { value = new[] { new { businessprocessflowinstanceid = Instance } } });
+            new { value = new[] { new { businessprocessflowinstanceid = Instance, statecode = 0 } } });
         _dataverse.On("PATCH", $"workflows({BpfTestData.ProcessId})", null, HttpStatusCode.NoContent);
 
         var renamed = new BpfDefinition
@@ -267,8 +268,130 @@ public sealed class BusinessProcessFlowServiceTests
     // ---------------------------------------------------------------- create
 
     [Test]
+    public async Task SetDefinition_RemovingAStageWithClosedInstances_Warns()
+    {
+        GivenActiveProcess();
+        _dataverse.On("GET", $"{UniqueName}s?$select=businessprocessflowinstanceid,statecode",
+            new { value = new[] { new { businessprocessflowinstanceid = Instance, statecode = 1 } } });
+
+        var withoutB = new BpfDefinition { Stages = [new BpfStage { StageId = StageA, Name = "A", Steps = [new BpfStep { Attribute = "name" }] }] };
+
+        var result = await _svc.SetDefinitionAsync(OrgUrl, BpfTestData.ProcessId, withoutB, dryRun: true);
+
+        var issue = result.Validation.Issues.Single(i => i.Code == "BPF060");
+        Assert.That(issue.Severity, Is.EqualTo("warning"));
+        Assert.That(issue.Problem, Does.Contain("finished or aborted"));
+    }
+
+    [Test]
+    public async Task SetDefinition_DryRunWithErrors_StillShowsTheChange()
+    {
+        GivenActiveProcess();
+        var broken = new BpfDefinition
+        {
+            Stages =
+            [
+                new BpfStage { StageId = StageA, Name = "A", Steps = [new BpfStep { Attribute = "name" }], Next = "nowhere" },
+                new BpfStage { StageId = StageB, Name = "B", Steps = [new BpfStep { Attribute = "description" }] }
+            ]
+        };
+
+        var result = await _svc.SetDefinitionAsync(OrgUrl, BpfTestData.ProcessId, broken, dryRun: true);
+
+        Assert.That(result.Validation.CanSave, Is.False);
+        Assert.That(result.Diff, Is.Not.Null.And.Not.Empty);
+    }
+
+    // ---------------------------------------------------------------- order
+
+    [Test]
+    public void InPlatformOrder_PutsProcessesWithoutOrderLast_AndBreaksTiesByName()
+    {
+        BpfSummary P(string name, int? order) =>
+            new(Guid.NewGuid(), name, null, "account", true, order, "business process flow", false, null);
+
+        var ordered = BusinessProcessFlowService.InPlatformOrder([P("No order", null), P("Second", 2), P("B tie", 1), P("A tie", 1)]);
+
+        Assert.That(ordered.Select(p => p.Name), Is.EqualTo(new[] { "A tie", "B tie", "Second", "No order" }));
+    }
+
+    [Test]
+    public async Task SetOrder_UnlistedProcessesFollowInPlatformOrder()
+    {
+        var listed = Guid.Parse("11111111-1111-1111-1111-111111110501");
+        var first = Guid.Parse("11111111-1111-1111-1111-111111110502");
+        var unordered = Guid.Parse("11111111-1111-1111-1111-111111110503");
+        _dataverse.On("GET", "workflows?$select=workflowid,name,uniquename", new
+        {
+            value = new object[]
+            {
+                new { workflowid = unordered, name = "Unordered", primaryentity = "account", statecode = 1, businessprocesstype = 0 },
+                new { workflowid = listed, name = "Listed", primaryentity = "account", statecode = 1, processorder = 2, businessprocesstype = 0 },
+                new { workflowid = first, name = "First", primaryentity = "account", statecode = 1, processorder = 1, businessprocesstype = 0 }
+            }
+        });
+        _dataverse.On("PATCH", "workflows(", null, HttpStatusCode.NoContent);
+
+        await _svc.SetOrderAsync(OrgUrl, "account", [listed]);
+
+        var patches = _dataverse.Requests.Where(r => r.Method == "PATCH").Select(r => (r.Url, r.Body)).ToList();
+        Assert.That(patches.Single(p => p.Url.Contains(listed.ToString())).Body, Does.Contain("\"processorder\":1"));
+        Assert.That(patches.Single(p => p.Url.Contains(first.ToString())).Body, Does.Contain("\"processorder\":2"));
+        Assert.That(patches.Single(p => p.Url.Contains(unordered.ToString())).Body, Does.Contain("\"processorder\":3"));
+    }
+
+    [Test]
+    public async Task Create_TakesTheNextProcessOrder_AndAddsTheInstanceTableToTheSolution()
+    {
+        _dataverse.On("GET", "workflows?$select=workflowid,name,uniquename", new
+        {
+            value = new object[] { new { workflowid = Guid.NewGuid(), name = "Existing", primaryentity = "account", processorder = 4, businessprocesstype = 0 } }
+        });
+        _dataverse.On("GET", "workflows?$select=workflowid,name&$filter=uniquename", new { value = Array.Empty<object>() });
+        _dataverse.On("GET", "solutions?$select=uniquename", new { value = new[] { new { uniquename = "ContosoSales", publisherid = new { customizationprefix = "sample" } } } });
+        _dataverse.On("GET", "EntityDefinitions(LogicalName='sample_newflow')", new { error = new { message = "not found" } }, HttpStatusCode.NotFound);
+        _dataverse.On("POST", "workflows", null, HttpStatusCode.NoContent);
+        _dataverse.On("PATCH", "workflows(", null, HttpStatusCode.NoContent);
+        _dataverse.On("GET", "workflows(", new { workflowid = Guid.NewGuid(), name = "New flow", uniquename = "sample_newflow", primaryentity = "account", statecode = 1, category = 4 });
+        // Exists once activated.
+        _dataverse.On("GET", "EntityDefinitions(LogicalName='sample_newflow')?$select=MetadataId", new { MetadataId = "11111111-1111-1111-1111-111111110601" });
+        _dataverse.On("POST", "AddSolutionComponent", new { id = "11111111-1111-1111-1111-111111110602" });
+
+        var definition = new BpfDefinition { PrimaryEntity = "account", Stages = [new BpfStage { Name = "A", Steps = [new BpfStep { Attribute = "name" }] }] };
+
+        var (result, uniqueName) = await _svc.CreateAsync(OrgUrl, "New flow", definition, solutionUniqueName: "ContosoSales", activate: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(uniqueName, Is.EqualTo("sample_newflow"));
+            Assert.That(_dataverse.Requests.Single(r => r.Method == "POST" && r.Url.EndsWith("/workflows")).Body, Does.Contain("\"processorder\":5"));
+            Assert.That(_dataverse.Requests.Single(r => r.Url.Contains("AddSolutionComponent")).Body,
+                Does.Contain("11111111-1111-1111-1111-111111110601").And.Contain("\"ComponentType\":1"));
+            Assert.That(result.Message, Does.Contain("added to solution 'ContosoSales'"));
+        });
+    }
+
+    [Test]
+    public async Task Create_UniqueNameWithoutThePublishersPrefix_Warns()
+    {
+        _dataverse.On("GET", "workflows?$select=workflowid,name,uniquename", new { value = Array.Empty<object>() });
+        _dataverse.On("GET", "workflows?$select=workflowid,name&$filter=uniquename", new { value = Array.Empty<object>() });
+        _dataverse.On("GET", "solutions?$select=uniquename", new { value = new[] { new { uniquename = "ContosoSales", publisherid = new { customizationprefix = "sample" } } } });
+        _dataverse.On("GET", "EntityDefinitions(LogicalName='other_newflow')", new { error = new { message = "not found" } }, HttpStatusCode.NotFound);
+        _dataverse.On("POST", "workflows", null, HttpStatusCode.NoContent);
+
+        var definition = new BpfDefinition { PrimaryEntity = "account", Stages = [new BpfStage { Name = "A", Steps = [new BpfStep { Attribute = "name" }] }] };
+
+        var (result, _) = await _svc.CreateAsync(OrgUrl, "New flow", definition, "other_newflow", solutionUniqueName: "ContosoSales");
+
+        Assert.That(result.Applied, Is.True);
+        Assert.That(result.Validation.Issues.Single(i => i.Code == "BPF009").Severity, Is.EqualTo("warning"));
+    }
+
+    [Test]
     public async Task Create_ActivationFails_KeepsTheDraftAndReportsItsId()
     {
+        _dataverse.On("GET", "workflows?$select=workflowid,name,uniquename", new { value = Array.Empty<object>() });
         _dataverse.On("GET", "workflows?$select=workflowid,name&$filter=uniquename", new { value = Array.Empty<object>() });
         _dataverse.On("GET", "EntityDefinitions(LogicalName='sample_newflow')", new { error = new { message = "not found" } }, HttpStatusCode.NotFound);
         _dataverse.On("POST", "workflows", null, HttpStatusCode.NoContent);
@@ -367,30 +490,30 @@ public sealed class BusinessProcessFlowServiceTests
     {
         private readonly List<(string Method, string Fragment, object? Body, HttpStatusCode Status)> _routes = [];
 
-        public List<(string Method, string Url)> Requests { get; } = [];
+        public List<(string Method, string Url, string? Body)> Requests { get; } = [];
 
         /// <summary>Later registrations win over earlier ones, so a test can override the defaults.</summary>
         public void On(string method, string urlFragment, object? body, HttpStatusCode status = HttpStatusCode.OK) =>
             _routes.Insert(0, (method, urlFragment, body, status));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var url = Uri.UnescapeDataString(request.RequestUri!.ToString());
-            Requests.Add((request.Method.Method, url));
+            Requests.Add((request.Method.Method, url, request.Content is null ? null : await request.Content.ReadAsStringAsync(ct)));
 
             var route = _routes.FirstOrDefault(r => r.Method == request.Method.Method && url.Contains(r.Fragment, StringComparison.Ordinal));
             if (route.Method is null)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
                 {
                     Content = new StringContent($"{{\"error\":{{\"message\":\"no route for {request.Method} {url}\"}}}}", Encoding.UTF8, "application/json")
-                });
+                };
 
             var response = new HttpResponseMessage(route.Status);
             if (route.Body is not null)
                 response.Content = new StringContent(JsonSerializer.Serialize(route.Body), Encoding.UTF8, "application/json");
             if (request.Method == HttpMethod.Post)
                 response.Headers.Add("OData-EntityId", $"{OrgUrl}/api/data/v9.2/workflows({Guid.NewGuid()})");
-            return Task.FromResult(response);
+            return response;
         }
     }
 }

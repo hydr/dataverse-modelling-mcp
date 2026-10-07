@@ -10,7 +10,9 @@ XAML format: `docs/business-process-flows-reference.md`.
 
 ### `bpf_list`
 
-Lists business process flows, ordered by table and process order.
+Lists business process flows, per table in the order the platform applies them to new records:
+by process order, processes without one last, equal orders by name (the platform defines no order
+between those).
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -74,7 +76,7 @@ Creates a process. Nothing is created while validation reports an error.
 | `definitionJson` / `definitionFile` | string | Yes (one) | The definition |
 | `uniqueName` | string | No | `<prefix>_<name>`; becomes the instance table's logical name. Derived from `name` when omitted |
 | `description` | string | No | Description |
-| `solutionUniqueName` | string | No | Create it in this solution; its publisher prefix is used for a derived `uniqueName` |
+| `solutionUniqueName` | string | No | Create it in this solution; its publisher prefix is used for a derived `uniqueName` (a given one with another prefix is a warning). On activation the instance table is added as well — the solution exports only with it |
 | `activate` | bool | No | Activate right away. The first activation takes about two minutes. If it fails, the draft stays and the response still carries its `processId` |
 
 **Example prompt:** "Create a business process flow on lead with the stages Qualify, Develop and Close, where Develop moves to opportunity."
@@ -96,7 +98,7 @@ tables, `next`, branches, relationships, steps, labels, required flags, triggers
 | `processId` | GUID | Yes | The process |
 | `definitionJson` / `definitionFile` | string | Yes (one) | The definition |
 | `dryRun` | bool | No | Validate and report the change in `diff` without writing. New stages and steps show no id — they get one on the real write. No backup is returned |
-| `backupFile` | string | No | Write the previous XAML here instead of returning it |
+| `backupFile` | string | No | Write the previous XAML here instead of returning it. Written before the change; if the path cannot be written, nothing is changed |
 | `allowStageRemoval` | bool | No | Remove stages even if active instances stand on them |
 
 ---
@@ -122,6 +124,7 @@ minutes, synchronous). An active process is applied to new records of its table 
 |---|---|---|---|
 | `processId` | GUID | Yes | The process |
 | `activate` | bool | Yes | `true` to activate |
+| `solutionUniqueName` | string | No | On activation, add the instance table to this solution (the one holding the process) — needed for its export |
 
 ---
 
@@ -139,6 +142,9 @@ Deletes a process with its instance table and all instances. Irreversible.
 ### `bpf_set_order`
 
 Sets the process order of a table. A new record gets the first process its user has access to.
+Listed processes come first; the others follow in their current order as `bpf_list` shows it. Every
+process gets a distinct number, so processes without an order or with equal ones get a definite place.
+A process created with `bpf_create` is placed after the existing ones.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|

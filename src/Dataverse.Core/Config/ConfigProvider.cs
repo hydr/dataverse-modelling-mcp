@@ -41,21 +41,68 @@ public sealed class ConfigProvider
     private DataverseMcpConfig LoadAndConfigure()
     {
         var configPath = GetConfigPath();
+        DataverseMcpConfig cfg;
 
-        if (!File.Exists(configPath))
+        if (File.Exists(configPath))
         {
-            _logger.LogWarning("Config file not found at {Path}. Run 'dataverse-modelling-mcp setup'.", configPath);
+            var json = File.ReadAllText(configPath);
+            cfg = JsonSerializer.Deserialize<DataverseMcpConfig>(json, JsonOptions)
+                  ?? new DataverseMcpConfig();
+        }
+        else if (FromEnvironment(Environment.GetEnvironmentVariable) is { } envConfig)
+        {
+            // The Claude Code plugin passes its user config (dataverse_url, client_id, tenant_id)
+            // as environment variables — enough to run without the setup wizard.
+            _logger.LogInformation("Config file not found at {Path}; using DATAVERSE_URL / AZURE_CLIENT_ID.", configPath);
+            cfg = envConfig;
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Config file not found at {Path} and DATAVERSE_URL / AZURE_CLIENT_ID are not set. Run the setup wizard 'dataverse-modelling-mcp'.",
+                configPath);
             return new DataverseMcpConfig();
         }
-
-        var json = File.ReadAllText(configPath);
-        var cfg = JsonSerializer.Deserialize<DataverseMcpConfig>(json, JsonOptions)
-                  ?? new DataverseMcpConfig();
 
         if (cfg.Auth is not null)
             _tokenProvider.Configure(cfg.Auth.ClientId ?? string.Empty, cfg.Auth.TenantId);
 
         return cfg;
+    }
+
+    /// <summary>
+    /// Builds a single-environment config from DATAVERSE_URL, AZURE_CLIENT_ID and the optional
+    /// AZURE_TENANT_ID, DATAVERSE_ENVIRONMENT_ID and POWER_PLATFORM_REGION. Returns null unless
+    /// both required variables are set. A value that is still an unexpanded placeholder
+    /// (e.g. "${user_config.tenant_id}" for an optional plugin setting left empty) counts as unset.
+    /// </summary>
+    public static DataverseMcpConfig? FromEnvironment(Func<string, string?> getVariable)
+    {
+        string? Read(string name)
+        {
+            var value = getVariable(name)?.Trim();
+            return string.IsNullOrEmpty(value) || value.StartsWith("${", StringComparison.Ordinal) ? null : value;
+        }
+
+        var orgUrl = Read("DATAVERSE_URL");
+        var clientId = Read("AZURE_CLIENT_ID");
+        if (orgUrl is null || clientId is null)
+            return null;
+
+        return new DataverseMcpConfig
+        {
+            Auth = new AuthConfig { ClientId = clientId, TenantId = Read("AZURE_TENANT_ID") },
+            ActiveEnvironment = "default",
+            Environments = new Dictionary<string, EnvironmentConfig>
+            {
+                ["default"] = new()
+                {
+                    OrgUrl = orgUrl.TrimEnd('/'),
+                    EnvironmentId = Read("DATAVERSE_ENVIRONMENT_ID"),
+                    Region = Read("POWER_PLATFORM_REGION") ?? "europe",
+                },
+            },
+        };
     }
 
     public static string GetConfigPath()

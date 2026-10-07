@@ -46,6 +46,7 @@ public sealed class AnonymisationTests
         "README.md",
         "CONTRIBUTING.md",
         Path.Combine(".claude-plugin", "plugin.json"),
+        Path.Combine(".claude-plugin", "marketplace.json"),
         Path.Combine("src", "Dataverse.Setup", "Dataverse.Setup.csproj")
     ];
 

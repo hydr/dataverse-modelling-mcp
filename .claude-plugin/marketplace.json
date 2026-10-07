@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "dataverse-modelling",
+  "description": "Claude Code marketplace for dataverse-modelling-mcp — model Dataverse and the Power Platform from an AI client.",
+  "owner": {
+    "name": "Crossvertise GmbH",
+    "email": "it@crossvertise.com"
+  },
+  "plugins": [
+    {
+      "name": "dataverse-modelling-mcp",
+      "source": "./",
+      "description": "Local MCP server plus skills for modelling Dataverse: tables, columns, views, security roles, solutions, classic workflows, business process flows, cloud flows and command bar buttons.",
+      "homepage": "https://github.com/hydr/dataverse-modelling-mcp",
+      "repository": "https://github.com/hydr/dataverse-modelling-mcp",
+      "license": "MIT",
+      "category": "development",
+      "keywords": ["dataverse", "power-platform", "dynamics-365", "mcp"]
+    }
+  ]
+}

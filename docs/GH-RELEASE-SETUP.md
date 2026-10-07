@@ -112,9 +112,31 @@ names the missing release tag.
    on its own track — "plugin 0.18.1" then did not tell you which binary was inside.
 3. Merge the PR.
 4. `git tag v<Version> && git push origin v<Version>` → the release workflow
-   - packs and pushes the NuGet tool `Dataverse.Setup`,
+   - packs the NuGet tool `Dataverse.Setup`,
    - builds the server self-contained/single-file for `win-x64`,
-   - attaches `DataverseMcp-win-x64.exe` and the `.nupkg` to the GitHub release.
+   - attaches `DataverseMcp-win-x64.exe` and the `.nupkg` to the GitHub release,
+   - then pushes the `.nupkg` to nuget.org (see below).
+
+## Publishing the NuGet tool (Trusted Publishing)
+
+The workflow publishes `Dataverse.ModellingMcp.Setup` to nuget.org with
+[Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing): the job
+exchanges a GitHub OIDC token for an API key that is valid for one hour. There is **no
+`NUGET_API_KEY` secret**, and none should be added.
+
+One-time setup, in the public repository only (releases are built nowhere else):
+
+1. On nuget.org: user menu → **Trusted Publishing** → add a policy with
+   - Repository Owner: `hydr`
+   - Repository: `dataverse-modelling-mcp`
+   - Workflow File: `release.yml` (file name only)
+   - Environment: leave empty
+2. In GitHub: Settings → Secrets and variables → Actions → **Variables** → add `NUGET_USER` with
+   the nuget.org **profile name** (not the e-mail address).
+
+Without `NUGET_USER` both NuGet steps are skipped and the release is still created. The push
+runs after the GitHub release on purpose, so a NuGet problem never withholds the binary the
+launcher downloads. `--skip-duplicate` makes re-running a release job harmless.
 
 ## Local workaround (without a release)
 

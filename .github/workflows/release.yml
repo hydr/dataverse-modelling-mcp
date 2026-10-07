@@ -10,6 +10,9 @@ on:
 # step with 403 'Resource not accessible by integration'.
 permissions:
   contents: write
+  # NuGet Trusted Publishing: the job exchanges a GitHub OIDC token for a short-lived
+  # nuget.org API key, so no long-lived NUGET_API_KEY secret is stored anywhere.
+  id-token: write
 
 jobs:
   release:
@@ -50,15 +53,6 @@ jobs:
 
       # --- NuGet tool (Dataverse.Setup) ---
       - run: dotnet pack src/Dataverse.Setup -c Release -o ./artifacts
-      # The NuGet push is optional — it only runs when a NUGET_API_KEY secret exists.
-      # Without this guard the step failed with "Source parameter was not specified"
-      # (empty --api-key eats the following argument) and aborted the whole job, so the
-      # GitHub release incl. the server binary asset was never created.
-      - name: Push NuGet package (only when an API key is configured)
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        if: env.NUGET_API_KEY != ''
-        run: dotnet nuget push ./artifacts/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
 
       # --- MCP server binary (self-contained, single file) ---
       # Runtime name is fixed to DataverseMcp.exe by .mcp.json; the release asset
@@ -78,3 +72,24 @@ jobs:
           files: |
             ./artifacts/*.nupkg
             ./artifacts/DataverseMcp-win-x64.exe
+
+      # --- Publish the NuGet tool via Trusted Publishing ---
+      # Runs after the GitHub release on purpose: the launcher downloads the binary from that
+      # release, so a NuGet problem must never keep it from being created.
+      # Optional — runs only when the repository variable NUGET_USER (the nuget.org profile
+      # name, not the e-mail address) is set and nuget.org has a matching Trusted Publishing
+      # policy for this repository and release.yml. See docs/GH-RELEASE-SETUP.md.
+      - name: NuGet login (OIDC → short-lived API key)
+        if: vars.NUGET_USER != ''
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push NuGet package
+        if: vars.NUGET_USER != ''
+        run: >-
+          dotnet nuget push ./artifacts/*.nupkg
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

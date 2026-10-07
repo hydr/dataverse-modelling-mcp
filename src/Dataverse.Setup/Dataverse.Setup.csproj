@@ -8,9 +8,9 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dataverse-modelling-mcp</ToolCommandName>
     <PackageId>Dataverse.ModellingMcp.Setup</PackageId>
-    <Version>1.21.2</Version>
+    <Version>1.22.0</Version>
     <Authors>crossvertise</Authors>
-    <Description>Setup wizard for the Dataverse Modelling MCP server</Description>
+    <Description>Dataverse Modelling MCP server and its setup wizard: run "dataverse-modelling-mcp" to configure, "dataverse-modelling-mcp server" to start the MCP server.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/hydr/dataverse-modelling-mcp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/hydr/dataverse-modelling-mcp</RepositoryUrl>
@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Dataverse.Core\Dataverse.Core.csproj" />
+    <ProjectReference Include="..\Dataverse.Server\Dataverse.Server.csproj" />
   </ItemGroup>
 
 </Project>

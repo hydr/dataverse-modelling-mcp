@@ -65,6 +65,7 @@ public sealed class SecurityRoleTools
         [Description("Role name")] string name,
         [Description("Business unit GUID")] string businessUnitId,
         [Description("Optional description")] string? description = null,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -90,6 +91,7 @@ public sealed class SecurityRoleTools
         [Description("The role GUID")] string roleId,
         [Description("JSON array of privileges to add: [{\"privilegeId\": \"...\", \"privilegeName\": \"...\", \"depth\": 4}]")] string? privilegesToAddJson = null,
         [Description("JSON array of privilege GUIDs to remove: [\"guid1\", \"guid2\"]")] string? privilegeIdsToRemoveJson = null,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try

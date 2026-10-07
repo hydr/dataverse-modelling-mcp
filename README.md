@@ -7,7 +7,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that lets AI clients (Claude Code, GitHub Copilot, …) **model** Dataverse and the Power Platform — not just read and write records, but build the schema, the views, forms and command bar, the security roles, the processes and the solutions around them.
 
-113 tools across Tables & Columns, Views, Forms, Security Roles, Solutions/ALM, Solution Pipelines, Classic Workflows, Business Process Flows, Cloud Flows, Modern Commands, Classic Ribbons, Web Resources, Environment Variables and Analysis — all via delegated user auth (no secrets, no service accounts), with a [read-only mode and a production guard](#security--safety).
+113 tools across Tables & Columns, Views, Forms, Security Roles, Solutions/ALM, Solution Pipelines, Classic Workflows, Business Process Flows, Cloud Flows, Modern Commands, Classic Ribbons, Web Resources, Environment Variables and Analysis — all via delegated user auth (no secrets, no service accounts), with a [read-only mode, a production guard and dry runs](#security--safety).
 
 ```powershell
 dotnet tool install -g Dataverse.ModellingMcp.Setup   # then: dataverse-modelling-mcp
@@ -138,6 +138,7 @@ settings. The two safety switches at the bottom also apply on top of a `config.j
 | **Whose rights?** | Yours. The server signs in **as you** (delegated OAuth, MSAL) and Dataverse enforces your security roles on every call. No client secret, no service account, no application user. |
 | **Production?** | **Write tools refuse to run against production** — organizations of type Customer/Secondary and the tenant's Default environment, as Dataverse reports them. Model in a dev or sandbox environment and promote with a solution or pipeline. Opt out explicitly with `DATAVERSE_ALLOW_PRODUCTION_WRITES=true` (plugin: *Allow writes to production*). |
 | **Just looking?** | **Read-only mode** (`DATAVERSE_READ_ONLY=true`, plugin: *Read-only mode*, or `"readOnly": true` in `config.json`) removes all 56 write tools — the client never even sees them. 57 read tools remain. |
+| **What exactly would it send?** | **Dry run** on the schema tools (`table_*`, `column_*`, `view_*`, `role_*` writes): pass `dryRun: true` and nothing is changed — the result lists every request the call would send, with URL, headers and the exact body. Reads still run, so an update shows the real merged definition. Dry runs are allowed on production, so you can plan a change there and apply it elsewhere. `workflow_set_definition`, `bpf_set_definition` and `solution_uninstall` have their own validate-and-report dry run (the last one by default). |
 | **What will this call do?** | Every tool carries MCP annotations — `readOnlyHint`, `destructiveHint`, `idempotentHint` — so the client can tell reading from changing from deleting, and ask before the latter. In Claude Code every tool call needs your approval unless you allow it. |
 | **Undo?** | Before overwriting, export: `workflow_export_xaml` / `workflow_restore_xaml`, `bpf_export_xaml` / `bpf_restore_xaml`, `flow_list_versions` / `flow_restore_version`, `solution_export`. `solution_check_layers` shows what sits on top of a component. |
 | **Where does data go?** | Only to your Dataverse and Power Platform endpoints. Tokens stay in the OS keychain / DPAPI. Telemetry is off unless the operator sets it up — see [Telemetry](#telemetry). |
@@ -169,7 +170,7 @@ does in the solution explorer. The two work side by side.
 | **Setup** | A Power Platform admin enables every non-Copilot-Studio client per environment; tenant consent for the proxy app | Your own app registration (public client); no admin-center switch |
 | **Cost** | Copilot Credits when used by agents outside Copilot Studio (since 15 Dec 2025; exemptions for Dynamics 365 data with D365 Premium or M365 Copilot licences) | Free and open source (MIT); normal Dataverse API limits apply |
 | **Support** | Microsoft, generally available | Community, best effort |
-| **Safety rails** | Delegated user rights; delete tools ask for explicit approval | Delegated user rights; annotations on every tool; read-only mode; production guard |
+| **Safety rails** | Delegated user rights; delete tools ask for explicit approval | Delegated user rights; annotations on every tool; read-only mode; production guard; dry run |
 
 ¹ Microsoft's separate [Dataverse skills plugin](https://github.com/microsoft/Dataverse-skills) covers solution
 handling through the PAC CLI.

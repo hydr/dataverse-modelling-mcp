@@ -46,7 +46,7 @@ public sealed class DataverseHttpClient
     public async Task<T?> GetAsync<T>(string orgUrl, string relativeUrl, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         var json = await response.Content.ReadAsStringAsync(ct);
         return JsonSerializer.Deserialize<T>(json, JsonOptions);
@@ -57,7 +57,7 @@ public sealed class DataverseHttpClient
         using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
         request.Headers.Accept.Clear();
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         return await response.Content.ReadAsByteArrayAsync(ct);
     }
@@ -71,7 +71,7 @@ public sealed class DataverseHttpClient
         using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
         if (includeFormattedValues)
             request.Headers.Add("Prefer", "odata.include-annotations=\"OData.Community.Display.V1.FormattedValue\"");
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         return await response.Content.ReadAsStringAsync(ct);
     }
@@ -102,7 +102,7 @@ public sealed class DataverseHttpClient
         {
             using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, next, body: null, ct);
             request.Headers.TryAddWithoutValidation("Prefer", $"odata.maxpagesize={maxPageSize}");
-            using var response = await _http.SendAsync(request, ct);
+            using var response = await SendAsync(request, ct);
             await EnsureSuccessAsync(response, ct);
             var json = await response.Content.ReadAsStringAsync(ct);
 
@@ -131,7 +131,7 @@ public sealed class DataverseHttpClient
     public async Task<T?> PostAsync<T>(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
             return default;
@@ -142,7 +142,7 @@ public sealed class DataverseHttpClient
     public async Task PostAsync(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
 
@@ -163,7 +163,7 @@ public sealed class DataverseHttpClient
         if (extraHeaders != null)
             foreach (var (k, v) in extraHeaders)
                 request.Headers.TryAddWithoutValidation(k, v);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
             return string.Empty;
@@ -182,7 +182,7 @@ public sealed class DataverseHttpClient
         CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, body, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
 
         if (response.Headers.TryGetValues("OData-EntityId", out var headerValues))
@@ -235,7 +235,7 @@ public sealed class DataverseHttpClient
     public async Task PatchAsync(string orgUrl, string relativeUrl, object body, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
 
@@ -249,7 +249,7 @@ public sealed class DataverseHttpClient
         using var request = await BuildRequestAsync(HttpMethod.Patch, orgUrl, relativeUrl, body, ct);
         foreach (var (k, v) in extraHeaders)
             request.Headers.TryAddWithoutValidation(k, v);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
 
@@ -274,14 +274,14 @@ public sealed class DataverseHttpClient
         if (extraHeaders != null)
             foreach (var (k, v) in extraHeaders)
                 request.Headers.TryAddWithoutValidation(k, v);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
 
     public async Task DeleteAsync(string orgUrl, string relativeUrl, CancellationToken ct = default)
     {
         using var request = await BuildRequestAsync(HttpMethod.Delete, orgUrl, relativeUrl, body: null, ct);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
     }
 
@@ -293,7 +293,7 @@ public sealed class DataverseHttpClient
     {
         var relativeUrl = $"api/data/v9.2/{actionName}";
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct, ActionJsonOptions);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
             return default;
@@ -309,8 +309,35 @@ public sealed class DataverseHttpClient
     {
         var relativeUrl = $"api/data/v9.2/{actionName}";
         using var request = await BuildRequestAsync(HttpMethod.Post, orgUrl, relativeUrl, parameters, ct, ActionJsonOptions);
-        using var response = await _http.SendAsync(request, ct);
+        using var response = await SendAsync(request, ct);
         await EnsureSuccessAsync(response, ct);
+    }
+
+    /// <summary>
+    /// Sends the request — or, inside a <see cref="DryRun"/> scope, records a request that would change
+    /// the environment and answers it with an empty 204 instead.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        if (!DryRun.IsActive || request.Method == HttpMethod.Get)
+            return await _http.SendAsync(request, ct);
+
+        JsonElement? body = null;
+        if (request.Content is not null)
+        {
+            var json = await request.Content.ReadAsStringAsync(ct);
+            if (!string.IsNullOrWhiteSpace(json))
+                body = JsonDocument.Parse(json).RootElement.Clone();
+        }
+
+        var headers = request.Headers
+            .Where(h => h.Key.StartsWith("MSCRM.", StringComparison.OrdinalIgnoreCase) ||
+                        h.Key.Equals("Prefer", StringComparison.OrdinalIgnoreCase) ||
+                        h.Key.Equals("If-Match", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(h => h.Key, h => string.Join(", ", h.Value));
+
+        DryRun.Record(new PlannedRequest(request.Method.Method, request.RequestUri!.ToString(), headers, body));
+        return new HttpResponseMessage(System.Net.HttpStatusCode.NoContent) { RequestMessage = request };
     }
 
     private async Task<HttpRequestMessage> BuildRequestAsync(

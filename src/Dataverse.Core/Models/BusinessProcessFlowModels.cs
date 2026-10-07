@@ -35,11 +35,15 @@ public sealed record BpfDetail(
 public sealed record BpfStageRow(Guid StageId, string Name, string? Entity, int? Category);
 
 /// <summary>The table that holds a process's instances.</summary>
-/// <param name="RecordLookups">Lookup columns to the records the process runs over, per table: <c>bpf_&lt;table&gt;id</c>.</param>
+/// <param name="RecordLookups">
+/// Navigation properties of the lookups to the records the process runs over, per table (for binding).
+/// </param>
+/// <param name="RecordColumns">The same lookups as columns, <c>bpf_&lt;table&gt;id</c> (for filtering).</param>
 public sealed record BpfInstanceTable(
     string LogicalName,
     string EntitySetName,
-    IReadOnlyDictionary<string, string> RecordLookups);
+    IReadOnlyDictionary<string, string> RecordLookups,
+    IReadOnlyDictionary<string, string>? RecordColumns = null);
 
 /// <summary>One running (or finished/abandoned) instance of a process.</summary>
 /// <param name="TraversedPath">Comma-separated stage ids the instance has passed, ending with the active one.</param>
@@ -52,3 +56,8 @@ public sealed record BpfInstance(
     string? TraversedPath,
     string Status,
     DateTime? ModifiedOn);
+
+/// <summary>A 1:N relationship a cross-table stage can be reached through.</summary>
+/// <param name="Name">Schema name — what <c>relationship.name</c> takes.</param>
+/// <param name="Attribute">The lookup on <paramref name="ToEntity"/> pointing at <paramref name="FromEntity"/>.</param>
+public sealed record BpfRelationshipCandidate(string Name, string Attribute, string FromEntity, string ToEntity);

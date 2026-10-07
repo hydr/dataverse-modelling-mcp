@@ -11,9 +11,12 @@ using Dataverse.Core.Workflows;
 using Microsoft.Extensions.Logging;
 
 /// <param name="Applied">True when the XAML was written.</param>
-/// <param name="Stages">The stages as written (or as they would be written), with their ids.</param>
-/// <param name="Backup">The previous XAML, to undo the change with <c>bpf_restore_xaml</c>.</param>
-/// <param name="Diff">On a dry run: what the write would change.</param>
+/// <param name="Stages">
+/// The stages as written (or as they would be written), with their ids. On a dry run, stages and steps
+/// that are new have no id yet: it is assigned by the real write.
+/// </param>
+/// <param name="Backup">The previous XAML, to undo the change with <c>bpf_restore_xaml</c>. Not on a dry run.</param>
+/// <param name="Diff">What the write changes (or would change), one line per change.</param>
 public sealed record BpfSaveResult(
     bool Applied,
     Guid ProcessId,
@@ -21,7 +24,19 @@ public sealed record BpfSaveResult(
     WorkflowValidationResult Validation,
     string? Backup,
     string? Message,
-    string? Diff = null);
+    IReadOnlyList<string>? Diff = null);
+
+/// <summary>A definition checked against a process it is meant to replace.</summary>
+/// <param name="Definition">The definition with the existing ids adopted and relationships completed.</param>
+public sealed record BpfWritePlan(
+    BpfDetail Detail,
+    BpfParseResult Current,
+    WorkflowValidationResult Validation,
+    BpfDefinition Definition,
+    BpfCatalog Catalog);
+
+/// <param name="Created">False when the record already had an instance of the process.</param>
+public sealed record BpfStartResult(Guid InstanceId, bool Created, string? Message);
 
 /// <summary>
 /// Business process flows: read, validate and write their definition, manage their lifecycle and
@@ -139,17 +154,97 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     /// Model rules, then tables, attributes and relationships against live metadata. Returns the
     /// definition with relationship attributes filled in where the caller left them out.
     /// </summary>
+    /// <remarks>
+    /// The metadata checks run even when the model rules already found errors, so that one call reports
+    /// everything there is to fix — only a definition without table or stages stops early.
+    /// </remarks>
     public async Task<(WorkflowValidationResult Result, BpfDefinition Definition, BpfCatalog Fields)> ValidateAsync(
         string orgUrl, BpfDefinition definition, CancellationToken ct = default)
     {
         var model = BpfDefinitionValidator.Validate(definition);
-        if (!model.CanSave)
+        if (string.IsNullOrWhiteSpace(definition.PrimaryEntity) || definition.Stages.Count == 0)
             return (model, definition, BpfCatalog.Empty);
 
         var (issues, completed, fields) = await ValidateAgainstMetadataAsync(orgUrl, definition, ct);
-        var all = model.Issues.Concat(issues).ToList();
+        var modelIssues = await WithRelationshipCandidatesAsync(orgUrl, definition, model.Issues, ct);
+        var all = modelIssues.Concat(issues).ToList();
         return (new WorkflowValidationResult(all.All(i => i.Severity != "error"), all), completed, fields);
     }
+
+    /// <summary>
+    /// The 1:N relationships a stage on <paramref name="toEntity"/> can be reached through from
+    /// <paramref name="fromEntity"/>: those whose lookup sits on <paramref name="toEntity"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<BpfRelationshipCandidate>> FindRelationshipsAsync(
+        string orgUrl, string fromEntity, string toEntity, CancellationToken ct = default)
+    {
+        string raw;
+        try
+        {
+            raw = await client.GetRawAsync(orgUrl,
+                $"api/data/v9.2/EntityDefinitions(LogicalName='{Uri.EscapeDataString(toEntity)}')/ManyToOneRelationships"
+                + "?$select=SchemaName,ReferencedEntity,ReferencingAttribute", ct: ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException($"Table '{toEntity}' does not exist.");
+        }
+
+        return JsonDocument.Parse(raw).RootElement.GetProperty("value").EnumerateArray()
+            .Where(r => string.Equals(r.GetStringOrNull("ReferencedEntity"), fromEntity, StringComparison.OrdinalIgnoreCase))
+            .Select(r => new BpfRelationshipCandidate(
+                r.GetStringOrEmpty("SchemaName"), r.GetStringOrEmpty("ReferencingAttribute"), fromEntity, toEntity))
+            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>Puts the candidate relationships into the fix of every missing-relationship error.</summary>
+    private async Task<IReadOnlyList<WorkflowValidationIssue>> WithRelationshipCandidatesAsync(
+        string orgUrl, BpfDefinition definition, IReadOnlyList<WorkflowValidationIssue> issues, CancellationToken ct)
+    {
+        if (issues.All(i => i.Code != "BPF040"))
+            return issues;
+
+        var resolved = BpfStageResolver.Resolve(definition, assignMissingIds: false).Stages;
+        var result = new List<WorkflowValidationIssue>();
+
+        foreach (var issue in issues)
+        {
+            var match = Regex.Match(issue.Path, @"^\$\.stages\[(\d+)\]\.relationship$");
+            if (issue.Code != "BPF040" || !match.Success)
+            {
+                result.Add(issue);
+                continue;
+            }
+
+            var stage = resolved[int.Parse(match.Groups[1].Value)];
+            var from = stage.Predecessors.Select(p => resolved[p])
+                .FirstOrDefault(p => !string.Equals(p.Entity, stage.Entity, StringComparison.OrdinalIgnoreCase));
+            if (from is null)
+            {
+                result.Add(issue);
+                continue;
+            }
+
+            try
+            {
+                result.Add(issue with { Fix = issue.Fix + " " + DescribeCandidates(await FindRelationshipsAsync(orgUrl, from.Entity, stage.Entity, ct), from.Entity, stage.Entity) });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
+            {
+                result.Add(issue);
+            }
+        }
+
+        return result;
+    }
+
+    private static string DescribeCandidates(IReadOnlyList<BpfRelationshipCandidate> candidates, string from, string to) =>
+        candidates.Count == 0
+            ? $"There is no 1:N relationship from {from} to {to} — no lookup on {to} points at {from}. Create one, or route the process through a table that has it."
+            : $"Relationships from {from} to {to}: "
+              + string.Join(", ", candidates.Take(15).Select(c => $"{c.Name} (lookup {c.Attribute})"))
+              + (candidates.Count > 15 ? $", and {candidates.Count - 15} more (bpf_find_relationships)." : ".");
 
     private async Task<(List<WorkflowValidationIssue> Issues, BpfDefinition Definition, BpfCatalog Fields)>
         ValidateAgainstMetadataAsync(string orgUrl, BpfDefinition definition, CancellationToken ct)
@@ -157,10 +252,11 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         var issues = new List<WorkflowValidationIssue>();
         var catalog = new BpfCatalog();
         var resolved = BpfStageResolver.Resolve(definition, assignMissingIds: false);
+        var language = definition.LanguageCode ?? await LanguageAsync(orgUrl, ct);
 
         foreach (var entity in resolved.Stages.Select(s => s.Entity).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var (exists, enabled, attributes) = await ReadTableAsync(orgUrl, entity, ct);
+            var (exists, enabled, attributes) = await ReadTableAsync(orgUrl, entity, language, ct);
             catalog.Add(entity, exists ? attributes : null);
 
             if (!exists)
@@ -176,6 +272,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         await CheckProcessesAsync(orgUrl, definition, resolved, catalog, issues, ct);
 
         var stages = definition.Stages.ToList();
+        var literals = new List<(string Entity, WorkflowCondition Condition, BpfFieldInfo Info, string Path)>();
 
         for (var i = 0; i < resolved.Stages.Count; i++)
         {
@@ -206,12 +303,36 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             }
         }
 
+        // Literals must fit the column: the branch check compares strictly, so "1" never equals the
+        // choice value 1. A missing dataType is taken from the column.
+        var completedConditions = new Dictionary<WorkflowCondition, WorkflowCondition>(ReferenceEqualityComparer.Instance);
+        foreach (var (entity, condition, info, path) in literals)
+            if (await CheckLiteralAsync(orgUrl, entity, condition, info, path, issues, ct) is { } completedCondition)
+                completedConditions[condition] = completedCondition;
+
+        if (completedConditions.Count > 0)
+            for (var i = 0; i < stages.Count; i++)
+                if (stages[i].Branch is { } branching)
+                    stages[i] = stages[i] with
+                    {
+                        Branch = branching with
+                        {
+                            Branches = branching.Branches
+                                .Select(b => b with { Conditions = Replace(b.Conditions, completedConditions) }).ToList()
+                        }
+                    };
+
         return (issues, definition with { Stages = stages }, catalog);
 
-        void CheckAttribute(string entity, string attribute, string path, bool displayable)
+        static List<WorkflowCondition> Replace(List<WorkflowCondition> conditions, Dictionary<WorkflowCondition, WorkflowCondition> map) =>
+            conditions.Select(c => map.TryGetValue(c, out var replaced)
+                ? replaced
+                : c.IsGroup ? c with { Conditions = Replace(c.Conditions!, map) } : c).ToList();
+
+        BpfFieldInfo? CheckAttribute(string entity, string attribute, string path, bool displayable)
         {
             if (!catalog.Knows(entity) || catalog.IsMissing(entity))
-                return;
+                return null;
 
             var info = catalog.Find(entity, attribute);
             if (info is null)
@@ -222,15 +343,17 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                     .Take(5).ToList();
                 issues.Add(new("error", "BPF301", path, $"Table '{entity}' has no attribute '{attribute}'.",
                     hint.Count > 0
-                        ? $"Did you mean: {string.Join(", ", hint)}? describe_table lists all of them."
-                        : "Look up the logical name with describe_table."));
-                return;
+                        ? $"Did you mean: {string.Join(", ", hint)}? table_get lists all columns of the table."
+                        : "Look up the logical name with table_get, which lists all columns of the table."));
+                return null;
             }
 
             if (displayable && BpfControlClass.Unsupported.Contains(info.AttributeType))
                 issues.Add(new("error", "BPF302", path,
                     $"'{entity}.{attribute}' is of type {info.AttributeType}, which a data step cannot show.",
                     "Pick a column of a type the form can edit (text, number, date, choice, lookup, …)."));
+
+            return info;
         }
 
         void CheckConditions(string entity, List<WorkflowCondition> conditions, string path)
@@ -244,8 +367,10 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                     continue;
                 }
 
-                if (!string.IsNullOrWhiteSpace(condition.Attribute))
-                    CheckAttribute(entity, condition.Attribute, $"{path}[{c}].attribute", displayable: false);
+                if (!string.IsNullOrWhiteSpace(condition.Attribute)
+                    && CheckAttribute(entity, condition.Attribute, $"{path}[{c}].attribute", displayable: false) is { } info
+                    && condition.Value is { Kind: WorkflowValueKind.Literal })
+                    literals.Add((entity, condition, info, $"{path}[{c}]"));
 
                 foreach (var (field, f) in (condition.Value?.Fields ?? []).Select((x, n) => (x, n)))
                     CheckAttribute(entity, field.Contains('.') ? field.Split('.', 2)[1] : field,
@@ -322,12 +447,167 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 issues.Add(new("error", "BPF309", path, $"'{info.Name}' is not activated.",
                     "Activate it first; the designer only offers activated processes, and a draft never runs."));
 
+            if (kind == BpfStepKind.Flow && IsAutomatedTrigger(info.FlowTrigger))
+                issues.Add(new("warning", "BPF311", path,
+                    $"'{info.Name}' starts on its own (trigger {info.FlowTrigger}); a flow step's button cannot run it.",
+                    "Use an instant flow — a manual trigger, or the Dataverse trigger for flow steps run from a "
+                    + "business process flow. flow_get_clientdata shows a flow's trigger."));
+
             if (kind != BpfStepKind.Flow
                 && !string.Equals(info.PrimaryEntity, entity, StringComparison.OrdinalIgnoreCase))
                 issues.Add(new("error", "BPF310", path,
                     $"'{info.Name}' runs on '{info.PrimaryEntity}', but is used on '{entity}'.",
                     $"Use a {(kind == "trigger" ? "workflow" : "process")} whose primary table is '{entity}'."));
         }
+    }
+
+    /// <summary>
+    /// Checks a literal against the column it is compared with. Returns the comparison with its
+    /// dataType filled in when the caller left it out, or null when nothing changes.
+    /// </summary>
+    private async Task<WorkflowCondition?> CheckLiteralAsync(
+        string orgUrl, string entity, WorkflowCondition condition, BpfFieldInfo info, string path,
+        List<WorkflowValidationIssue> issues, CancellationToken ct)
+    {
+        var value = condition.Value!;
+        var expected = ExpectedDataType(info.AttributeType);
+        if (expected is null)
+            return null;
+
+        var column = $"{entity}.{condition.Attribute}";
+        if (value.DataType is not null && WorkflowXamlBuilder.CrmPropertyType(value.DataType) != expected)
+        {
+            issues.Add(new("error", "BPF306", $"{path}.value.dataType",
+                $"'{column}' is a {info.AttributeType} column, but the value is declared as {value.DataType}. "
+                + "The branch would compare values of different types and never apply.",
+                $"Use \"dataType\": \"{expected}\", or leave dataType out — it is then taken from the column. {LiteralExample(expected)}"));
+            return null;
+        }
+
+        var literal = value.Literal ?? string.Empty;
+        var options = expected == "OptionSetValue" ? await ReadOptionsAsync(orgUrl, entity, condition.Attribute, info.AttributeType, ct) : null;
+
+        if (!LiteralFits(expected, literal))
+        {
+            issues.Add(new("error", "BPF306", $"{path}.value.literal",
+                $"'{literal}' is not a valid {expected} value for '{column}' ({info.AttributeType}).",
+                expected == "OptionSetValue" && options is not null ? OptionHint(literal, options) : LiteralExample(expected)));
+            return null;
+        }
+
+        if (options is not null && int.TryParse(literal, out var number) && !options.ContainsKey(number))
+            issues.Add(new("warning", "BPF312", $"{path}.value.literal",
+                $"{literal} is not an option of '{column}'; the branch can never apply.",
+                OptionHint(literal, options)));
+
+        return value.DataType is null ? condition with { Value = value with { DataType = expected } } : null;
+    }
+
+    /// <summary>The literal data type a column is compared with; null for types not checked.</summary>
+    public static string? ExpectedDataType(string attributeType) => attributeType switch
+    {
+        "Picklist" or "State" or "Status" => "OptionSetValue",
+        "Boolean" => "Boolean",
+        "Lookup" or "Customer" or "Owner" => "EntityReference",
+        "Integer" or "BigInt" => "Integer",
+        "Decimal" => "Decimal",
+        "Double" => "Double",
+        "Money" => "Money",
+        "DateTime" => "DateTime",
+        "String" or "Memo" => "String",
+        "Uniqueidentifier" => "Guid",
+        _ => null
+    };
+
+    public static bool LiteralFits(string dataType, string literal)
+    {
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        return dataType switch
+        {
+            "OptionSetValue" or "Integer" => int.TryParse(literal, System.Globalization.NumberStyles.Integer, invariant, out _),
+            "Decimal" or "Double" or "Money" => decimal.TryParse(literal, System.Globalization.NumberStyles.Number, invariant, out _),
+            "Boolean" => literal.ToLowerInvariant() is "true" or "false" or "1" or "0",
+            "DateTime" => DateTime.TryParse(literal, invariant, System.Globalization.DateTimeStyles.None, out _),
+            "Guid" => Guid.TryParse(literal, out _),
+            "EntityReference" => literal.Split(':', 3) is { Length: >= 2 } parts
+                                 && parts[0].Length > 0 && Guid.TryParse(parts[1], out _),
+            _ => true
+        };
+    }
+
+    private static string LiteralExample(string dataType) => dataType switch
+    {
+        "OptionSetValue" => "A choice is compared by the option's number: {\"kind\":\"literal\",\"dataType\":\"OptionSetValue\",\"literal\":\"1\"}.",
+        "Boolean" => "A yes/no column takes \"true\" or \"false\" (\"1\"/\"0\" work too).",
+        "EntityReference" => "A lookup takes \"<table>:<guid>:<label>\", e.g. \"account:<guid>:Contoso\"; the label is shown in the designer.",
+        "Integer" => "A whole number, e.g. \"50\".",
+        "Decimal" or "Double" or "Money" => "A number with a dot as decimal separator, e.g. \"10000.50\".",
+        "DateTime" => "A date as yyyy-MM-dd, e.g. \"2024-01-31\".",
+        "Guid" => "A GUID.",
+        _ => "Any text."
+    };
+
+    private static string OptionHint(string literal, IReadOnlyDictionary<int, string> options)
+    {
+        var byLabel = options.Where(o => string.Equals(o.Value, literal, StringComparison.OrdinalIgnoreCase)).ToList();
+        var listed = string.Join(", ", options.Take(30).Select(o => $"{o.Key} = {o.Value}")) + (options.Count > 30 ? ", …" : "");
+        return (byLabel.Count > 0 ? $"Did you mean {byLabel[0].Key} ({byLabel[0].Value})? " : string.Empty)
+               + "Compare with the option's number, e.g. {\"kind\":\"literal\",\"dataType\":\"OptionSetValue\",\"literal\":\""
+               + (byLabel.Count > 0 ? byLabel[0].Key : options.Keys.FirstOrDefault()) + $"\"}}. Options: {listed}.";
+    }
+
+    /// <summary>Value → label of a choice column, or null when they cannot be read.</summary>
+    private async Task<IReadOnlyDictionary<int, string>?> ReadOptionsAsync(
+        string orgUrl, string entity, string attribute, string attributeType, CancellationToken ct)
+    {
+        var cast = attributeType switch
+        {
+            "State" => "StateAttributeMetadata",
+            "Status" => "StatusAttributeMetadata",
+            _ => "PicklistAttributeMetadata"
+        };
+
+        try
+        {
+            var raw = await client.GetRawAsync(orgUrl,
+                $"api/data/v9.2/EntityDefinitions(LogicalName='{Uri.EscapeDataString(entity)}')/Attributes(LogicalName='{Uri.EscapeDataString(attribute)}')"
+                + $"/Microsoft.Dynamics.CRM.{cast}?$select=LogicalName&$expand=OptionSet($select=Options)", ct: ct);
+
+            var options = new SortedDictionary<int, string>();
+            var root = JsonDocument.Parse(raw).RootElement;
+            if (!root.TryGetProperty("OptionSet", out var set) || set.ValueKind != JsonValueKind.Object)
+                return null;
+
+            foreach (var option in set.GetProperty("Options").EnumerateArray())
+            {
+                if (!option.TryGetProperty("Value", out var v) || v.ValueKind != JsonValueKind.Number)
+                    continue;
+                options[v.GetInt32()] = LabelOf(option, "Label", null) ?? v.GetInt32().ToString();
+            }
+
+            return options;
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogDebug(ex, "Could not read the options of {Entity}.{Attribute}", entity, attribute);
+            return null;
+        }
+    }
+
+    /// <summary>A label in the given language, else the user's.</summary>
+    private static string? LabelOf(JsonElement element, string property, int? language)
+    {
+        if (!element.TryGetProperty(property, out var label) || label.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (language is { } code && label.TryGetProperty("LocalizedLabels", out var all) && all.ValueKind == JsonValueKind.Array)
+            foreach (var localized in all.EnumerateArray())
+                if (localized.GetInt32OrZero("LanguageCode") == code && localized.GetStringOrNull("Label") is { } text)
+                    return text;
+
+        return label.TryGetProperty("UserLocalizedLabel", out var user) && user.ValueKind == JsonValueKind.Object
+            ? user.GetStringOrNull("Label")
+            : null;
     }
 
     private async Task<BpfProcessInfo?> ReadProcessAsync(string orgUrl, Guid id, CancellationToken ct)
@@ -349,6 +629,14 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 uniqueName = JsonDocument.Parse(messageRaw).RootElement.GetStringOrNull("name") ?? uniqueName;
             }
 
+            // A flow's trigger decides whether a button can start it; it sits in the definition.
+            string? trigger = null;
+            if (r.GetInt32OrZero("category") == 5)
+            {
+                var flowRaw = await client.GetRawAsync(orgUrl, $"api/data/v9.2/workflows({id})?$select=clientdata", ct: ct);
+                trigger = FlowTriggerOf(JsonDocument.Parse(flowRaw).RootElement.GetStringOrNull("clientdata"));
+            }
+
             return new BpfProcessInfo(
                 id,
                 r.GetStringOrEmpty("name"),
@@ -356,13 +644,60 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 r.GetInt32OrZero("category"),
                 r.GetStringOrNull("primaryentity"),
                 r.GetInt32OrZero("statecode") == 1,
-                r.TryGetProperty("ondemand", out var od) && od.ValueKind == JsonValueKind.True);
+                r.TryGetProperty("ondemand", out var od) && od.ValueKind == JsonValueKind.True,
+                trigger);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             return null;
         }
     }
+
+    /// <summary>"type", "type/kind" or "type/operationId" of a flow's (first) trigger.</summary>
+    public static string? FlowTriggerOf(string? clientData)
+    {
+        if (string.IsNullOrWhiteSpace(clientData))
+            return null;
+
+        try
+        {
+            var root = JsonDocument.Parse(clientData).RootElement;
+            if (!root.TryGetProperty("properties", out var properties)
+                || !properties.TryGetProperty("definition", out var definition)
+                || !definition.TryGetProperty("triggers", out var triggers)
+                || triggers.ValueKind != JsonValueKind.Object)
+                return null;
+
+            foreach (var t in triggers.EnumerateObject())
+            {
+                var type = t.Value.GetStringOrNull("type") ?? "?";
+                if (t.Value.GetStringOrNull("kind") is { } kind)
+                    return $"{type}/{kind}";
+                if (t.Value.TryGetProperty("inputs", out var inputs) && inputs.ValueKind == JsonValueKind.Object
+                    && inputs.TryGetProperty("host", out var host) && host.ValueKind == JsonValueKind.Object
+                    && host.GetStringOrNull("operationId") is { } operation)
+                    return $"{type}/{operation}";
+                return type;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Triggers that start a flow on their own — on a schedule, a row change, an e-mail, an HTTP call.
+    /// A flow step's button cannot start such a flow.
+    /// </summary>
+    public static bool IsAutomatedTrigger(string? trigger) =>
+        trigger is not null
+        && (trigger == "Recurrence"
+            || trigger.EndsWith("/SubscribeWebhookTrigger", StringComparison.Ordinal)
+            || trigger.EndsWith("/BusinessEventsTrigger", StringComparison.Ordinal)
+            || trigger.Contains("OnNewEmail", StringComparison.Ordinal)
+            || trigger is "Request/Http" or "Request/Skills" or "Request/VirtualAgent" or "Request/ApiConnection");
 
     private static string CategoryName(int category) => category switch
     {
@@ -376,7 +711,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     };
 
     private async Task<(bool Exists, bool Enabled, Dictionary<string, BpfFieldInfo> Attributes)> ReadTableAsync(
-        string orgUrl, string entity, CancellationToken ct)
+        string orgUrl, string entity, int language, CancellationToken ct)
     {
         try
         {
@@ -401,19 +736,15 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 if (name is null)
                     continue;
 
-                string? display = null;
-                if (a.TryGetProperty("DisplayName", out var dn) && dn.ValueKind == JsonValueKind.Object
-                    && dn.TryGetProperty("UserLocalizedLabel", out var ul) && ul.ValueKind == JsonValueKind.Object)
-                    display = ul.GetStringOrNull("Label");
-
-                attributes[name] = new BpfFieldInfo(a.GetStringOrEmpty("AttributeType"), display);
+                // The label goes into the XAML tagged with the process language, so it has to be in it.
+                attributes[name] = new BpfFieldInfo(a.GetStringOrEmpty("AttributeType"), LabelOf(a, "DisplayName", language));
             }
 
             return (true, enabled, attributes);
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            logger.LogDebug(ex, "Could not read metadata for table {Entity}", entity);
+            logger.LogDebug(ex, "Table {Entity} not found", entity);
             return (false, false, []);
         }
     }
@@ -433,10 +764,13 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 $"api/data/v9.2/RelationshipDefinitions(SchemaName='{Uri.EscapeDataString(rel.Name)}')", ct: ct);
             r = JsonDocument.Parse(raw).RootElement;
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             issues.Add(new("error", "BPF303", $"{path}.name", $"There is no relationship '{rel.Name}'.",
-                "Use the schema name of a 1:N relationship; describe_table lists them per table."));
+                "Use the schema name of a 1:N relationship. "
+                + (fromEntity is null
+                    ? "bpf_find_relationships lists them for two tables."
+                    : await CandidatesTextAsync(fromEntity, toEntity))));
             return null;
         }
 
@@ -460,7 +794,8 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 $"'{rel.Name}' links {referenced} (1) to {referencing} (N), but the stage moves from "
                 + $"{fromEntity ?? "?"} to {toEntity}.",
                 $"Use a 1:N relationship from {fromEntity ?? "the previous table"} to {toEntity}: the stage's "
-                + "table must hold the lookup to the table the process comes from."));
+                + "table must hold the lookup to the table the process comes from. "
+                + (fromEntity is null ? string.Empty : await CandidatesTextAsync(fromEntity, toEntity))));
             return null;
         }
 
@@ -473,6 +808,18 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         }
 
         return rel with { Attribute = attribute };
+
+        async Task<string> CandidatesTextAsync(string from, string to)
+        {
+            try
+            {
+                return DescribeCandidates(await FindRelationshipsAsync(orgUrl, from, to, ct), from, to);
+            }
+            catch (Exception e) when (e is HttpRequestException or InvalidOperationException)
+            {
+                return "bpf_find_relationships lists the candidates.";
+            }
+        }
     }
 
     // ---------------------------------------------------------------- write
@@ -535,8 +882,18 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         string? message = null;
         if (activate)
         {
-            await SetStateAsync(orgUrl, id, true, ct);
-            message = $"Created and activated. Instances are stored in table '{uniqueName}'.";
+            try
+            {
+                await SetStateAsync(orgUrl, id, true, ct);
+                message = $"Created and activated. Instances are stored in table '{uniqueName}'.";
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                // The process exists either way; losing its id here would leave an orphan behind.
+                logger.LogWarning(ex, "Activation of business process flow {Id} failed", id);
+                message = $"Created as a draft, but the activation failed: {ex.Message} — fix the cause and "
+                          + "activate it with bpf_set_state, or remove it with bpf_delete.";
+            }
         }
         else
         {
@@ -548,6 +905,51 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     }
 
     /// <summary>
+    /// Checks a definition as a replacement for an existing process, without writing: adopts the ids of
+    /// stages and steps it keeps, then validates — including what the change does to running instances.
+    /// </summary>
+    /// <param name="allowStageRemoval">
+    /// Accept removing stages that active instances stand on (reported as a warning instead of an error).
+    /// </param>
+    public async Task<BpfWritePlan> PlanWriteAsync(
+        string orgUrl, Guid processId, BpfDefinition definition, bool allowStageRemoval = false, CancellationToken ct = default)
+    {
+        var (detail, current) = await GetDefinitionAsync(orgUrl, processId, ct);
+
+        if (detail.BusinessProcessType != 0)
+            throw new InvalidOperationException("This is a task flow; only business process flows can be written.");
+
+        if (string.IsNullOrWhiteSpace(definition.PrimaryEntity))
+            definition = definition with { PrimaryEntity = detail.PrimaryEntity ?? string.Empty };
+
+        definition = AdoptExistingIds(definition, current.Definition);
+
+        var (validation, completed, catalog) = await ValidateAsync(orgUrl, definition, ct);
+        var issues = validation.Issues.ToList();
+
+        if (!string.Equals(completed.PrimaryEntity, detail.PrimaryEntity, StringComparison.OrdinalIgnoreCase))
+            issues.Add(new WorkflowValidationIssue("error", "BPF008", "$.primaryEntity",
+                $"The process runs on '{detail.PrimaryEntity}'; its primary table cannot change.",
+                "Keep primaryEntity, or create a new process with bpf_create."));
+
+        if (!current.FullyUnderstood)
+            issues.Add(new WorkflowValidationIssue("warning", "BPF061", "$",
+                "The current process contains parts this server does not understand; writing drops them: "
+                + string.Join("; ", current.Unrecognised),
+                "Check the list. Run with dryRun=true first and keep the backup."));
+
+        issues.AddRange(LooksRenamed(current.Definition, completed));
+
+        // Instances standing on a stage that disappears lose their place in the process — whatever the
+        // process's state: a deactivated process keeps its instances.
+        if (detail.UniqueName is not null)
+            issues.AddRange(await RemovedStagesInUseAsync(orgUrl, detail.UniqueName, current.Definition, completed, allowStageRemoval, ct));
+
+        return new BpfWritePlan(detail, current,
+            new WorkflowValidationResult(issues.All(x => x.Severity != "error"), issues), completed, catalog);
+    }
+
+    /// <summary>
     /// Rewrites a process's definition. Works on an activated process — the platform updates the
     /// stages and the instance table in place.
     /// </summary>
@@ -556,55 +958,44 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     /// attribute), so a definition written from scratch keeps the ids running instances depend on.
     /// </remarks>
     public async Task<BpfSaveResult> SetDefinitionAsync(
-        string orgUrl, Guid processId, BpfDefinition definition, bool dryRun = false, CancellationToken ct = default)
+        string orgUrl, Guid processId, BpfDefinition definition, bool dryRun = false, bool allowStageRemoval = false,
+        CancellationToken ct = default)
     {
-        var (detail, parsed) = await GetDefinitionAsync(orgUrl, processId, ct);
+        var plan = await PlanWriteAsync(orgUrl, processId, definition, allowStageRemoval, ct);
+        var detail = plan.Detail;
 
-        if (detail.BusinessProcessType != 0)
-            throw new InvalidOperationException("This is a task flow; only business process flows can be written.");
+        if (!plan.Validation.CanSave)
+            return new BpfSaveResult(false, processId, [], plan.Validation, null,
+                $"Nothing was written: {plan.Validation.ErrorCount} error(s) must be fixed first.");
 
-        if (string.IsNullOrWhiteSpace(definition.PrimaryEntity))
-            definition = definition with { PrimaryEntity = detail.PrimaryEntity ?? string.Empty };
-
-        definition = AdoptExistingIds(definition, parsed.Definition);
-
-        var (validation, completed, fields) = await ValidateAsync(orgUrl, definition, ct);
-
-        if (!string.Equals(completed.PrimaryEntity, detail.PrimaryEntity, StringComparison.OrdinalIgnoreCase))
-            validation = new WorkflowValidationResult(false, validation.Issues.Append(new WorkflowValidationIssue(
-                "error", "BPF008", "$.primaryEntity",
-                $"The process runs on '{detail.PrimaryEntity}'; its primary table cannot change.",
-                "Keep primaryEntity, or create a new process with bpf_create.")).ToList());
-
-        if (!validation.CanSave)
-            return new BpfSaveResult(false, processId, [], validation, null,
-                $"Nothing was written: {validation.ErrorCount} error(s) must be fixed first.");
-
-        var issues = validation.Issues.ToList();
-        if (!parsed.FullyUnderstood)
-            issues.Add(new WorkflowValidationIssue("warning", "BPF061", "$",
-                "The current process contains parts this server does not understand; writing drops them: "
-                + string.Join("; ", parsed.Unrecognised),
-                "Check the list. Run with dryRun=true first and keep the backup."));
-
-        // Instances standing on a stage that disappears lose their place in the process.
-        if (detail.StateCode == 1 && detail.UniqueName is not null)
-            issues.AddRange(await RemovedStagesInUseAsync(orgUrl, detail.UniqueName, parsed.Definition, completed, ct));
+        // Described before building: the builder gives new stages their ids.
+        var diff = DescribeChange(plan.Current.Definition, plan.Definition);
+        var newStages = plan.Definition.Stages.Where(st => st.StageId is null).ToHashSet(ReferenceEqualityComparer.Instance);
+        var newSteps = plan.Definition.Stages.SelectMany(st => st.Steps).Where(st => st.StepId is null)
+            .Select(st => (object)st).ToHashSet(ReferenceEqualityComparer.Instance);
 
         var language = await LanguageAsync(orgUrl, ct);
-        var build = BpfXamlBuilder.Build(completed, processId, fields, language);
-        var result = new WorkflowValidationResult(true, issues);
+        var build = BpfXamlBuilder.Build(plan.Definition, processId, plan.Catalog, language);
 
         if (dryRun)
-            return new BpfSaveResult(false, processId, build.Stages, result, detail.Xaml, "Dry run — nothing was written.",
-                DescribeChange(parsed.Definition, completed));
+        {
+            // The ids a real write assigns are new random ones; showing these would suggest otherwise.
+            var stages = build.Stages.Select((built, n) => built with
+            {
+                StageId = newStages.Contains(plan.Definition.Stages[n]) ? null : built.StageId,
+                StepIds = plan.Definition.Stages[n].Steps.Select(st => newSteps.Contains(st) ? null : st.StepId).ToList()
+            }).ToList();
+
+            return new BpfSaveResult(false, processId, stages, plan.Validation, null,
+                "Dry run — nothing was written. New stages and steps get their ids on the real write.", diff);
+        }
 
         await client.PatchAsync(orgUrl, $"api/data/v9.2/workflows({processId})",
             new Dictionary<string, object?> { ["xaml"] = build.Xaml }, ct);
 
         logger.LogInformation("Wrote definition of business process flow {Id} ({Stages} stages)", processId, build.Stages.Count);
-        return new BpfSaveResult(true, processId, build.Stages, result, detail.Xaml,
-            detail.StateCode == 1 ? "Written; the process stayed active." : "Written.");
+        return new BpfSaveResult(true, processId, build.Stages, plan.Validation, detail.Xaml,
+            detail.StateCode == 1 ? "Written; the process stayed active." : "Written.", diff);
     }
 
     /// <summary>Writes a previously exported XAML back verbatim.</summary>
@@ -657,7 +1048,8 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     public async Task<IReadOnlyList<BpfSummary>> SetOrderAsync(
         string orgUrl, string primaryEntity, IReadOnlyList<Guid> orderedIds, CancellationToken ct = default)
     {
-        var existing = await ListAsync(orgUrl, primaryEntity, includeTaskFlows: true, ct);
+        // Task flows are not applied to records, so they take no part in the order.
+        var existing = await ListAsync(orgUrl, primaryEntity, includeTaskFlows: false, ct);
         var unknown = orderedIds.Where(id => existing.All(e => e.ProcessId != id)).ToList();
         if (unknown.Count > 0)
             throw new InvalidOperationException(
@@ -676,7 +1068,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 new Dictionary<string, object?> { ["processorder"] = i + 1 }, ct);
         }
 
-        return await ListAsync(orgUrl, primaryEntity, includeTaskFlows: true, ct);
+        return await ListAsync(orgUrl, primaryEntity, includeTaskFlows: false, ct);
     }
 
     /// <summary>
@@ -702,7 +1094,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             raw = await client.GetRawAsync(orgUrl,
                 $"api/data/v9.2/EntityDefinitions(LogicalName='{Uri.EscapeDataString(table)}')?$select=Privileges", ct: ct);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"The instance table '{table}' does not exist yet. Activate the process once with bpf_set_state.");
@@ -746,7 +1138,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
                 + "?$select=LogicalName,EntitySetName&$expand=ManyToOneRelationships($select=ReferencedEntity,ReferencingAttribute,ReferencingEntityNavigationPropertyName)",
                 ct: ct);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"Table '{uniqueName}' does not exist. A process gets its instance table on its first activation.");
@@ -754,6 +1146,7 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
         var r = JsonDocument.Parse(raw).RootElement;
         var lookups = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var rel in r.GetProperty("ManyToOneRelationships").EnumerateArray())
         {
@@ -761,10 +1154,13 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             if (attribute.StartsWith("bpf_", StringComparison.OrdinalIgnoreCase)
                 && attribute.EndsWith("id", StringComparison.OrdinalIgnoreCase)
                 && rel.GetStringOrNull("ReferencedEntity") is { } referenced)
+            {
                 lookups[referenced] = rel.GetStringOrNull("ReferencingEntityNavigationPropertyName") ?? attribute;
+                columns[referenced] = attribute;
+            }
         }
 
-        return new BpfInstanceTable(r.GetStringOrEmpty("LogicalName"), r.GetStringOrEmpty("EntitySetName"), lookups);
+        return new BpfInstanceTable(r.GetStringOrEmpty("LogicalName"), r.GetStringOrEmpty("EntitySetName"), lookups, columns);
     }
 
     /// <summary>
@@ -817,9 +1213,13 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         return result;
     }
 
-    /// <summary>Starts a process on a record (or switches the record to it).</summary>
+    /// <summary>Starts a process on a record.</summary>
     /// <param name="stageId">Stage to start on; the first stage when omitted.</param>
-    public async Task<Guid> StartInstanceAsync(
+    /// <remarks>
+    /// A record holds at most one instance per process. When it already has one, the platform accepts
+    /// a second create and changes nothing — so the existing one is looked up first and returned.
+    /// </remarks>
+    public async Task<BpfStartResult> StartInstanceAsync(
         string orgUrl, Guid processId, Guid recordId, Guid? stageId = null, CancellationToken ct = default)
     {
         var (detail, parsed) = await GetDefinitionAsync(orgUrl, processId, ct);
@@ -828,6 +1228,27 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
         if (!table.RecordLookups.TryGetValue(entity, out var navigation))
             throw new InvalidOperationException($"The instance table has no lookup to '{entity}'.");
+
+        if (table.RecordColumns?.GetValueOrDefault(entity) is { } column)
+        {
+            var existingRaw = await client.GetRawAsync(orgUrl,
+                $"api/data/v9.2/{table.EntitySetName}?$select=businessprocessflowinstanceid,statuscode,_activestageid_value"
+                + $"&$filter=_{column}_value eq {recordId}&$top=1", ct: ct);
+            var existing = JsonDocument.Parse(existingRaw).RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
+
+            if (existing.ValueKind == JsonValueKind.Object)
+            {
+                var stageName = Guid.TryParse(existing.GetStringOrNull("_activestageid_value"), out var active)
+                    ? await StageNameAsync(orgUrl, active, ct)
+                    : null;
+                var status = StatusName(existing.TryGetProperty("statuscode", out var sc) ? sc.ToString() : null);
+
+                return new BpfStartResult(existing.TryGetGuid("businessprocessflowinstanceid"), false,
+                    $"The record already has an instance of this process (stage '{stageName ?? "?"}', {status}); "
+                    + "a record holds one per process, so nothing was started. Move it with bpf_instance_move"
+                    + (status == "active" ? "." : ", after reactivating it with bpf_instance_set_status."));
+            }
+        }
 
         var stages = BpfStageResolver.Resolve(parsed.Definition, assignMissingIds: false).Stages;
         var first = stages.FirstOrDefault()?.StageId
@@ -842,12 +1263,21 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
 
         // Starting anywhere but the first stage needs the way there.
         if (!string.Equals(target, first, StringComparison.OrdinalIgnoreCase))
-            body["traversedpath"] = string.Join(",", PathTo(stages, target)
-                ?? throw new InvalidOperationException($"Stage {target} cannot be reached on the main path; start at the first stage and move."));
+        {
+            var path = PathTo(stages, target)
+                       ?? throw new InvalidOperationException(
+                           $"Stage {target} is not on the main path (the 'next' chain from the first stage). Start at "
+                           + "the first stage and move the instance there with bpf_instance_move.");
+            if (path.Any(id => !string.Equals(stages.First(st => st.StageId == id).Entity, entity, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException(
+                    "The way to that stage leaves the primary table; start at the first stage and move the instance "
+                    + "with bpf_instance_move, which takes the record of the other table.");
+            body["traversedpath"] = string.Join(",", path);
+        }
 
         var id = await client.PostForIdAsync(orgUrl, $"api/data/v9.2/{table.EntitySetName}", body,
             "businessprocessflowinstanceid", ct);
-        return id;
+        return new BpfStartResult(id, true, null);
     }
 
     /// <summary>
@@ -863,8 +1293,13 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         var resolved = BpfStageResolver.Resolve(parsed.Definition, assignMissingIds: false);
 
         var raw = await client.GetRawAsync(orgUrl,
-            $"api/data/v9.2/{table.EntitySetName}({instanceId})?$select=traversedpath,_activestageid_value", ct: ct);
+            $"api/data/v9.2/{table.EntitySetName}({instanceId})?$select=traversedpath,_activestageid_value,statecode,statuscode", ct: ct);
         var row = JsonDocument.Parse(raw).RootElement;
+
+        if (row.GetInt32OrZero("statecode") != 0)
+            throw new InvalidOperationException(
+                $"The instance is {StatusName(row.TryGetProperty("statuscode", out var sc) ? sc.ToString() : null)}; only an "
+                + "active one can move. Reactivate it with bpf_instance_set_status status='active' first.");
         var path = (row.GetStringOrNull("traversedpath") ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant()).ToList();
@@ -936,6 +1371,22 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
             "aborted" or "abandoned" => (1, 3),
             _ => throw new ArgumentException("status must be 'active', 'finished' or 'aborted'.")
         };
+
+        if (statusCode == 2)
+        {
+            // The platform refuses to finish anywhere but at the end of a path, with a bare error.
+            var raw = await client.GetRawAsync(orgUrl,
+                $"api/data/v9.2/{table.EntitySetName}({instanceId})?$select=_activestageid_value", ct: ct);
+            var active = JsonDocument.Parse(raw).RootElement.GetStringOrNull("_activestageid_value");
+            var resolved = BpfStageResolver.Resolve(
+                BpfXamlParser.Parse(detail.Xaml, detail.PrimaryEntity ?? string.Empty).Definition, assignMissingIds: false);
+            var stage = resolved.Stages.FirstOrDefault(st => string.Equals(st.StageId, active, StringComparison.OrdinalIgnoreCase));
+
+            if (stage is not null && (stage.NextStageId is not null || BpfStageResolver.BranchTargets(stage.Source).Any()))
+                throw new InvalidOperationException(
+                    $"The instance stands on '{stage.Source.Name}', which leads on to other stages; only an instance on "
+                    + "the last stage of its path can be finished. Move it there with bpf_instance_move, or use 'aborted'.");
+        }
 
         await client.PatchAsync(orgUrl, $"api/data/v9.2/{table.EntitySetName}({instanceId})",
             new Dictionary<string, object?> { ["statecode"] = state, ["statuscode"] = statusCode }, ct);
@@ -1028,11 +1479,11 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
     }
 
     private async Task<List<WorkflowValidationIssue>> RemovedStagesInUseAsync(
-        string orgUrl, string uniqueName, BpfDefinition before, BpfDefinition after, CancellationToken ct)
+        string orgUrl, string uniqueName, BpfDefinition before, BpfDefinition after, bool allowStageRemoval, CancellationToken ct)
     {
-        var kept = after.Stages.Where(s => s.StageId is not null).Select(s => s.StageId!.Trim('{', '}'))
+        var kept = after.Stages.Where(st => st.StageId is not null).Select(st => st.StageId!.Trim('{', '}'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var removed = before.Stages.Where(s => s.StageId is not null && !kept.Contains(s.StageId)).ToList();
+        var removed = before.Stages.Where(st => st.StageId is not null && !kept.Contains(st.StageId)).ToList();
         var issues = new List<WorkflowValidationIssue>();
         if (removed.Count == 0)
             return issues;
@@ -1044,45 +1495,198 @@ public sealed class BusinessProcessFlowService(DataverseHttpClient client, ILogg
         }
         catch (InvalidOperationException)
         {
-            return issues;
+            return issues;   // never activated: no instances
         }
 
         foreach (var stage in removed)
         {
             var raw = await client.GetRawAsync(orgUrl,
-                $"api/data/v9.2/{table.EntitySetName}?$select=businessprocessflowinstanceid&$top=1"
+                $"api/data/v9.2/{table.EntitySetName}?$select=businessprocessflowinstanceid&$top=5000"
                 + $"&$filter=_activestageid_value eq {stage.StageId} and statecode eq 0", ct: ct);
+            var count = JsonDocument.Parse(raw).RootElement.GetProperty("value").GetArrayLength();
+            if (count == 0)
+                continue;
 
-            if (JsonDocument.Parse(raw).RootElement.GetProperty("value").GetArrayLength() > 0)
-                issues.Add(new WorkflowValidationIssue("warning", "BPF060", "$.stages",
-                    $"Stage '{stage.Name}' is removed, but active instances stand on it. They keep pointing at a "
-                    + "stage that no longer exists.",
-                    "Move those instances first (bpf_instance_move), or keep the stage."));
+            issues.Add(new WorkflowValidationIssue(allowStageRemoval ? "warning" : "error", "BPF060", "$.stages",
+                $"Stage '{stage.Name}' ({stage.StageId}) is removed, but {count} active instance(s) stand on it. "
+                + "They would keep pointing at a stage that no longer exists.",
+                "If the stage was renamed or changed, keep its 'stageId'. Otherwise move those instances first "
+                + "(bpf_instance_move), or pass allowStageRemoval=true to remove it anyway."));
         }
 
         return issues;
     }
 
-    private static string DescribeChange(BpfDefinition before, BpfDefinition after)
+    /// <summary>
+    /// A stage that disappears while a new one appears on the same table, at the same position or as
+    /// the only candidate, is most likely the same stage renamed without its id.
+    /// </summary>
+    public static IEnumerable<WorkflowValidationIssue> LooksRenamed(BpfDefinition before, BpfDefinition after)
     {
-        var sb = new StringBuilder();
-        string Describe(BpfDefinition d) => d.Stages.Count == 0
-            ? "(none)"
-            : string.Join(" → ", d.Stages.Select(s => $"{s.Name} [{s.Steps.Count}]"));
+        var beforeResolved = BpfStageResolver.Resolve(before, assignMissingIds: false).Stages;
+        var afterResolved = BpfStageResolver.Resolve(after, assignMissingIds: false).Stages;
+        var kept = after.Stages.Where(st => st.StageId is not null).Select(st => st.StageId!.Trim('{', '}'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        sb.AppendLine($"Stages now:   {Describe(before)}");
-        sb.AppendLine($"Stages after: {Describe(after)}");
+        var removed = beforeResolved.Where(st => !string.IsNullOrEmpty(st.StageId) && !kept.Contains(st.StageId)).ToList();
+        var added = afterResolved.Where(st => st.Source.StageId is null).ToList();
 
-        var beforeIds = before.Stages.Where(s => s.StageId is not null).ToDictionary(s => s.StageId!, StringComparer.OrdinalIgnoreCase);
-        var afterIds = after.Stages.Where(s => s.StageId is not null).Select(s => s.StageId!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var old in removed)
+        {
+            var sameTable = added.Where(n => string.Equals(n.Entity, old.Entity, StringComparison.OrdinalIgnoreCase)).ToList();
+            var candidate = sameTable.FirstOrDefault(n => n.Index == old.Index) ?? (sameTable.Count == 1 ? sameTable[0] : null);
+            if (candidate is null)
+                continue;
 
-        foreach (var removed in beforeIds.Where(kv => !afterIds.Contains(kv.Key)))
-            sb.AppendLine($"Removed stage: {removed.Value.Name} ({removed.Key})");
-        foreach (var added in after.Stages.Where(s => s.StageId is null || !beforeIds.ContainsKey(s.StageId)))
-            sb.AppendLine($"New stage: {added.Name}");
-
-        return sb.ToString().TrimEnd();
+            yield return new WorkflowValidationIssue("warning", "BPF062", $"$.stages[{candidate.Index}].stageId",
+                $"Stage '{old.Source.Name}' is removed and '{candidate.Source.Name}' is new, both on '{old.Entity}'. "
+                + "If this is a rename, the stage gets a new id and instances on it lose their place.",
+                $"To rename, keep the id: set \"stageId\": \"{old.StageId}\" on '{candidate.Source.Name}'.");
+        }
     }
+
+    /// <summary>One line per change between two definitions, matched by stage and step id.</summary>
+    public static IReadOnlyList<string> DescribeChange(BpfDefinition before, BpfDefinition after)
+    {
+        var lines = new List<string>();
+        var beforeResolved = BpfStageResolver.Resolve(before, assignMissingIds: false).Stages;
+        var afterResolved = BpfStageResolver.Resolve(after, assignMissingIds: false).Stages;
+
+        static string Id(string? id) => id?.Trim('{', '}').ToLowerInvariant() ?? string.Empty;
+        string NameOf(IReadOnlyList<BpfResolvedStage> stages, string? id) =>
+            id is null ? "end" : stages.FirstOrDefault(st => Id(st.StageId) == Id(id))?.Source.Name ?? id;
+        string Targets(IReadOnlyList<BpfResolvedStage> stages, BpfResolvedStage stage) =>
+            string.Join(", ", BpfStageResolver.BranchTargets(stage.Source)
+                .Select(t => BpfStageResolver.Find(stages.Select(x => x.Source).ToList(), t)?.Name ?? t));
+
+        var old = beforeResolved.Where(st => !string.IsNullOrEmpty(st.StageId)).ToDictionary(st => Id(st.StageId));
+        var matched = new HashSet<string>();
+
+        foreach (var stage in afterResolved)
+        {
+            var name = stage.Source.Name;
+            if (stage.Source.StageId is null || !old.TryGetValue(Id(stage.StageId), out var was))
+            {
+                lines.Add($"+ stage '{name}' on {stage.Entity} ({stage.Source.Steps.Count} steps)");
+                continue;
+            }
+
+            matched.Add(Id(stage.StageId));
+            if (was.Source.Name != name)
+                lines.Add($"~ stage '{was.Source.Name}' renamed to '{name}'");
+            if (!string.Equals(was.Entity, stage.Entity, StringComparison.OrdinalIgnoreCase))
+                lines.Add($"~ stage '{name}': table {was.Entity} → {stage.Entity}");
+            if (BpfStageCategory.ToNumber(was.Source.Category) != BpfStageCategory.ToNumber(stage.Source.Category))
+                lines.Add($"~ stage '{name}': category {was.Source.Category ?? "none"} → {stage.Source.Category ?? "none"}");
+
+            // Compared by stage id, so that renaming the next stage is not reported here as well; a new
+            // next stage has no id yet and counts by name.
+            var nextStage = BpfStageResolver.NextOf(after.Stages, stage.Index);
+            if (Target(before, was.NextStageId) != Target(after, nextStage?.StageId ?? nextStage?.Name))
+                lines.Add($"~ stage '{name}': next {NameOf(beforeResolved, was.NextStageId)} → {nextStage?.Name ?? "end"}");
+
+            if (Json(Normalised(was.Source.Branch, before)) != Json(Normalised(stage.Source.Branch, after)))
+                lines.Add(stage.Source.Branch is null
+                    ? $"- stage '{name}': branching removed"
+                    : was.Source.Branch is null
+                        ? $"+ stage '{name}': branching to {Targets(afterResolved, stage)}"
+                        : $"~ stage '{name}': branching changed (now to {Targets(afterResolved, stage)})");
+
+            if (Json(was.Source.Relationship) != Json(stage.Source.Relationship))
+                lines.Add($"~ stage '{name}': relationship {was.Source.Relationship?.Name ?? "none"} → {stage.Source.Relationship?.Name ?? "none"}");
+
+            DescribeSteps(name, was.Source.Steps, stage.Source.Steps);
+            DescribeTriggers($"stage '{name}'", was.Source.Workflows, stage.Source.Workflows);
+        }
+
+        foreach (var gone in beforeResolved.Where(st => !string.IsNullOrEmpty(st.StageId) && !matched.Contains(Id(st.StageId))))
+            lines.Add($"- stage '{gone.Source.Name}' ({gone.StageId})");
+
+        DescribeTriggers("process", before.Workflows, after.Workflows);
+
+        if (lines.Count == 0)
+            lines.Add("No change.");
+        return lines;
+
+        void DescribeSteps(string stage, List<BpfStep> was, List<BpfStep> now)
+        {
+            static string What(BpfStep st) => st.Kind == BpfStepKind.Field
+                ? st.Attribute ?? "?"
+                : $"{st.Kind} {st.Label ?? st.ProcessId}";
+
+            var oldSteps = was.Where(st => st.StepId is not null).ToDictionary(st => Id(st.StepId));
+            var seen = new HashSet<string>();
+            foreach (var step in now)
+            {
+                if (step.StepId is null || !oldSteps.TryGetValue(Id(step.StepId), out var before))
+                {
+                    lines.Add($"+ stage '{stage}': step {What(step)}{(step.Required ? " (required)" : "")}");
+                    continue;
+                }
+
+                seen.Add(Id(step.StepId));
+                if (!string.Equals(before.Attribute, step.Attribute, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(before.ProcessId, step.ProcessId, StringComparison.OrdinalIgnoreCase))
+                    lines.Add($"~ stage '{stage}': step {What(before)} → {What(step)}");
+                if (step.Label is not null && before.Label != step.Label)
+                    lines.Add($"~ stage '{stage}': step {What(step)} label '{before.Label}' → '{step.Label}'");
+                if (before.Required != step.Required)
+                    lines.Add($"~ stage '{stage}': step {What(step)} {(step.Required ? "now required" : "no longer required")}");
+            }
+
+            foreach (var gone in was.Where(st => st.StepId is not null && !seen.Contains(Id(st.StepId))))
+                lines.Add($"- stage '{stage}': step {What(gone)}");
+        }
+
+        void DescribeTriggers(string where, List<BpfWorkflowTrigger> was, List<BpfWorkflowTrigger> now)
+        {
+            static string Key(BpfWorkflowTrigger t) => $"{t.WorkflowId.Trim('{', '}').ToLowerInvariant()}@{t.On.ToLowerInvariant()}";
+            var oldKeys = was.Select(Key).ToHashSet();
+            var newKeys = now.Select(Key).ToHashSet();
+            foreach (var t in now.Where(t => !oldKeys.Contains(Key(t))))
+                lines.Add($"+ {where}: workflow {t.WorkflowId} on {t.On}");
+            foreach (var t in was.Where(t => !newKeys.Contains(Key(t))))
+                lines.Add($"- {where}: workflow {t.WorkflowId} on {t.On}");
+        }
+    }
+
+    /// <summary>A stage reference reduced to the stage's id where it has one.</summary>
+    private static string Target(BpfDefinition definition, string? reference)
+    {
+        if (reference is null)
+            return "end";
+        var stage = BpfStageResolver.Find(definition.Stages, reference);
+        return (stage?.StageId ?? stage?.Name ?? reference).Trim('{', '}').ToLowerInvariant();
+    }
+
+    private static BpfBranching? Normalised(BpfBranching? branching, BpfDefinition definition) =>
+        branching is null
+            ? null
+            : branching with
+            {
+                Branches = branching.Branches.Select(b => b with { Next = Target(definition, b.Next) }).ToList(),
+                Else = branching.Else is null ? null : Target(definition, branching.Else)
+            };
+
+    private static readonly JsonSerializerOptions DiffJson = new()
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    /// <summary>Comparable form of a branching or relationship; tables in conditions are left out.</summary>
+    private static string Json(object? value) => value switch
+    {
+        null => "null",
+        BpfBranching b => JsonSerializer.Serialize(b with
+        {
+            Branches = b.Branches.Select(x => x with { Conditions = x.Conditions.Select(StripEntity).ToList() }).ToList()
+        }, DiffJson),
+        BpfRelationship r => JsonSerializer.Serialize(r with { Attribute = null }, DiffJson).ToLowerInvariant(),
+        _ => JsonSerializer.Serialize(value, DiffJson)
+    };
+
+    private static WorkflowCondition StripEntity(WorkflowCondition c) =>
+        c.IsGroup ? c with { Conditions = c.Conditions!.Select(StripEntity).ToList() } : c with { Entity = null };
 
     private async Task<string> DeriveUniqueNameAsync(string orgUrl, string name, string? solution, CancellationToken ct)
     {

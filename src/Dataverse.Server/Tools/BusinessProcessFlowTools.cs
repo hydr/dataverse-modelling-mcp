@@ -3,6 +3,7 @@ namespace Dataverse.Server.Tools;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Dataverse.Core.BusinessProcessFlows;
 using Dataverse.Core.Config;
 using Dataverse.Core.Io;
@@ -31,15 +32,40 @@ public sealed class BusinessProcessFlowTools
     private static readonly JsonSerializerOptions DefinitionOutputOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault,
+        // Empty lists ("workflows": []) are noise as well.
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { SkipEmptyCollections } }
     };
 
+    /// <remarks>
+    /// Unknown properties are refused: a misspelt "requried" or "nxt" would otherwise be dropped
+    /// silently and the process written without it.
+    /// </remarks>
     private static readonly JsonSerializerOptions DefinitionJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
+        AllowTrailingCommas = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
+
+    private static void SkipEmptyCollections(JsonTypeInfo typeInfo)
+    {
+        foreach (var property in typeInfo.Properties)
+            if (typeof(System.Collections.ICollection).IsAssignableFrom(property.PropertyType))
+                property.ShouldSerialize = (_, value) => value is System.Collections.ICollection { Count: > 0 };
+    }
+
+    /// <summary>The definition's shape in one paragraph, for the tool descriptions.</summary>
+    private const string Shape =
+        " Shape: {\"primaryEntity\":\"lead\",\"stages\":[{\"name\":\"Qualify\",\"stageId\":\"<keep when editing>\"," +
+        "\"entity\":\"<only when it changes>\",\"steps\":[{\"attribute\":\"subject\",\"label\":\"…\",\"required\":true}," +
+        "{\"kind\":\"action|flow\",\"processId\":\"<guid>\"}],\"next\":\"<stage name|end>\"," +
+        "\"branch\":{\"branches\":[{\"conditions\":[{\"attribute\":\"budgetamount\",\"operator\":\"GreaterThan\"," +
+        "\"value\":{\"kind\":\"literal\",\"literal\":\"10000\"}}],\"next\":\"<stage>\"}],\"else\":\"<stage>\"}," +
+        "\"relationship\":{\"name\":\"<1:N schema name, on the first stage of a new table>\"}}]}. " +
+        "A stage without 'entity' continues on the table of the stages leading to it. Full reference: the " +
+        "business-process-flows skill.";
 
     private static string Error(Exception ex) =>
         JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
@@ -88,6 +114,7 @@ public sealed class BusinessProcessFlowTools
 
             var env = config.GetActiveEnvironment();
             var (detail, parsed) = await svc.GetDefinitionAsync(env.OrgUrl, id, ct);
+            var resolved = BpfStageResolver.Resolve(parsed.Definition, assignMissingIds: false).Stages;
 
             return JsonSerializer.Serialize(new
             {
@@ -102,6 +129,19 @@ public sealed class BusinessProcessFlowTools
                 fullyUnderstood = parsed.FullyUnderstood,
                 unrecognised = parsed.Unrecognised,
                 notes = parsed.Notes,
+                // The path at a glance, with every table spelled out — the definition leaves inherited ones implicit.
+                path = resolved.Select(st => new
+                {
+                    order = st.Index + 1,
+                    st.Source.Name,
+                    st.StageId,
+                    st.Entity,
+                    next = st.NextStageId is null ? "end" : resolved.First(x => x.StageId == st.NextStageId).Source.Name,
+                    branchesTo = BpfStageResolver.BranchTargets(st.Source)
+                        .Select(t => BpfStageResolver.Find(parsed.Definition.Stages, t)?.Name ?? t).ToList() is { Count: > 0 } targets
+                        ? targets
+                        : null
+                }),
                 definition = JsonSerializer.SerializeToElement(parsed.Definition, DefinitionOutputOptions)
             }, JsonOptions);
         }
@@ -115,13 +155,16 @@ public sealed class BusinessProcessFlowTools
     [Description("Check a business-process-flow definition without writing anything: structure, paths and " +
                  "branches, the designer's own rules, and — against live metadata — tables, columns, " +
                  "relationships and the workflows/actions/flows it refers to. Returns issues with a code, " +
-                 "a JSON path, the problem and the fix. Pass the definition inline as definitionJson or as " +
-                 "definitionFile (a path to a local .json file).")]
+                 "a JSON path, the problem and the fix. Pass processId when the definition is meant to replace " +
+                 "an existing process: then it is checked exactly as bpf_set_definition would (existing ids " +
+                 "adopted, instances on removed stages). Pass the definition inline as definitionJson or as " +
+                 "definitionFile (a path to a local .json file)." + Shape)]
     public static async Task<string> BpfValidateDefinition(
         BusinessProcessFlowService svc,
         ConfigProvider config,
         [Description("The definition as JSON (see the business-process-flows skill for the shape)")] string? definitionJson = null,
         [Description("Path to a local file holding the definition JSON — use this instead of definitionJson for large definitions")] string? definitionFile = null,
+        [Description("The process the definition is meant to replace, if any")] string? processId = null,
         CancellationToken ct = default)
     {
         try
@@ -130,8 +173,18 @@ public sealed class BusinessProcessFlowTools
             if (definition is null)
                 return JsonSerializer.Serialize(new { canSave = false, issues = new[] { problem } }, JsonOptions);
 
+            Guid? existing = null;
+            if (processId is not null)
+            {
+                if (!Guid.TryParse(processId, out var pid))
+                    return Error("Invalid processId GUID format.");
+                existing = pid;
+            }
+
             var env = config.GetActiveEnvironment();
-            var (result, completed, _) = await svc.ValidateAsync(env.OrgUrl, definition, ct);
+            var (result, completed) = existing is { } id
+                ? await PlanAsync(svc, env.OrgUrl, id, definition, ct)
+                : await ValidateOnlyAsync(svc, env.OrgUrl, definition, ct);
 
             return JsonSerializer.Serialize(new
             {
@@ -148,6 +201,42 @@ public sealed class BusinessProcessFlowTools
         {
             return Error(ex);
         }
+
+        static async Task<(Dataverse.Core.Workflows.WorkflowValidationResult, BpfDefinition)> PlanAsync(
+            BusinessProcessFlowService svc, string orgUrl, Guid id, BpfDefinition definition, CancellationToken ct)
+        {
+            var plan = await svc.PlanWriteAsync(orgUrl, id, definition, ct: ct);
+            return (plan.Validation, plan.Definition);
+        }
+
+        static async Task<(Dataverse.Core.Workflows.WorkflowValidationResult, BpfDefinition)> ValidateOnlyAsync(
+            BusinessProcessFlowService svc, string orgUrl, BpfDefinition definition, CancellationToken ct)
+        {
+            var (result, completed, _) = await svc.ValidateAsync(orgUrl, definition, ct);
+            return (result, completed);
+        }
+    }
+
+    [McpServerTool(Name = "bpf_find_relationships")]
+    [Description("List the 1:N relationships a stage on toEntity can be reached through from a stage on " +
+                 "fromEntity — what a cross-table stage's 'relationship' takes. These are the lookups on " +
+                 "toEntity that point at fromEntity; 'name' goes into relationship.name.")]
+    public static async Task<string> BpfFindRelationships(
+        BusinessProcessFlowService svc,
+        ConfigProvider config,
+        [Description("Table the process comes from, e.g. 'lead'")] string fromEntity,
+        [Description("Table of the new stage, e.g. 'opportunity'")] string toEntity,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            return JsonSerializer.Serialize(await svc.FindRelationshipsAsync(env.OrgUrl, fromEntity, toEntity, ct), JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
     }
 
     // ---------------------------------------------------------------- write
@@ -157,7 +246,8 @@ public sealed class BusinessProcessFlowTools
                  "validated first; nothing is created while an error remains. Created as a draft unless " +
                  "activate=true. The FIRST activation creates the table that stores the instances (named " +
                  "after uniqueName) and takes about two minutes. Pass solutionUniqueName to create it in a " +
-                 "solution; its publisher prefix is then used for a derived uniqueName.")]
+                 "solution; its publisher prefix is then used for a derived uniqueName. If the activation " +
+                 "fails, the draft stays and its processId is returned." + Shape)]
     public static async Task<string> BpfCreate(
         BusinessProcessFlowService svc,
         ConfigProvider config,
@@ -203,9 +293,11 @@ public sealed class BusinessProcessFlowTools
                  "platform updates stages and the instance table in place (a new table in the process gets " +
                  "its lookup column during the write). Stages and steps without an id are matched to the " +
                  "existing ones by name/table and field, so their ids — and the instances standing on " +
-                 "them — survive. Nothing is written while validation reports an error. Pass dryRun=true " +
-                 "first: it reports what would change in 'diff'. The previous XAML comes back as 'backup' " +
-                 "(or in backupFile) for bpf_restore_xaml.")]
+                 "them — survive. To RENAME a stage keep its stageId: a stage without one whose name changed " +
+                 "is a new stage. Removing a stage that active instances stand on is refused unless " +
+                 "allowStageRemoval=true. Nothing is written while validation reports an error. Pass " +
+                 "dryRun=true first: it lists every change in 'diff'. After a write the previous XAML comes " +
+                 "back as 'backup' (or in backupFile) for bpf_restore_xaml." + Shape)]
     public static async Task<string> BpfSetDefinition(
         BusinessProcessFlowService svc,
         ConfigProvider config,
@@ -214,6 +306,7 @@ public sealed class BusinessProcessFlowTools
         [Description("Path to a local file holding the definition JSON")] string? definitionFile = null,
         [Description("Validate and report what would change, without writing (default false)")] bool dryRun = false,
         [Description("Path to write the previous XAML to; the response then carries 'backupFile' instead of the XAML")] string? backupFile = null,
+        [Description("Remove stages even if active instances stand on them (default false)")] bool allowStageRemoval = false,
         CancellationToken ct = default)
     {
         try
@@ -226,7 +319,7 @@ public sealed class BusinessProcessFlowTools
                 return JsonSerializer.Serialize(new { applied = false, issues = new[] { problem } }, JsonOptions);
 
             var env = config.GetActiveEnvironment();
-            var result = await svc.SetDefinitionAsync(env.OrgUrl, id, definition, dryRun, ct);
+            var result = await svc.SetDefinitionAsync(env.OrgUrl, id, definition, dryRun, allowStageRemoval, ct);
 
             var backupPath = backupFile is null || result.Backup is null
                 ? null
@@ -373,8 +466,10 @@ public sealed class BusinessProcessFlowTools
     [McpServerTool(Name = "bpf_grant_access")]
     [Description("Give security roles access to a business process flow — what the designer's 'Edit security " +
                  "roles' does. Access to a process is access to its instance table, so this grants the " +
-                 "table's privileges at organisation level (or only Read with readOnly=true). The process " +
-                 "must have been activated once, so the table exists.")]
+                 "table's privileges at organisation level (or only Read with readOnly=true). Additive: " +
+                 "privileges a role already has are kept, readOnly does not take any away, and there is no " +
+                 "revoke — change those in the role. Users creating records need Create, or the automatic " +
+                 "start of the process fails. The process must have been activated once, so the table exists.")]
     public static async Task<string> BpfGrantAccess(
         BusinessProcessFlowService svc,
         ConfigProvider config,
@@ -495,8 +590,10 @@ public sealed class BusinessProcessFlowTools
     }
 
     [McpServerTool(Name = "bpf_instance_start")]
-    [Description("Start a business process flow on a record, or switch the record to it — creates an instance " +
-                 "on the first stage (or on stageId, which must lie on the main path).")]
+    [Description("Start a business process flow on a record — creates an instance on the first stage (or on " +
+                 "stageId, which must lie on the main path within the primary table). A record holds one " +
+                 "instance per process: if it already has one, that one is returned with created=false and " +
+                 "nothing changes. The form shows the most recently touched instance of a record.")]
     public static async Task<string> BpfInstanceStart(
         BusinessProcessFlowService svc,
         ConfigProvider config,
@@ -518,8 +615,14 @@ public sealed class BusinessProcessFlowTools
             }
 
             var env = config.GetActiveEnvironment();
-            var instance = await svc.StartInstanceAsync(env.OrgUrl, pid, rid, sid, ct);
-            return JsonSerializer.Serialize(new { success = true, instanceId = instance });
+            var started = await svc.StartInstanceAsync(env.OrgUrl, pid, rid, sid, ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                created = started.Created,
+                instanceId = started.InstanceId,
+                message = started.Message
+            }, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -611,8 +714,9 @@ public sealed class BusinessProcessFlowTools
             {
                 severity = "error",
                 code = "BPF000",
-                path = "$",
-                problem = "The definition is not valid JSON: " + ex.Message,
+                path = ex.Path ?? "$",
+                problem = "The definition is not valid JSON, or has a property the definition does not know "
+                          + "(a typo is refused rather than ignored): " + ex.Message,
                 fix = "Fix the JSON. Shape: {\"primaryEntity\":\"lead\",\"stages\":[{\"name\":\"Qualify\"," +
                       "\"steps\":[{\"attribute\":\"subject\"}]}]}"
             });

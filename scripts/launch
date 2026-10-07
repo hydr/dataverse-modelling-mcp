@@ -1,0 +1,10 @@
+#!/bin/sh
+# launch — the MCP server command in .mcp.json, macOS/Linux side.
+#
+# .mcp.json names "${CLAUDE_PLUGIN_ROOT}/scripts/launch" without an extension. On
+# macOS/Linux that is this file; on Windows Claude Code resolves the same path to
+# launch.cmd next to it. That pair is the only way to start a different launcher
+# per OS, because .mcp.json has no platform-specific entries.
+#
+# Usage: launch <plugin-root> <plugin-data>
+exec bash "$(dirname "$0")/run-server.sh" "$@"

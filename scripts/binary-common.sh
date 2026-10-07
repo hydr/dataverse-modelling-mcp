@@ -6,19 +6,28 @@
 #   scripts/run-server.sh     (MCP launcher — runs on every server start/reconnect)
 #
 # Mirrors scripts/binary-common.ps1, including the versioned layout:
-#   <plugin-data>/bin/<version>/DataverseMcp.exe   <- what actually gets executed
-#   <plugin-data>/bin/DataverseMcp.exe             <- legacy path, best-effort copy
-#   <plugin-data>/bin/.version                     <- legacy marker
+#   <plugin-data>/bin/<version>/DataverseMcp[.exe]   <- what actually gets executed
+#   <plugin-data>/bin/DataverseMcp[.exe]             <- legacy path, best-effort copy
+#   <plugin-data>/bin/.version                       <- legacy marker
+#
+# .exe on Windows (git-bash), a native binary without extension on macOS/Linux.
 #
 # Versioned directories exist because Windows cannot overwrite a running .exe.
 #
 # IMPORTANT: every diagnostic goes to stderr — the launcher shares stdout with the
 # MCP stdio stream, a single stray line there breaks the protocol.
 
-ASSET_NAME="DataverseMcp-win-x64.exe"   # release asset (RID-suffixed)
-RUNTIME_NAME="DataverseMcp.exe"         # on-disk name
-
 note() { echo "[dataverse-modelling-mcp] $*" >&2; }
+
+# Release asset (RID-suffixed) and on-disk name for this platform. git-bash on Windows
+# reports MINGW/MSYS/CYGWIN and gets the .exe; macOS and Linux get a native binary.
+case "$(uname -s)/$(uname -m)" in
+  MINGW*|MSYS*|CYGWIN*) ASSET_NAME="DataverseMcp-win-x64.exe"; RUNTIME_NAME="DataverseMcp.exe" ;;
+  Darwin/arm64)         ASSET_NAME="DataverseMcp-osx-arm64";   RUNTIME_NAME="DataverseMcp" ;;
+  Darwin/x86_64)        ASSET_NAME="DataverseMcp-osx-x64";     RUNTIME_NAME="DataverseMcp" ;;
+  Linux/x86_64)         ASSET_NAME="DataverseMcp-linux-x64";   RUNTIME_NAME="DataverseMcp" ;;
+  *)                    ASSET_NAME="";                         RUNTIME_NAME="DataverseMcp" ;;
+esac
 
 # Echoes the expected version, or fails with a message on stderr.
 expected_version() {
@@ -130,6 +139,11 @@ download_binary() {
 resolve_binary() {
   local plugin_root="$1" plugin_data="$2" allow_offline="${3:-0}"
 
+  if [ -z "$ASSET_NAME" ]; then
+    note "no server binary is published for $(uname -s)/$(uname -m). Supported: Windows x64, macOS arm64/x64, Linux x64. Alternatively install the dotnet tool: dotnet tool install -g Dataverse.ModellingMcp.Setup"
+    return 1
+  fi
+
   local version
   version="$(expected_version "$plugin_root")" || return 1
 
@@ -160,7 +174,7 @@ resolve_binary() {
   fi
 
   # Legacy flat path kept in sync for installs whose .mcp.json still points at
-  # <plugin-data>/bin/DataverseMcp.exe. Fails while that file is executed by
+  # <plugin-data>/bin/DataverseMcp[.exe]. Fails while that file is executed by
   # another session — harmless, the versioned copy is what we run.
   cp -f "$target" "${bin_dir}/${RUNTIME_NAME}" 2>/dev/null \
     && printf '%s' "$version" > "${bin_dir}/.version" \

@@ -59,7 +59,7 @@ You need two things, whichever way you install:
   in option B creates one for you if the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
   is installed.
 
-### A. Claude Code plugin (Windows)
+### A. Claude Code plugin (Windows, macOS, Linux)
 
 Inside Claude Code:
 
@@ -72,7 +72,7 @@ Claude Code asks for the environment URL and the app's client ID. On the first s
 plugin downloads the server binary from the latest GitHub release — no .NET SDK, no clone. The first
 tool call opens a browser for sign-in. The plugin also brings the [skills](#skills).
 
-The release binary is Windows-only for now; on macOS and Linux use option B.
+Binaries are published for Windows x64, macOS (Apple Silicon and Intel) and Linux x64.
 
 ### B. dotnet tool (Windows, macOS, Linux — any MCP client)
 
@@ -249,7 +249,8 @@ Integration tests connect to the environment configured in `config.json` and exp
 ## Updating to a new release (no session restart needed)
 
 When installed as a Claude Code plugin, the server binary is not started directly —
-`.mcp.json` launches `scripts/run-server.ps1`, which installs the binary version pinned in
+`.mcp.json` launches `scripts/launch` (the shell script on macOS/Linux, `launch.cmd` → `run-server.ps1`
+on Windows), which installs the binary version pinned in
 `scripts/BINARY_VERSION` (skipping the download when it is already there) and then execs it,
 passing stdio straight through.
 
@@ -260,11 +261,11 @@ So after a new release, getting the new tools takes:
 2. Open the **`/mcp`** menu, pick `dataverse-modelling`, and choose **Reconnect**.
 
 That restarts the server process, which re-runs the launcher and picks up the new binary — no
-new Claude Code session required. The `SessionStart` hook (`scripts/ensure-binary.ps1`) still
-pre-warms the download; because both paths share `scripts/binary-common.ps1` and short-circuit
+new Claude Code session required. The `SessionStart` hook (`scripts/ensure-binary.*`) still
+pre-warms the download; because both paths share `scripts/binary-common.*` and short-circuit
 when the expected version is already installed, nothing is downloaded twice.
 
-Binaries live in versioned directories (`<plugin-data>/bin/<version>/DataverseMcp.exe`) so an
+Binaries live in versioned directories (`<plugin-data>/bin/<version>/DataverseMcp[.exe]`) so an
 update never has to overwrite a running `.exe` — which Windows would refuse while another
 session still has it open.
 

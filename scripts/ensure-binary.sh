@@ -25,14 +25,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
 : "${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA is not set}"
 
-if ! is_windows; then
-  # Real Unix: the plugin's .mcp.json launches DataverseMcp.exe, which is a
-  # Windows binary, and the release currently ships win-x64 only. Treat Unix as
-  # out of scope rather than failing the session loudly.
-  note "non-Windows host detected ($(uname -s)); this plugin is currently Windows-only. See docs/GH-RELEASE-SETUP.md."
-  exit 0
-fi
-
 EXE="$(resolve_binary "$PLUGIN_ROOT" "$CLAUDE_PLUGIN_DATA")" || exit 1
 note "binary ready: ${EXE}"
 exit 0

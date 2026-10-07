@@ -1,4 +1,5 @@
-# run-server.ps1 - MCP launcher (Windows). Referenced as the 'command' in .mcp.json.
+# run-server.ps1 - MCP launcher (Windows). Started by scripts/launch.cmd, which Claude Code
+# resolves from the extensionless 'command' in .mcp.json.
 #
 # Runs on every server start, i.e. also on "Reconnect" in the /mcp menu. It first
 # makes sure the binary for the expected version is installed and then execs it,

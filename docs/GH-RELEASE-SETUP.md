@@ -8,14 +8,16 @@ on `SessionStart` **and** every time the MCP server starts.
 
 | File | Role |
 |---|---|
-| `.mcp.json` | Starts the launcher `scripts/run-server.ps1` (no longer the binary directly) |
+| `.mcp.json` | Starts `scripts/launch` — no extension, see [One command for every OS](#one-command-for-every-os) |
+| `scripts/launch` / `launch.cmd` | Per-OS entry point: shell script on macOS/Linux, batch file on Windows |
 | `scripts/run-server.ps1` / `.sh` | Launcher: updates the binary, starts it, passes stdio through |
 | `scripts/binary-common.ps1` / `.sh` | Download/resolution logic shared by hook and launcher |
-| `hooks/hooks.json` | Registers the `SessionStart` hook (PowerShell **and** bash) |
+| `hooks/hooks.json` | Registers the `SessionStart` hook (PowerShell **and** bash; the PowerShell entry ends in `; exit 0`, valid in both shells, so it stays quiet where PowerShell is missing) |
 | `scripts/ensure-binary.ps1` | SessionStart hook (Windows), thin wrapper around `binary-common.ps1` |
-| `scripts/ensure-binary.sh` | Same for git-bash; still a no-op on real Unix |
+| `scripts/ensure-binary.sh` | Same for git-bash, macOS and Linux |
 | `scripts/BINARY_VERSION` | Expected binary version — **must match the release tag** |
-| `.github/workflows/release.yml` | Builds and publishes the binary as a release asset |
+| `.github/workflows/release.yml` | Builds, smoke-tests and publishes the binaries as release assets |
+| `.github/scripts/smoke_mcp.py` | Starts a binary and checks `initialize` + `tools/list` |
 
 ## Updating without restarting the session
 
@@ -31,10 +33,12 @@ version is already installed.
 ## Layout on disk (versioned)
 
 ```
-<plugin-data>/bin/<version>/DataverseMcp.exe   <- is executed
-<plugin-data>/bin/DataverseMcp.exe             <- legacy path, best-effort copy
-<plugin-data>/bin/.version                     <- legacy marker
+<plugin-data>/bin/<version>/DataverseMcp[.exe]   <- is executed
+<plugin-data>/bin/DataverseMcp[.exe]             <- legacy path, best-effort copy
+<plugin-data>/bin/.version                       <- legacy marker
 ```
+
+`.exe` on Windows; on macOS and Linux the binary has no extension.
 
 Versioned directories, because Windows does **not let you overwrite a running `.exe`**:
 with parallel Claude sessions, or a reconnect while the old process is still
@@ -47,10 +51,28 @@ with an older `.mcp.json` (which points directly at this path) still start.
 
 ## Naming convention
 
-- **Release asset:** `DataverseMcp-win-x64.exe` (RID suffix, so that future
-  platforms can coexist).
-- **Runtime name on disk:** `DataverseMcp.exe`. The asset name is normalised to this
-  fixed name when the file is stored.
+- **Release assets:** `DataverseMcp-win-x64.exe`, `DataverseMcp-linux-x64`,
+  `DataverseMcp-osx-arm64`, `DataverseMcp-osx-x64` (RID suffix).
+- **Runtime name on disk:** `DataverseMcp.exe` on Windows, `DataverseMcp` elsewhere. The
+  launcher picks the asset for its platform (`uname -s`/`uname -m` in `binary-common.sh`) and
+  normalises the name when it stores the file.
+
+## One command for every OS
+
+`.mcp.json` has no platform-specific entries, so it names one command for every OS:
+`${CLAUDE_PLUGIN_ROOT}/scripts/launch` — **without an extension**.
+
+- **macOS/Linux** execute the file `launch` itself, a POSIX shell script (mode 100755 in git,
+  LF line endings via `.gitattributes`), which hands over to `run-server.sh`.
+- **Windows:** Claude Code resolves an extensionless command via `PATHEXT` and finds
+  `launch.cmd` next to it — even though `launch` exists too. `launch.cmd` starts
+  `run-server.ps1`. Verified with Claude Code on Windows 11 (October 2026).
+
+Do not rename either file or add an extension to the command in `.mcp.json`.
+
+The macOS binaries are built on a macOS runner and ad-hoc signed (`codesign --sign -`):
+Apple Silicon kills an unsigned binary on start. Files downloaded with `curl` carry no
+quarantine attribute, so Gatekeeper does not get involved.
 
 ## stdout discipline (important)
 
@@ -65,7 +87,7 @@ still fails loudly.
 
 ## Version coupling (important)
 
-The hook downloads from `releases/download/v${BINARY_VERSION}/DataverseMcp-win-x64.exe`.
+The hook downloads from `releases/download/v${BINARY_VERSION}/DataverseMcp-<rid>[.exe]`.
 For that to work, the following must hold:
 
 ```
@@ -113,8 +135,9 @@ names the missing release tag.
 3. Merge the PR.
 4. `git tag v<Version> && git push origin v<Version>` → the release workflow
    - packs the NuGet tool `Dataverse.Setup`,
-   - builds the server self-contained/single-file for `win-x64`,
-   - attaches `DataverseMcp-win-x64.exe` and the `.nupkg` to the GitHub release,
+   - builds the server self-contained/single-file for `win-x64`, `linux-x64`, `osx-arm64`
+     and `osx-x64`, and starts each non-Windows binary once on its own platform (smoke test),
+   - attaches the four binaries and the `.nupkg` to the GitHub release,
    - then pushes the `.nupkg` to nuget.org (see below).
 
 ## Publishing the NuGet tool (Trusted Publishing)
@@ -153,13 +176,8 @@ printf '%s' "<version>" > \
   "$HOME/.claude/plugins/data/dataverse-modelling-mcp-hydr/bin/.version"
 ```
 
-## Known limitation: platforms
+## Testing pipeline changes
 
-`.mcp.json` hard-codes `DataverseMcp.exe`. That makes the plugin currently
-**Windows-only**. For Linux/macOS, the following would additionally be needed:
-
-- the workflow builds `DataverseMcp-linux-x64` / `DataverseMcp-osx-arm64`,
-- the Unix branch in `ensure-binary.sh` is enabled,
-- `.mcp.json` resolves the platform-specific binary name.
-
-Until then, the Unix branch of the `.sh` is a deliberate no-op with a notice.
+A PR that touches `release.yml`, `.github/scripts/`, `scripts/` or the server project file runs
+the `binaries` job of the release workflow — all four builds plus the smoke tests. The `release`
+job only runs for `v*` tags, so a PR publishes nothing.

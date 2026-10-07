@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A PR that touches the release pipeline or the launchers builds and smoke-tests all
+  # binaries; the release job only runs for tags, so nothing is published.
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/scripts/**'
+      - 'scripts/**'
+      - 'src/Dataverse.Server/*.csproj'
+  workflow_dispatch:
 
 # Creating the release and uploading its assets needs write access to repository
 # contents. Declared here rather than relying on the repository default, which is
@@ -15,7 +24,68 @@ permissions:
   id-token: write
 
 jobs:
+  # --- MCP server binaries (self-contained, single file), one per platform ---
+  # Release assets are RID-suffixed (DataverseMcp-<rid>[.exe]); the launcher picks the
+  # one for its platform and normalises the on-disk name.
+  # macOS binaries are built on a macOS runner: Apple Silicon refuses to start an
+  # unsigned binary ("Killed: 9"), and only a Mac can ad-hoc sign it.
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - { rid: win-x64,   os: ubuntu-latest, asset: DataverseMcp-win-x64.exe, built: Dataverse.Server.exe }
+          - { rid: linux-x64, os: ubuntu-latest, asset: DataverseMcp-linux-x64,   built: Dataverse.Server }
+          - { rid: osx-arm64, os: macos-latest,  asset: DataverseMcp-osx-arm64,   built: Dataverse.Server }
+          - { rid: osx-x64,   os: macos-latest,  asset: DataverseMcp-osx-x64,     built: Dataverse.Server }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish ${{ matrix.rid }}
+        run: |
+          dotnet publish src/Dataverse.Server -c Release -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -o ./publish
+          mkdir -p ./out
+          cp "./publish/${{ matrix.built }}" "./out/${{ matrix.asset }}"
+
+      - name: Ad-hoc sign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - "./out/${{ matrix.asset }}" && codesign --verify "./out/${{ matrix.asset }}"
+
+      # Start the binary on its own platform and ask for initialize + tools/list.
+      # win-x64 is cross-built on Linux and cannot run here.
+      - name: Smoke test
+        if: matrix.rid != 'win-x64'
+        run: python3 .github/scripts/smoke_mcp.py 100 "./out/${{ matrix.asset }}"
+
+      # The plugin's real start path on this OS: scripts/launch -> run-server.sh ->
+      # binary-common.sh picks the asset name for the platform. The binary is pre-placed
+      # where the launcher expects it, so the fast path runs without a download.
+      - name: Smoke test through the plugin launcher
+        if: matrix.rid != 'win-x64'
+        run: |
+          VERSION="$(tr -d '[:space:]' < scripts/BINARY_VERSION)"
+          DATA="$RUNNER_TEMP/plugin-data"
+          mkdir -p "$DATA/bin/$VERSION"
+          cp "./out/${{ matrix.asset }}" "$DATA/bin/$VERSION/DataverseMcp"
+          python3 .github/scripts/smoke_mcp.py 100 ./scripts/launch "$PWD" "$DATA"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ./out/${{ matrix.asset }}
+          if-no-files-found: error
+
   release:
+    needs: binaries
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,24 +124,16 @@ jobs:
       # --- NuGet tool (Dataverse.Setup) ---
       - run: dotnet pack src/Dataverse.Setup -c Release -o ./artifacts
 
-      # --- MCP server binary (self-contained, single file) ---
-      # Runtime name is fixed to DataverseMcp.exe by .mcp.json; the release asset
-      # is suffixed with the RID so future platforms can coexist. The ensure-binary
-      # hook downloads the RID-suffixed asset and normalises the on-disk name.
-      - name: Publish Windows server binary
-        run: |
-          dotnet publish src/Dataverse.Server -c Release -r win-x64 \
-            --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
-            -o ./publish/win-x64
-          cp ./publish/win-x64/Dataverse.Server.exe ./artifacts/DataverseMcp-win-x64.exe
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             ./artifacts/*.nupkg
-            ./artifacts/DataverseMcp-win-x64.exe
+            ./artifacts/DataverseMcp-*
 
       # --- Publish the NuGet tool via Trusted Publishing ---
       # Runs after the GitHub release on purpose: the launcher downloads the binary from that

@@ -5,3 +5,8 @@ scripts/BINARY_VERSION text eol=lf
 
 # PowerShell tolerates both, keep it stable.
 *.ps1           text
+
+# The cross-platform launcher pair: `launch` is a POSIX shell script (LF, executable),
+# `launch.cmd` its Windows twin (CRLF, as cmd.exe expects).
+scripts/launch      text eol=lf
+*.cmd               text eol=crlf

@@ -25,6 +25,8 @@ process order, type, managed flag.
 ### `bpf_get_definition`
 
 Reads a process as an editable definition. Write it back only when `fullyUnderstood` is true.
+Besides `definition`, the response has `path`: every stage in order with its id, its table (also
+where the definition leaves it implicit), its `next` and its branch targets.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -35,12 +37,30 @@ Reads a process as an editable definition. Write it back only when `fullyUnderst
 ### `bpf_validate_definition`
 
 Validates a definition without writing: model rules, the designer's rules, and tables, columns,
-relationships and referenced workflows/actions/flows against live metadata.
+literal types, relationships and referenced workflows/actions/flows against live metadata. With
+`processId` it checks the definition as a replacement for that process, exactly as
+`bpf_set_definition` would: existing ids adopted, removed stages checked for instances.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `definitionJson` | string | One of both | The definition inline |
 | `definitionFile` | string | One of both | Path to a `.json` file with the definition — preferred for anything large |
+| `processId` | GUID | No | The process the definition is meant to replace |
+
+---
+
+### `bpf_find_relationships`
+
+Lists the 1:N relationships a stage on `toEntity` can be reached through from a stage on
+`fromEntity` — the lookups on `toEntity` that point at `fromEntity`. `name` goes into the stage's
+`relationship.name`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `fromEntity` | string | Yes | Table the process comes from, e.g. `lead` |
+| `toEntity` | string | Yes | Table of the new stage, e.g. `opportunity` |
+
+**Example prompt:** "Which relationship gets a lead stage over to opportunity?"
 
 ---
 
@@ -55,7 +75,7 @@ Creates a process. Nothing is created while validation reports an error.
 | `uniqueName` | string | No | `<prefix>_<name>`; becomes the instance table's logical name. Derived from `name` when omitted |
 | `description` | string | No | Description |
 | `solutionUniqueName` | string | No | Create it in this solution; its publisher prefix is used for a derived `uniqueName` |
-| `activate` | bool | No | Activate right away. The first activation takes about two minutes |
+| `activate` | bool | No | Activate right away. The first activation takes about two minutes. If it fails, the draft stays and the response still carries its `processId` |
 
 **Example prompt:** "Create a business process flow on lead with the stages Qualify, Develop and Close, where Develop moves to opportunity."
 
@@ -64,14 +84,20 @@ Creates a process. Nothing is created while validation reports an error.
 ### `bpf_set_definition`
 
 Rewrites a process — also an activated one, in place. Stages, steps and triggers without an id are
-matched to the existing ones so running instances keep their stage.
+matched to the existing ones (stages by name and table) so running instances keep their stage. **To
+rename a stage, keep its `stageId`** — otherwise it counts as removed and added (BPF062). Removing a
+stage that active instances stand on is refused (BPF060) unless `allowStageRemoval` is set.
+
+`diff` lists every change, one line each (`+` added, `-` removed, `~` changed): stages, renames,
+tables, `next`, branches, relationships, steps, labels, required flags, triggers.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `processId` | GUID | Yes | The process |
 | `definitionJson` / `definitionFile` | string | Yes (one) | The definition |
-| `dryRun` | bool | No | Validate and report the change in `diff` without writing |
+| `dryRun` | bool | No | Validate and report the change in `diff` without writing. New stages and steps show no id — they get one on the real write. No backup is returned |
 | `backupFile` | string | No | Write the previous XAML here instead of returning it |
+| `allowStageRemoval` | bool | No | Remove stages even if active instances stand on them |
 
 ---
 
@@ -124,7 +150,9 @@ Sets the process order of a table. A new record gets the first process its user 
 ### `bpf_grant_access`
 
 Grants security roles the privileges on the process's instance table (organisation depth) — what the
-designer's "Edit security roles" does. The process must have been activated once.
+designer's "Edit security roles" does. The process must have been activated once. Users who create
+records need Create, or the automatic start of the process fails. Additive: privileges a role already
+has stay, `readOnly` takes none away, and there is no revoke.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -170,20 +198,23 @@ which is the one the form shows.
 
 ### `bpf_instance_start`
 
-Starts a process on a record, or switches the record to it.
+Starts a process on a record. A record holds one instance per process: if it already has one, that
+one is returned with `created: false` and nothing changes. An active process usually starts itself
+on new records, shortly after they are created.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `processId` | GUID | Yes | The process |
 | `recordId` | GUID | Yes | A record of the primary table |
-| `stageId` | GUID | No | Start stage on the main path; the first stage by default |
+| `stageId` | GUID | No | Start stage on the main path within the primary table; the first stage by default |
 
 ---
 
 ### `bpf_instance_move`
 
-Moves an instance: back to any passed stage, or forward to the stage following the active one (its
-next stage or a branch target). Keeps `traversedpath` consistent. Branch conditions are not evaluated.
+Moves an active instance: back to any passed stage, or forward to the stage following the active one
+(its next stage or a branch target). Keeps `traversedpath` consistent. Branch conditions are not
+evaluated. A finished or aborted instance has to be reactivated first.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|

@@ -233,6 +233,19 @@ that calls `Xrm.Page.ui.process.reflow(…)`.
 A lookup literal keeps its display label (`"opportunity", "Big deal", <id var>, "Lookup"`); the label
 is shown in the designer and in `uidata`.
 
+What the generated function does with a condition (observed in `uidata`):
+
+- **It returns early, applying no case, while any field the stage's conditions read is empty**
+  (`if (v1 == null || v2 == null …) return;`). The instance then follows `NextStageId`. Condition
+  fields should be required data steps; a `Null` comparison can never apply.
+- **Comparisons are strict and typed by the literal's `CreateCrmType` type.** `OptionSetValue` "1"
+  becomes `=== (1)`; the same literal typed `String` becomes `=== ('1')`, which never equals a choice
+  value — likewise for whole numbers. `Boolean` "1" and "true" both become `true`; `Money` "10000"
+  becomes `> (10000)`; `DateTime` "2024-01-31" becomes `new Date(Date.UTC(2024,0,31,…))` against the
+  field's date part; a lookup compares id and table of the first reference.
+- A case's target may be a stage on another table; the platform accepts it and the move works with
+  the record of that table (verified on a live instance).
+
 ### Cross-table transition
 
 ```xml
@@ -248,6 +261,12 @@ is shown in the designer and in `uidata`.
 The relationship is a 1:N from the source table to the target table; `AttributeName` is the lookup on
 the target table. The collection is written even when empty.
 
+One `StageRelationship` describes one transition. When several stages of the source table lead into
+the same target stage — branches merging into it — the builder writes one entry per source stage,
+with the same relationship. The platform accepts several entries for one target; instances moved in
+over either way find their record (verified live). The parser reads such entries back as one
+`relationship` without `fromStage`.
+
 ## Lifecycle
 
 | Action | Behaviour |
@@ -255,7 +274,7 @@ the target table. The collection is written even when empty.
 | Create | Draft; `processstage` rows and `uidata` exist immediately. No instance table yet. |
 | First activation | Synchronous, about two minutes: creates the instance table (`<uniquename>`, org-owned) with its form, the `bpf_<table>id` lookups, `activestageid`, `traversedpath`, `bpf_duration`. |
 | Write while active | Allowed. 10–60 s. A new table in the process gets its `bpf_<table>id` column. |
-| Active process | Applied to every new record of its table for users with access, lowest `processorder` first. |
+| Active process | Applied to every new record of its table for users with access, lowest `processorder` first — asynchronously, a moment after the record is created. |
 | Deactivate | Quick. The instance table stays. |
 | Delete | Refused while active (`0x8004500f Cannot delete an active workflow definition`). Takes 2–3 minutes; the instance table is removed asynchronously afterwards. |
 | Solution export | Only together with the instance table (`0x80060376` otherwise) — so only after one activation. |
@@ -265,10 +284,13 @@ the target table. The collection is written even when empty.
 Rows of the instance table (Web API, entity set of `<uniquename>`):
 
 - Start: `POST` with `bpf_<table>id@odata.bind` and `activestageid@odata.bind`; `traversedpath` when
-  starting beyond the first stage.
+  starting beyond the first stage. A record holds one instance per process: a second `POST` for the
+  same record succeeds and changes nothing, so look for an existing row first
+  (`$filter=_bpf_<table>id_value eq <record>`).
 - Move: `PATCH` `activestageid@odata.bind` and `traversedpath` (comma-separated stage ids ending with
   the active one). A move onto another table's stage also needs `bpf_<table>id@odata.bind`; without it
   the platform answers `0x80040216 Participating entity record of stage: <id> is not valid`.
-- Status: `statecode`/`statuscode` 0/1 active, 1/2 finished, 1/3 aborted.
+- Status: `statecode`/`statuscode` 0/1 active, 1/2 finished, 1/3 aborted. Finishing is only accepted
+  on the last stage of a path; a finished or aborted instance cannot move until reactivated.
 - `RetrieveProcessInstances(EntityLogicalName, EntityId)` returns all instances on a record across
   processes as `businessprocessflowinstance` rows (`processstageid` = active stage), newest first.

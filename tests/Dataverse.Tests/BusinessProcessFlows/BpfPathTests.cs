@@ -263,6 +263,31 @@ public sealed class BpfPathTests
             Is.EqualTo(new[] { "account", "contact", "contact" }));
     }
 
+    [Test]
+    public void StageWithoutSteps_IsRefused() =>
+        Assert.That(Issues(new BpfDefinition { PrimaryEntity = "account", Stages = [new BpfStage { Name = "Empty" }] })
+            .Single(i => i.Code == "BPF022").Severity, Is.EqualTo("error"));
+
+    [Test]
+    public void StageNamedEnd_Warns()
+    {
+        var definition = new BpfDefinition { PrimaryEntity = "account", Stages = [Stage("Start", "name"), Stage("End", "description")] };
+
+        Assert.That(Issues(definition).Single(i => i.Code == "BPF053").Path, Is.EqualTo("$.stages[1].name"));
+    }
+
+    [Test]
+    public void CaseLeadingWhereElseLeads_Warns()
+    {
+        var definition = new BpfDefinition
+        {
+            PrimaryEntity = "account",
+            Stages = [Stage("Qualify", "name") with { Branch = Branch("name", "Close", "Close") }, Stage("Close", "description")]
+        };
+
+        Assert.That(Issues(definition).Single(i => i.Code == "BPF029").Severity, Is.EqualTo("warning"));
+    }
+
     // ---------------------------------------------------------------- rewriting
 
     [Test]

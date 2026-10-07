@@ -274,10 +274,10 @@ over either way find their record (verified live). The parser reads such entries
 | Create | Draft; `processstage` rows and `uidata` exist immediately. No instance table yet. |
 | First activation | Synchronous, about two minutes: creates the instance table (`<uniquename>`, org-owned) with its form, the `bpf_<table>id` lookups, `activestageid`, `traversedpath`, `bpf_duration`. |
 | Write while active | Allowed. 10–60 s. A new table in the process gets its `bpf_<table>id` column. |
-| Active process | Applied to every new record of its table for users with access, lowest `processorder` first — asynchronously, a moment after the record is created. |
+| Active process | Applied to every new record of its table for users with access, lowest `processorder` first — asynchronously, a moment after the record is created. A process without `processorder` (the Web API sets none unless told) ranks after the numbered ones. |
 | Deactivate | Quick. The instance table stays. |
 | Delete | Refused while active (`0x8004500f Cannot delete an active workflow definition`). Takes 2–3 minutes; the instance table is removed asynchronously afterwards. |
-| Solution export | Only together with the instance table (`0x80060376` otherwise) — so only after one activation. |
+| Solution export | Only together with the instance table (`0x80060376` otherwise) — so only after one activation. Creating the process with `MSCRM.SolutionUniqueName` adds only the workflow; the table has to be added after the first activation. |
 
 ## Instances
 

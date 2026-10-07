@@ -75,8 +75,10 @@ public sealed class BusinessProcessFlowTools
     // ---------------------------------------------------------------- read
 
     [McpServerTool(Name = "bpf_list")]
-    [Description("List business process flows, optionally for one table, in their process order. " +
-                 "uniqueName is also the logical name of the table holding the process's instances.")]
+    [Description("List business process flows, optionally for one table, in the order the platform applies " +
+                 "them to new records: by process order, processes without one last, equal orders by name " +
+                 "(the platform defines no order between those). uniqueName is also the logical name of the " +
+                 "table holding the process's instances.")]
     public static async Task<string> BpfList(
         BusinessProcessFlowService svc,
         ConfigProvider config,
@@ -246,7 +248,8 @@ public sealed class BusinessProcessFlowTools
                  "validated first; nothing is created while an error remains. Created as a draft unless " +
                  "activate=true. The FIRST activation creates the table that stores the instances (named " +
                  "after uniqueName) and takes about two minutes. Pass solutionUniqueName to create it in a " +
-                 "solution; its publisher prefix is then used for a derived uniqueName. If the activation " +
+                 "solution; its publisher prefix is then used for a derived uniqueName, and on activation the " +
+                 "instance table is added to the solution too (needed for its export). If the activation " +
                  "fails, the draft stays and its processId is returned." + Shape)]
     public static async Task<string> BpfCreate(
         BusinessProcessFlowService svc,
@@ -319,11 +322,30 @@ public sealed class BusinessProcessFlowTools
                 return JsonSerializer.Serialize(new { applied = false, issues = new[] { problem } }, JsonOptions);
 
             var env = config.GetActiveEnvironment();
-            var result = await svc.SetDefinitionAsync(env.OrgUrl, id, definition, dryRun, allowStageRemoval, ct);
 
-            var backupPath = backupFile is null || result.Backup is null
-                ? null
-                : await PayloadSource.WriteAsync(backupFile, result.Backup, ct);
+            // The backup is written before the change: a path that cannot be written must stop the
+            // write, not fail after it and report a change that happened as failed.
+            string? backupPath = null;
+            if (backupFile is not null && !dryRun)
+            {
+                var current = await svc.GetAsync(env.OrgUrl, id, ct)
+                              ?? throw new InvalidOperationException($"Business process flow {id} not found.");
+                try
+                {
+                    backupPath = await PayloadSource.WriteAsync(backupFile, current.Xaml ?? string.Empty, ct);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        applied = false,
+                        error = $"The backup could not be written to '{backupFile}': {ex.Message} Nothing was changed.",
+                        fix = "Pass a writable path, or leave backupFile out to get the previous XAML in the response."
+                    }, JsonOptions);
+                }
+            }
+
+            var result = await svc.SetDefinitionAsync(env.OrgUrl, id, definition, dryRun, allowStageRemoval, ct);
 
             return JsonSerializer.Serialize(new
             {
@@ -377,12 +399,15 @@ public sealed class BusinessProcessFlowTools
     [McpServerTool(Name = "bpf_set_state")]
     [Description("Activate or deactivate a business process flow. The first activation creates the instance " +
                  "table and takes about two minutes; afterwards it is quick. Until users are granted access " +
-                 "(bpf_grant_access), only System Administrator and System Customizer see the process.")]
+                 "(bpf_grant_access), only System Administrator and System Customizer see the process. Pass " +
+                 "solutionUniqueName when the process belongs to a solution: the instance table is then added " +
+                 "to it — without it the solution cannot be exported.")]
     public static async Task<string> BpfSetState(
         BusinessProcessFlowService svc,
         ConfigProvider config,
         [Description("The process GUID")] string processId,
         [Description("true to activate, false to deactivate")] bool activate,
+        [Description("On activation: add the instance table to this solution (the one holding the process)")] string? solutionUniqueName = null,
         CancellationToken ct = default)
     {
         try
@@ -392,14 +417,15 @@ public sealed class BusinessProcessFlowTools
 
             var env = config.GetActiveEnvironment();
             var started = DateTime.UtcNow;
-            await svc.SetStateAsync(env.OrgUrl, id, activate, ct);
+            var added = await svc.SetStateAsync(env.OrgUrl, id, activate, solutionUniqueName, ct);
             return JsonSerializer.Serialize(new
             {
                 success = true,
                 processId = id,
                 isActivated = activate,
+                instanceTableAddedToSolution = added ? solutionUniqueName : null,
                 seconds = (int)(DateTime.UtcNow - started).TotalSeconds
-            });
+            }, JsonOptions);
         }
         catch (Exception ex)
         {
@@ -436,7 +462,8 @@ public sealed class BusinessProcessFlowTools
     [McpServerTool(Name = "bpf_set_order")]
     [Description("Set the order of a table's business process flows. A new record gets the first process " +
                  "(in this order) the user has access to. Listed processes come first, in the given order; " +
-                 "the others keep their relative order after them.")]
+                 "the others follow in their current order, as bpf_list shows it — processes without an " +
+                 "order last, ties by name. Every process gets a distinct number afterwards.")]
     public static async Task<string> BpfSetOrder(
         BusinessProcessFlowService svc,
         ConfigProvider config,

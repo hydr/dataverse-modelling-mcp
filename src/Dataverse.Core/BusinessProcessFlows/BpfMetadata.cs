@@ -2,7 +2,8 @@ namespace Dataverse.Core.BusinessProcessFlows;
 
 /// <summary>What the builder and validator need to know about one attribute.</summary>
 /// <param name="AttributeType">The metadata <c>AttributeType</c>, e.g. "String", "Lookup", "Picklist".</param>
-public sealed record BpfFieldInfo(string AttributeType, string? DisplayName);
+/// <param name="Updatable">False for columns users cannot change (<c>IsValidForUpdate</c>).</param>
+public sealed record BpfFieldInfo(string AttributeType, string? DisplayName, bool Updatable = true);
 
 /// <summary>A workflow, action or flow a process refers to.</summary>
 /// <param name="Category">0 classic workflow, 3 custom process action, 5 cloud flow.</param>

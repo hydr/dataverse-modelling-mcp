@@ -47,11 +47,19 @@ bpf_validate_definition(definitionFile) → fix issues
 → bpf_set_order(primaryEntity, processIds)   (only if the table has several processes)
 ```
 
+- **In a solution:** pass `solutionUniqueName`. The process goes into the solution on create, and its
+  instance table on the first activation — the solution exports only with both. Activating later
+  with `bpf_set_state`? Pass `solutionUniqueName` there.
+- **Process order:** a new process is placed after the table's existing ones, so it does not take
+  over new records from the current default. Put it first with `bpf_set_order` if that is wanted.
+
 - **The first activation takes about two minutes**: it creates the table that stores the instances
   (logical name = `uniqueName`, e.g. `sample_leadtoorder`) with a lookup per table of the process
   (`bpf_<table>id`), `activestageid` and `traversedpath`.
 - **An active process applies itself to every new record of its table** for users who have access
-  to it — lowest process order first, shortly after the record is created (asynchronously). Do not
+  to it — lowest process order first, processes without an order last, shortly after the record is
+  created (asynchronously). Equal orders have no defined order; `bpf_list` shows them by name, and
+  `bpf_set_order` gives every process a distinct number. Do not
   leave test processes activated in a shared environment.
 - Until `bpf_grant_access` runs, only System Administrator and System Customizer see the process.
   Users who create records need **Create** on the instance table, or the automatic start fails.
@@ -78,6 +86,8 @@ bpf_get_definition(processId) → edit the JSON → bpf_set_definition(processId
   call `bpf_validate_definition` with `processId`. `dryRun=true` on `bpf_set_definition` lists every
   change in `diff` (stages, steps, labels, required flags, `next`, branches, relationships,
   triggers); new stages and steps show no id there, as they only get one on the real write.
+- In a definition read back, `next`, branch targets and `fromStage` name stages by **id** — so a
+  rename stays a one-field change. The `path` list next to it shows the same with names.
 - Only write back when `fullyUnderstood` is true. Task-flow pages, the link controls of the shipped
   system processes, closed loops and action steps with input parameters are not authored here; the
   parser lists them in `unrecognised`.
@@ -278,7 +288,7 @@ Example — branch on a yes/no field of a lead into a stage on another table:
 | BPF006 | Id is not a GUID, or a step id equals a stage id | Remove it to have one assigned |
 | BPF007 | Unknown stage category | Use a listed category or leave it out |
 | BPF008 | `primaryEntity` differs from the existing process | Keep it; create a new process instead |
-| BPF009 | `uniqueName` invalid or taken | `<prefix>_<name>`, lowercase, unused |
+| BPF009 | `uniqueName` invalid or taken (error), or without the solution publisher's prefix (warning) | `<prefix>_<name>`, lowercase, unused |
 | BPF010 | `next` names no stage | Use key, name, id or `"end"` |
 | BPF011 | Stage leads to itself | Point `next` elsewhere |
 | BPF012 | Branch target names no stage, or `else` is `"end"` | Fix the reference; end the path on the target stage instead |
@@ -291,12 +301,14 @@ Example — branch on a yes/no field of a lead into a stage on another table:
 | BPF019 | Operator not available, value missing/ignored, or value kind other than literal/field | See the operator list |
 | BPF020 | Unknown step kind | `field`, `action`, `flow` |
 | BPF021 | Data step without attribute | Set `attribute` |
+| BPF022 | Stage without steps — the platform refuses it (`0x80060416`) | Add a step |
 | BPF023 | Action/flow step or trigger without a valid process id | Set `processId` / `workflowId` |
 | BPF024 | Condition on a field that is no data step of the stage | Add the data step, or compare another field |
 | BPF025 | Trigger event not allowed at this level | Stage: `stageEnter`/`stageExit`; process: `applied`/`reactivated`/`finished`/`abandoned` |
 | BPF026 | Condition without `else` (warning) | Add an `else` stage if the designer must still open it |
 | BPF027 | Flag ignored on this step kind (warning) | Remove it |
 | BPF028 | Branch reads a field that is not required (warning) | Make the data step `required` |
+| BPF029 | A case leads where `else` leads anyway (warning) | Point it elsewhere or remove it |
 | BPF030 | More than 30 stages on one table | Split the process |
 | BPF031 | More than 30 steps in a stage | Move steps to another stage |
 | BPF032 | More than 5 tables | Split the process |
@@ -309,7 +321,8 @@ Example — branch on a yes/no field of a lead into a stage on another table:
 | BPF050 | Stage unreachable (warning) | Point `next` or a branch at it, or remove it |
 | BPF051 | The main path loops | End the path; use `"end"` |
 | BPF052 | A branch or `next` leads back to an earlier stage | Point it forward; move instances back with `bpf_instance_move` |
-| BPF060 | A removed stage still has active instances (error; warning with `allowStageRemoval`) | Keep its `stageId` if renamed; else move the instances first |
+| BPF053 | A stage named "end" — `next: "End"` ends the path instead of naming it (warning) | Give it a `key`, or rename it |
+| BPF060 | A removed stage still has active instances (error; warning with `allowStageRemoval`) — or finished/aborted ones that could be reactivated onto it (warning) | Keep its `stageId` if renamed; else move the instances first |
 | BPF061 | Current process has parts this server does not understand (warning) | They are dropped on write — check `unrecognised` |
 | BPF062 | A stage looks renamed without its id (warning) | Set the `stageId` the fix names |
 | BPF300 | Table does not exist | Check the logical name |
@@ -325,6 +338,7 @@ Example — branch on a yes/no field of a lead into a stage on another table:
 | BPF310 | Referenced workflow/action runs on another table | Use one on the stage's (or primary) table |
 | BPF311 | Flow step on a flow that starts on its own — schedule, row change, e-mail, HTTP (warning) | Use an instant flow |
 | BPF312 | Choice compared with a number that is no option (warning) | Use one of the listed options |
+| BPF313 | Data step on a column users cannot change (warning) | Pick an editable column, unless showing it is the point |
 
 ## Platform facts worth knowing
 

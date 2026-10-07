@@ -1,8 +1,19 @@
 # dataverse-modelling-mcp
 
-A local [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI clients (Claude Code, GitHub Copilot, etc.) first-class access to Dataverse and Power Platform.
+[![NuGet](https://img.shields.io/nuget/v/Dataverse.ModellingMcp.Setup?label=dotnet%20tool)](https://www.nuget.org/packages/Dataverse.ModellingMcp.Setup)
+[![Release](https://img.shields.io/github/v/release/hydr/dataverse-modelling-mcp)](https://github.com/hydr/dataverse-modelling-mcp/releases/latest)
+[![CI](https://github.com/hydr/dataverse-modelling-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hydr/dataverse-modelling-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Covers 112 tools across Classic Workflows, Business Process Flows, Cloud Flows, Tables & Columns, Records, Views, Security Roles, Environment Variables, Solutions/ALM, Solution Pipelines, Web Resources, Publishing, Modern Commands, Classic Ribbons and Auth — all via delegated user auth (no secrets, no service accounts).
+A local [Model Context Protocol](https://modelcontextprotocol.io/) server that lets AI clients (Claude Code, GitHub Copilot, …) **model** Dataverse and the Power Platform — not just read and write records, but build the schema, the views, forms and command bar, the security roles, the processes and the solutions around them.
+
+113 tools across Tables & Columns, Views, Forms, Security Roles, Solutions/ALM, Solution Pipelines, Classic Workflows, Business Process Flows, Cloud Flows, Modern Commands, Classic Ribbons, Web Resources, Environment Variables and Analysis — all via delegated user auth (no secrets, no service accounts), with a [read-only mode and a production guard](#security--safety).
+
+```powershell
+dotnet tool install -g Dataverse.ModellingMcp.Setup   # then: dataverse-modelling-mcp
+```
+
+→ [Quickstart](#quickstart) · [Security & safety](#security--safety) · [Why not Microsoft's Dataverse MCP server?](#why-not-microsofts-dataverse-mcp-server)
 
 ---
 
@@ -13,17 +24,19 @@ Covers 112 tools across Classic Workflows, Business Process Flows, Cloud Flows, 
 | **Classic Workflows** | `workflow_list`, `workflow_get`, `workflow_export_xaml`, `workflow_create`, `workflow_update`, `workflow_set_state`, `workflow_delete`, `workflow_assign`, `workflow_list_activities`, `workflow_get_activity_parameters`, `workflow_explain`, `workflow_get_definition`, `workflow_validate_definition`, `workflow_set_definition`, `workflow_diagnose_activation`, `workflow_restore_xaml`, `workflow_validate` |
 | **Business Process Flows** | `bpf_list`, `bpf_get_definition`, `bpf_validate_definition`, `bpf_find_relationships`, `bpf_create`, `bpf_set_definition`, `bpf_update`, `bpf_set_state`, `bpf_delete`, `bpf_set_order`, `bpf_grant_access`, `bpf_export_xaml`, `bpf_restore_xaml`, `bpf_instance_list`, `bpf_instance_start`, `bpf_instance_move`, `bpf_instance_set_status` |
 | **Cloud Flows** | `flow_list`, `flow_get`, `flow_create`, `flow_set_state`, `flow_get_runs`, `flow_list_versions`, `flow_get_version`, `flow_publish`, `flow_save_draft`, `flow_restore_version`, `flow_get_clientdata`, `flow_patch_action_input`, `flow_save_draft_and_publish`, `fetchxml_validate`, `flow_trigger_run`, `flow_wait_for_run`, `flow_get_run_actions`, `flow_get_action_outputs`, `flow_describe` |
-| **Tables & Columns** | `table_list`, `table_get`, `table_create`, `table_update`, `column_add`, `column_update` |
+| **Tables & Columns** | `table_list`, `table_get`, `table_create`, `table_update`, `column_add`, `column_update`, `column_delete` |
 | **Records** | `record_upsert` |
 | **Views** | `view_list`, `view_get`, `view_create`, `view_update`, `view_add_column`, `view_set_sort` |
+| **Forms** | `form_list`, `form_get`, `form_add_control`, `form_replace_control`, `form_remove_tab` |
 | **Security Roles** | `role_list`, `role_get`, `role_create`, `role_update` |
 | **Environment Variables** | `envvar_list`, `envvar_get`, `envvar_set` |
-| **Solutions / ALM** | `solution_list`, `solution_get`, `solution_create`, `solution_export`, `solution_import`, `solution_add_component`, `solution_remove_component`, `solution_check_layers`, `solution_remove_active_layer` |
+| **Solutions / ALM** | `solution_list`, `solution_get`, `solution_create`, `solution_export`, `solution_import`, `solution_add_component`, `solution_remove_component`, `solution_check_layers`, `solution_remove_active_layer`, `solution_uninstall` |
 | **Solution Pipelines** (read-only) | `pipeline_list`, `pipeline_stages`, `pipeline_environments`, `pipeline_run_status` |
-| **Web Resources** | `webresource_list`, `webresource_get`, `webresource_upsert` |
+| **Web Resources** | `webresource_list`, `webresource_get`, `webresource_usages`, `webresource_upsert` |
 | **Publishing** | `publish_customizations` |
 | **Modern Commands** | `command_list`, `command_get`, `command_create`, `command_update`, `command_delete`, `command_list_component_libraries`, `command_list_icons` |
-| **Classic Ribbons** | `ribbon_get`, `ribbon_add_button`, `ribbon_remove_button` |
+| **Classic Ribbons** | `ribbon_get`, `ribbon_get_merged`, `ribbon_add_button`, `ribbon_remove_button` |
+| **Analysis** | `component_dependencies`, `entity_solution_map` |
 | **Auth** | `auth_relogin` |
 
 Plus `dataverse_submit_feedback` — an **optional** telemetry tool that is inert unless the server operator has configured Application Insights. See [Telemetry](#telemetry) below.
@@ -133,6 +146,43 @@ Two honest limits: the production guard checks the environment type on the first
 the call through (with a warning on stderr) if Dataverse does not reveal the type. And delegated
 rights cut both ways — in an environment where you are System Administrator, so is the AI. A
 dedicated dev environment is still the best guard.
+
+---
+
+## Why not Microsoft's Dataverse MCP server?
+
+Microsoft ships an official [Dataverse MCP server](https://learn.microsoft.com/power-apps/maker/data-platform/data-platform-mcp).
+It is a good product — for a different job. It is built around **data**: search, SQL queries,
+record CRUD, files. This server is built around **modelling**: everything a maker or developer
+does in the solution explorer. The two work side by side.
+
+| | Microsoft Dataverse MCP server | dataverse-modelling-mcp |
+|---|---|---|
+| **Built for** | Working with data from agents | Building and changing the model |
+| **Records & queries** | ✅ `search_data`, `read_query` (SQL), record create/update/delete, file up/download | ➖ only `record_upsert` |
+| **Tables** | ✅ create, update, delete table | ✅ create, update; columns via `column_add` / `_update` / `_delete` |
+| **Views, forms, command bar** | — | ✅ views, form controls, modern commands, classic ribbons |
+| **Security roles** | — | ✅ create, update, privileges |
+| **Solutions & ALM** | —¹ | ✅ create, add/remove components, export/import, layers, pipelines (read) |
+| **Classic workflows, BPFs, cloud flows** | — | ✅ with XAML validation, activation diagnosis, flow versions and run inspection |
+| **Runs** | Hosted by Microsoft in every environment; npm stdio proxy for non-Microsoft clients | Locally on your machine (Claude Code plugin or dotnet tool) |
+| **Setup** | A Power Platform admin enables every non-Copilot-Studio client per environment; tenant consent for the proxy app | Your own app registration (public client); no admin-center switch |
+| **Cost** | Copilot Credits when used by agents outside Copilot Studio (since 15 Dec 2025; exemptions for Dynamics 365 data with D365 Premium or M365 Copilot licences) | Free and open source (MIT); normal Dataverse API limits apply |
+| **Support** | Microsoft, generally available | Community, best effort |
+| **Safety rails** | Delegated user rights; delete tools ask for explicit approval | Delegated user rights; annotations on every tool; read-only mode; production guard |
+
+¹ Microsoft's separate [Dataverse skills plugin](https://github.com/microsoft/Dataverse-skills) covers solution
+handling through the PAC CLI.
+
+**Rule of thumb:** use Microsoft's server when an agent should work *with* the data in Dataverse
+— in production, supported by Microsoft. Use this one when an agent should *build* in a dev
+environment: tables, columns, views, roles, processes, solutions. Then promote the solution like
+any other.
+
+*Comparison as of October 2026, based on Microsoft Learn ([tools and billing](https://learn.microsoft.com/power-apps/maker/data-platform/data-platform-mcp),
+[non-Microsoft clients](https://learn.microsoft.com/power-apps/maker/data-platform/data-platform-mcp-other-clients),
+[configuration](https://learn.microsoft.com/power-apps/maker/data-platform/data-platform-mcp-disable)). Microsoft's tool set has
+changed before — check the links for the current state, and open an issue if this table is out of date.*
 
 ---
 

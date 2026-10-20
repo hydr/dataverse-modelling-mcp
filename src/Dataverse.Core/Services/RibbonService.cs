@@ -1328,14 +1328,28 @@ public sealed class RibbonService
     }
 
     /// <summary>
-    /// Replace the <c>&lt;RibbonDiffXml&gt;</c> element of one <c>&lt;Entity&gt;</c> and drop its
-    /// <c>&lt;EntityInfo&gt;</c> block.
+    /// Replace the <c>&lt;RibbonDiffXml&gt;</c> element of one <c>&lt;Entity&gt;</c> and drop everything
+    /// else the table-shell export carries, so the import writes the ribbon and nothing more.
     /// <para>
-    /// Removing <c>&lt;EntityInfo&gt;</c> is not an optimisation, it is a correctness fix: the export
-    /// carries the table's complete property block (ownership, auditing, duplicate detection, mobile
-    /// visibility, …), and leaving it in means every ribbon import writes all of those back. An import
-    /// carrying only <c>&lt;Name&gt;</c> plus <c>&lt;RibbonDiffXml&gt;</c> works and changes nothing else
-    /// — verified against a live org.
+    /// This is not an optimisation, it is a correctness fix. An unmanaged export of a table added without
+    /// subcomponents still carries three blocks, and each one is written back as an unmanaged layer by the
+    /// import:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>&lt;EntityInfo&gt;</c> — the table's complete property block (ownership, auditing,
+    /// duplicate detection, mobile visibility, …).</item>
+    /// <item><c>&lt;CustomControlDefaultConfigs&gt;</c> — the table's default grid and control
+    /// configuration.</item>
+    /// <item>The top-level <c>&lt;EntityMaps&gt;</c> — every attribute mapping that targets the table
+    /// (e.g. order → invoice). It is emptied rather than removed; an empty <c>&lt;EntityMaps /&gt;</c>
+    /// deletes no existing mapping — verified against a live org.</item>
+    /// </list>
+    /// <para>
+    /// On a development environment, where everything is unmanaged anyway, leaving them in looks
+    /// harmless. On an environment that receives managed solutions it creates unmanaged layers over the
+    /// table's properties and mappings, which then silently win over every later managed import. An
+    /// import carrying only <c>&lt;Name&gt;</c> plus <c>&lt;RibbonDiffXml&gt;</c> works and changes nothing
+    /// else — verified against a live org.
     /// </para>
     /// </summary>
     public static string PatchCustomizationsXml(
@@ -1355,6 +1369,10 @@ public sealed class RibbonService
         if (stripEntityInfo)
         {
             entity.Element("EntityInfo")?.Remove();
+            entity.Element("CustomControlDefaultConfigs")?.Remove();
+
+            var entityMaps = doc.Root?.Element("EntityMaps");
+            entityMaps?.RemoveNodes();
         }
 
         var replacement = XElement.Parse(ribbonDiffXml);

@@ -292,6 +292,8 @@ public sealed class RibbonTools
                  "drawn. The language is taken from the captions the table already carries (falling back " +
                  "to the org's base language), and the chosen code comes back as captionLanguageCode: " +
                  "a caption under a language the org does not use renders as nothing. " +
+                 "'verified' in the result means STORED: the ribbondiff row exists after the publish. It " +
+                 "does not prove that clients receive the button — ribbon_diagnose checks that. " +
                  SilentFailureNote + " " + ChoiceNote)]
     public static async Task<string> RibbonAddButton(
         RibbonService svc,

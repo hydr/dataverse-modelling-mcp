@@ -7,7 +7,7 @@
 
 A local [Model Context Protocol](https://modelcontextprotocol.io/) server that lets AI clients (Claude Code, GitHub Copilot, …) **model** Dataverse and the Power Platform — not just read and write records, but build the schema, the views, forms and command bar, the security roles, the processes and the solutions around them.
 
-113 tools across Tables & Columns, Views, Forms, Security Roles, Solutions/ALM, Solution Pipelines, Classic Workflows, Business Process Flows, Cloud Flows, Modern Commands, Classic Ribbons, Web Resources, Environment Variables and Analysis — all via delegated user auth (no secrets, no service accounts), with a [read-only mode, a production guard and dry runs](#security--safety).
+117 tools across Tables & Columns, Views, Forms, Security Roles, Solutions/ALM, Solution Pipelines, Classic Workflows, Business Process Flows, Cloud Flows, Modern Commands, Classic Ribbons, Web Resources, Environment Variables and Analysis — all via delegated user auth (no secrets, no service accounts), with a [read-only mode, a production guard and dry runs](#security--safety).
 
 ```powershell
 dotnet tool install -g Dataverse.ModellingMcp.Setup   # then: dataverse-modelling-mcp
@@ -35,7 +35,7 @@ dotnet tool install -g Dataverse.ModellingMcp.Setup   # then: dataverse-modellin
 | **Web Resources** | `webresource_list`, `webresource_get`, `webresource_usages`, `webresource_upsert` |
 | **Publishing** | `publish_customizations` |
 | **Modern Commands** | `command_list`, `command_get`, `command_create`, `command_update`, `command_delete`, `command_list_component_libraries`, `command_list_icons` |
-| **Classic Ribbons** | `ribbon_get`, `ribbon_get_merged`, `ribbon_add_button`, `ribbon_remove_button` |
+| **Classic Ribbons** | `ribbon_get`, `ribbon_get_merged`, `ribbon_add_button`, `ribbon_remove_button`, `ribbon_diagnose`, `ribbon_scan_unmanaged_layers`, `ribbon_sync_unmanaged_layer`, `ribbon_refresh_client_metadata` |
 | **Analysis** | `component_dependencies`, `entity_solution_map` |
 | **Auth** | `auth_relogin` |
 

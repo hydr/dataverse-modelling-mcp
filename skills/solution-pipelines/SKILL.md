@@ -28,6 +28,7 @@ Expert reference for deploying Dataverse solutions through Power Platform Pipeli
 | List stages of a pipeline | `pipeline_stages(pipelineHostOrgUrl, pipelineId)` |
 | Map Power-Platform env GUID → pipeline-internal `deploymentenvironmentid` | `pipeline_environments(pipelineHostOrgUrl)` |
 | Poll a run's status | `pipeline_run_status(pipelineHostOrgUrl, stageRunId)` |
+| Check, on the target, that a deployed ribbon change can take effect — before and after the run | `ribbon_scan_unmanaged_layers`, then `ribbon_diagnose(table)` (connected to the target) |
 | **Commit a deploy** | *No tool* — removed (see below). Use `solution_export` + `solution_import`, or the Maker UI / PAC CLI. |
 
 > **Note:** the deploy tools `solution_deploy_pipeline`, `pipeline_auth_init` and
@@ -214,6 +215,20 @@ API-version inconsistency (v9.2 for read, v9.0 for the run-creation + deploy act
 - **`DeployPackageAsync` is unbound**, despite naming. Don't try `/deploymentstageruns({id})/DeployPackageAsync` — fails. It takes `StageRunId` in the body.
 - **`api-version=2016-11-01` is wrong**. Pipelines use Dataverse Web API (`/api/data/v9.0` or `/api/data/v9.2`), not the PA Flow API.
 - **outputsLink-style retrieval doesn't apply**. Stage-run details come back directly on GET — no SAS-signed URL juggling like flow run actions need.
+- **A green run does not mean a changed ribbon button reaches the users.** Two things can stop it, and
+  neither shows in the run:
+  - An unmanaged ribbon layer on the target overrides the managed deployment. It cannot be removed,
+    only overwritten (`ribbon_sync_unmanaged_layer`).
+  - The server keeps delivering the old client ribbon until the table's metadata changes
+    (`ribbon_refresh_client_metadata`).
+
+  After deploying a ribbon change, run `ribbon_diagnose` for the table on the target. The command-bar-buttons skill
+  has the details.
+- **`0x80071151 "Cannot start another [Import]"`** while Microsoft updates its own `msdyn_*` solutions
+  on the environment — a chain that can run for ten minutes and more. Every import and publish is
+  refused meanwhile; wait and retry. To see what runs, read `msdyn_solutionhistories` with
+  `$orderby=msdyn_starttime desc&$top=10`: a filter on `msdyn_starttime` is silently ignored, and
+  thousands of old rows have no `msdyn_endtime`, so "no end time" is no sign of a running operation.
 
 ## Related memories
 

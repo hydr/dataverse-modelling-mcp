@@ -232,14 +232,32 @@ Checks the solution layers for a component.
 
 ### `solution_remove_active_layer`
 
-Removes the active customization layer for a component.
+Removes the unmanaged (active) layer of one component, so that the managed layers below it apply
+again. Every unmanaged change on that component is discarded — check `solution_check_layers` first.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `componentId` | GUID string | Yes | Component GUID |
-| `componentType` | int | Yes | Component type code |
+| `componentId` | GUID string | Yes | Component GUID (for a table: its MetadataId) |
+| `componentType` | int | Yes | Component type code, e.g. `1` = Entity, `60` = SystemForm, `61` = WebResource |
+| `dryRun` | bool | No | Record the call instead of sending it |
 
-**Example prompt:** "Remove the active layer for component abc123"
+`RemoveActiveCustomizations` is a Web API **function**, not an action, and it takes the component type
+by **name**:
+
+```
+GET /api/data/v9.2/RemoveActiveCustomizations(SolutionComponentName='Entity',ComponentId=<guid>)
+```
+
+A POST answers 404 "No HTTP resource was found" — which is what this tool sent until 1.26.0. The
+result is `{ "Result": true }`; publish the component afterwards.
+
+**Not for ribbons.** Dataverse refuses `RibbonCustomization` and its parts (command, rule, diff,
+context group, tab-to-command map) with `0x8004f059 … not supported for components of type
+RibbonCustomization`, and the tool rejects them before sending anything. Removing a table's own active
+layer (`componentType = 1`) returns `true` but leaves its unmanaged ribbon rows in place. An unmanaged
+ribbon layer can only be overwritten: [`ribbon_sync_unmanaged_layer`](buttons-classic-vs-modern.md#when-the-change-does-not-reach-the-users).
+
+**Example prompt:** "Remove the unmanaged layer of the sample_widget main form"
 
 ---
 

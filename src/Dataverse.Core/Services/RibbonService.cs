@@ -388,6 +388,80 @@ public sealed class RibbonService
             preserve: existing,
             languageCode: captionLanguage);
 
+        var outcome = await ImportRibbonDiffXmlAsync(
+            orgUrl, tableLogicalName, ribbonDiffXml, solutionUniqueName, publisherUniqueName,
+            stripEntityInfo, publish, importTimeoutSeconds, ct);
+
+        // The ribbondiff row only materialises after the publish — verify against it, never against
+        // the import result. The import job happily reports
+        // <entityRibbon … result="success"> for a diff that was never written.
+        var verified = publish && await DiffExistsAsync(orgUrl, tableLogicalName, customActionId, ct);
+
+        // Collateral check: confirm the round-trip did not take the other buttons with it.
+        var lost = new List<string>();
+        if (publish)
+        {
+            foreach (var diffId in preserved)
+            {
+                if (!await DiffExistsAsync(orgUrl, tableLogicalName, diffId, ct))
+                {
+                    lost.Add(diffId);
+                }
+            }
+        }
+
+        return new RibbonAddButtonResult(
+            Success: verified || !publish,
+            TableLogicalName: tableLogicalName,
+            ButtonId: buttonId,
+            CustomActionId: customActionId,
+            CommandId: commandId,
+            Location: location,
+            RibbonDiffXml: ribbonDiffXml,
+            TemporarySolutionUniqueName: outcome.SolutionUniqueName,
+            TemporarySolutionDeleted: outcome.SolutionDeleted,
+            Published: publish,
+            Verified: verified,
+            ImportComponentErrors: outcome.ComponentErrors,
+            Warning: BuildAddWarning(
+                publish, verified, customActionId, tableLogicalName, lost,
+                captionLanguage, languageSource),
+            PreservedCustomActionIds: preserved,
+            LostCustomActionIds: lost,
+            CaptionLanguageCode: captionLanguage,
+            CaptionLanguageSource: languageSource);
+    }
+
+    /// <summary>Result of <see cref="ImportRibbonDiffXmlAsync"/>.</summary>
+    public sealed record RibbonImportOutcome(
+        string SolutionUniqueName,
+        bool SolutionDeleted,
+        IReadOnlyList<string> ComponentErrors);
+
+    /// <summary>
+    /// Write a complete <c>&lt;RibbonDiffXml&gt;</c> into the table's unmanaged layer through a solution
+    /// round-trip: create a throwaway unmanaged solution, add the table <b>without subcomponents</b>,
+    /// export it, swap in the ribbon (stripping everything else the table shell carries — see
+    /// <see cref="PatchCustomizationsXml"/>), import with <c>overwriteUnmanaged</c>, publish the table
+    /// and delete the throwaway solution.
+    /// </summary>
+    /// <remarks>
+    /// The section semantics apply to <paramref name="ribbonDiffXml"/> as a whole: a non-empty section
+    /// replaces the table's unmanaged collection, an empty one leaves it alone. Callers must therefore
+    /// pass every node that is to survive. Deleting the throwaway solution does NOT undo the import —
+    /// the diff now lives in the Active layer.
+    /// </remarks>
+    public async Task<RibbonImportOutcome> ImportRibbonDiffXmlAsync(
+        string orgUrl,
+        string tableLogicalName,
+        string ribbonDiffXml,
+        string? solutionUniqueName = null,
+        string? publisherUniqueName = null,
+        bool stripEntityInfo = true,
+        bool publish = true,
+        int importTimeoutSeconds = 900,
+        CancellationToken ct = default)
+    {
         var reuseSolution = !string.IsNullOrWhiteSpace(solutionUniqueName);
         var tempSolution = solutionUniqueName
                            ?? $"dvmcpribbon{Guid.NewGuid().ToString("N")[..8]}";
@@ -424,12 +498,7 @@ public sealed class RibbonService
             var patched = ReplaceRibbonDiffXml(
                 Convert.FromBase64String(export.Base64Content), tableLogicalName, ribbonDiffXml, stripEntityInfo);
 
-            var import = await _solutions.ImportAsync(
-                orgUrl,
-                zipBase64: Convert.ToBase64String(patched),
-                overwriteUnmanaged: true,
-                timeoutSeconds: importTimeoutSeconds,
-                ct: ct);
+            var import = await ImportWithRetryAsync(orgUrl, Convert.ToBase64String(patched), importTimeoutSeconds, ct);
 
             if (!import.Success)
             {
@@ -445,51 +514,12 @@ public sealed class RibbonService
                 await PublishWithRetryAsync(orgUrl, tableLogicalName, ct);
             }
 
-            // The ribbondiff row only materialises after the publish — verify against it, never against
-            // the import result. The import job happily reports
-            // <entityRibbon … result="success"> for a diff that was never written.
-            var verified = publish && await DiffExistsAsync(orgUrl, tableLogicalName, customActionId, ct);
-
-            // Collateral check: confirm the round-trip did not take the other buttons with it.
-            var lost = new List<string>();
-            if (publish)
-            {
-                foreach (var diffId in preserved)
-                {
-                    if (!await DiffExistsAsync(orgUrl, tableLogicalName, diffId, ct))
-                    {
-                        lost.Add(diffId);
-                    }
-                }
-            }
-
             if (!reuseSolution)
             {
-                // Deleting the temporary solution does NOT undo the imported ribbon diff — the diff now
-                // lives in the Active layer. Use RemoveButtonAsync for that.
                 solutionDeleted = await TryDeleteSolutionAsync(orgUrl, tempSolution, ct);
             }
 
-            return new RibbonAddButtonResult(
-                Success: verified || !publish,
-                TableLogicalName: tableLogicalName,
-                ButtonId: buttonId,
-                CustomActionId: customActionId,
-                CommandId: commandId,
-                Location: location,
-                RibbonDiffXml: ribbonDiffXml,
-                TemporarySolutionUniqueName: tempSolution,
-                TemporarySolutionDeleted: solutionDeleted,
-                Published: publish,
-                Verified: verified,
-                ImportComponentErrors: import.ComponentErrors,
-                Warning: BuildAddWarning(
-                    publish, verified, customActionId, tableLogicalName, lost,
-                    captionLanguage, languageSource),
-                PreservedCustomActionIds: preserved,
-                LostCustomActionIds: lost,
-                CaptionLanguageCode: captionLanguage,
-                CaptionLanguageSource: languageSource);
+            return new RibbonImportOutcome(tempSolution, solutionDeleted, import.ComponentErrors);
         }
         catch
         {
@@ -499,6 +529,45 @@ public sealed class RibbonService
             }
 
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Import, retrying while another solution operation holds the environment.
+    /// <para>
+    /// While Microsoft updates its own solutions (a chain of <c>msdyn_*</c> imports that can run for
+    /// ten minutes and more), every import and publish is refused with <c>0x80071151 — "Cannot start
+    /// another [Import] because there is a previous [Import] running at this moment"</c>. That is not a
+    /// reason to give up; waiting is.
+    /// </para>
+    /// </summary>
+    private async Task<SolutionImportResult> ImportWithRetryAsync(
+        string orgUrl,
+        string zipBase64,
+        int importTimeoutSeconds,
+        CancellationToken ct)
+    {
+        const int maxAttempts = 10;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await _solutions.ImportAsync(
+                    orgUrl,
+                    zipBase64: zipBase64,
+                    overwriteUnmanaged: true,
+                    timeoutSeconds: importTimeoutSeconds,
+                    ct: ct);
+            }
+            catch (HttpRequestException ex) when (attempt < maxAttempts && IsTransientPublishFailure(ex))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Min(120, 10 * Math.Pow(2, attempt - 1)));
+                _logger.LogInformation(
+                    "Import into {OrgUrl} refused transiently (attempt {Attempt}/{Max}); retrying in {Delay}s. {Message}",
+                    orgUrl, attempt, maxAttempts, delay.TotalSeconds, ex.Message);
+                await Task.Delay(delay, ct);
+            }
         }
     }
 
@@ -701,7 +770,7 @@ public sealed class RibbonService
     /// half-applied ribbon behind.
     /// </para>
     /// </summary>
-    private async Task PublishWithRetryAsync(
+    public async Task PublishWithRetryAsync(
         string orgUrl,
         string tableLogicalName,
         CancellationToken ct)
@@ -1463,9 +1532,12 @@ public sealed class RibbonService
         var underscore = tableLogicalName.IndexOf('_');
         if (underscore <= 0)
         {
-            throw new InvalidOperationException(
-                $"Cannot infer a publisher for the out-of-the-box table '{tableLogicalName}'. " +
-                "Pass publisherUniqueName explicitly.");
+            // An out-of-the-box table has no customization prefix. The throwaway solution only needs
+            // some unmanaged publisher, and the one owning the Default solution exists everywhere.
+            return await ResolveDefaultPublisherAsync(orgUrl, ct)
+                   ?? throw new InvalidOperationException(
+                       $"Cannot infer a publisher for the out-of-the-box table '{tableLogicalName}'. " +
+                       "Pass publisherUniqueName explicitly.");
         }
 
         var prefix = tableLogicalName[..underscore];
@@ -1486,6 +1558,28 @@ public sealed class RibbonService
 
         throw new InvalidOperationException(
             $"No publisher with customization prefix '{prefix}' exists. Pass publisherUniqueName explicitly.");
+    }
+
+    /// <summary>Unique name of the publisher that owns the <c>Default</c> solution, or null.</summary>
+    private async Task<string?> ResolveDefaultPublisherAsync(string orgUrl, CancellationToken ct)
+    {
+        var raw = await _client.GetRawAsync(
+            orgUrl,
+            "api/data/v9.2/solutions?$filter=uniquename eq 'Default'&$select=solutionid" +
+            "&$expand=publisherid($select=uniquename)",
+            ct: ct);
+
+        foreach (var item in EnumerateValue(raw))
+        {
+            if (item.TryGetProperty("publisherid", out var publisher)
+                && publisher.ValueKind == JsonValueKind.Object
+                && publisher.GetStringOrNull("uniquename") is { Length: > 0 } name)
+            {
+                return name;
+            }
+        }
+
+        return null;
     }
 
     private async Task<bool> TryDeleteSolutionAsync(string orgUrl, string uniqueName, CancellationToken ct)

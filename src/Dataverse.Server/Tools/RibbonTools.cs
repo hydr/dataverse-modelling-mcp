@@ -37,7 +37,148 @@ public sealed class RibbonTools
         "another table can differ in exactly the property that is broken. Do not grep for the label you " +
         "expect, because a mislabelled button is exactly what you would then miss.";
 
+    private const string DeliveryNote =
+        "A ribbon lives in three places and each can be wrong on its own: STORED (one row per node per " +
+        "solution layer; the unmanaged 'Active' layer always wins), COMPILED (RetrieveEntityRibbon, follows " +
+        "the stored rows after a publish) and DELIVERED (GetClientMetadata, what an app's client receives; " +
+        "rebuilt when the table's metadata version changes — a ribbon-only import plus publish does not " +
+        "always do that). A successful import or publish proves none of the three.";
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    [McpServerTool(Name = "ribbon_diagnose", ReadOnly = true)]
+    [Description("Find out why a classic ribbon button does not do what was deployed. Compares each command " +
+                 "of a table across the stored solution layers, the compiled ribbon and what each app's " +
+                 "client actually receives (form command bar), and names the first level that is wrong " +
+                 "with the tool that repairs it: 'stored' (an unmanaged layer overrides every managed copy " +
+                 "→ ribbon_sync_unmanaged_layer), 'compiled' (→ publish the table), 'delivered' (the client " +
+                 "still gets an older command → ribbon_refresh_client_metadata), 'unused' (no button places " +
+                 "the command) or 'ok'. Use it whenever users report the old behaviour after a deployment, " +
+                 "and after every ribbon change on an environment that receives managed solutions. " +
+                 DeliveryNote)]
+    public static async Task<string> RibbonDiagnose(
+        RibbonDeliveryService svc,
+        ConfigProvider config,
+        [Description("Logical name of the table, e.g. 'invoice'")] string tableLogicalName,
+        [Description("Comma-separated command ids to check, e.g. 'sample.invoice.Send.Command'. Default: every stored command of the table.")] string? commandIds = null,
+        [Description("Only check delivery for this app module id. Default: every app that contains the table.")] string? appModuleId = null,
+        [Description("Read what the clients receive (default true). One GetClientMetadata call per app, typically 5–15 MB each.")] bool checkDelivered = true,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            Guid? app = null;
+            if (!string.IsNullOrWhiteSpace(appModuleId))
+            {
+                if (!Guid.TryParse(appModuleId, out var parsed))
+                    return JsonSerializer.Serialize(new { error = "appModuleId is not a GUID." });
+                app = parsed;
+            }
+
+            var ids = string.IsNullOrWhiteSpace(commandIds)
+                ? null
+                : commandIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var result = await svc.DiagnoseAsync(env.OrgUrl, tableLogicalName, ids, app, checkDelivered, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "ribbon_scan_unmanaged_layers", ReadOnly = true)]
+    [Description("List every table of the environment whose ribbon carries an unmanaged ('Active') layer, " +
+                 "and which of its commands differ from their managed copies. A managed deployment cannot " +
+                 "change any command listed under commandsOverridingManaged — run this on a target " +
+                 "environment before and after deploying a ribbon change. Unmanaged ribbon layers on a " +
+                 "target come from editing ribbons there directly (e.g. with the Ribbon Workbench) and can " +
+                 "only be overwritten, never removed. " + DeliveryNote)]
+    public static async Task<string> RibbonScanUnmanagedLayers(
+        RibbonDeliveryService svc,
+        ConfigProvider config,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.ScanUnmanagedLayersAsync(env.OrgUrl, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "ribbon_sync_unmanaged_layer", ReadOnly = false, Destructive = false)]
+    [Description("Overwrite a table's unmanaged ribbon layer with the copy a (managed) solution holds, so the " +
+                 "unmanaged layer stops overriding deployments. This is the ONLY repair for a stale unmanaged " +
+                 "ribbon: RemoveActiveCustomizations refuses RibbonCustomization (0x8004f059), and removing " +
+                 "the table's own active layer leaves the ribbon rows in place. Runs the solution round-trip " +
+                 "of ribbon_add_button (throwaway solution, table without subcomponents, ribbon-only import " +
+                 "with overwriteUnmanaged — table properties, grid configuration and entity maps are " +
+                 "stripped), publishes the table and verifies the unmanaged rows against the source. Nodes " +
+                 "that exist only in the unmanaged layer are kept by default, because a non-empty section " +
+                 "replaces the whole collection. dryRun defaults to TRUE and returns the per-node plan " +
+                 "(add/update/unchanged/keep) and the RibbonDiffXml it would import. Afterwards check " +
+                 "delivery with ribbon_diagnose; the client may still receive the old commands until " +
+                 "ribbon_refresh_client_metadata has run.")]
+    public static async Task<string> RibbonSyncUnmanagedLayer(
+        RibbonDeliveryService svc,
+        ConfigProvider config,
+        [Description("Logical name of the table, e.g. 'invoice'")] string tableLogicalName,
+        [Description("Unique name of the solution whose ribbon copy is the intended one — usually the managed " +
+                     "solution the deployment shipped. ribbon_diagnose lists the layers per command.")] string sourceSolution,
+        [Description("true (default): compute the plan, import nothing. false: import, publish and verify.")] bool dryRun = true,
+        [Description("Also drop nodes that exist only in the unmanaged layer (default false: keep them)")] bool dropUnmanagedOnly = false,
+        [Description("Publisher for the throwaway solution; defaults to the table's prefix publisher, or the Default solution's publisher for out-of-the-box tables")] string? publisherUniqueName = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.SyncUnmanagedLayerAsync(
+                env.OrgUrl, tableLogicalName, sourceSolution, dryRun, dropUnmanagedOnly, publisherUniqueName, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
+
+    [McpServerTool(Name = "ribbon_refresh_client_metadata", ReadOnly = false, Destructive = false)]
+    [Description("Make the server rebuild the ribbon metadata its clients receive for a table, when " +
+                 "ribbon_diagnose reports 'delivered': the database and the compiled ribbon are right, yet the " +
+                 "app keeps running the old command. Publishing the ribbon, the table, the app or all " +
+                 "customizations does NOT reliably fix that; changing the table's metadata version does. " +
+                 "This tool toggles a trailing period on one description label of the table, publishes it, " +
+                 "and restores the table: a table without an unmanaged layer gets the new layer removed again " +
+                 "(RemoveActiveCustomizations), a table that already had one gets the original label written " +
+                 "back so that layer stays as it was. Then it re-runs ribbon_diagnose. Users have to reload " +
+                 "the app afterwards.")]
+    public static async Task<string> RibbonRefreshClientMetadata(
+        RibbonDeliveryService svc,
+        ConfigProvider config,
+        [Description("Logical name of the table, e.g. 'invoice'")] string tableLogicalName,
+        [Description("Run ribbon_diagnose (with delivery) afterwards (default true)")] bool verify = true,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var env = config.GetActiveEnvironment();
+            var result = await svc.RefreshClientMetadataAsync(env.OrgUrl, tableLogicalName, verify, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message, details = ex.GetType().Name });
+        }
+    }
 
     [McpServerTool(Name = "ribbon_get", ReadOnly = true)]
     [Description("Read a table's classic ribbon DIFFERENCE — the customisations this org added, not the " +

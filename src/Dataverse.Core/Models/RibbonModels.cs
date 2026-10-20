@@ -124,6 +124,105 @@ public sealed record RibbonRemoveButtonResult(
     bool Verified,
     string? Warning);
 
+// -------------------------------------------------------------------------------------------------
+// Delivery: stored → compiled → delivered
+// -------------------------------------------------------------------------------------------------
+
+/// <summary>
+/// What a command does, reduced to what can be compared across the three places a ribbon lives:
+/// the stored rows (XML), the compiled ribbon (XML) and the client metadata (JSON). Each entry is
+/// <c>js:&lt;FunctionName&gt;@&lt;Library&gt;</c> or <c>url:&lt;Address&gt;</c>, in action order.
+/// </summary>
+public sealed record RibbonActionSignature(IReadOnlyList<string> Actions)
+{
+    public static readonly RibbonActionSignature Empty = new(Array.Empty<string>());
+
+    public bool SameAs(RibbonActionSignature? other) =>
+        other is not null && Actions.SequenceEqual(other.Actions, StringComparer.OrdinalIgnoreCase);
+
+    public override string ToString() => Actions.Count == 0 ? "(no actions)" : string.Join(" | ", Actions);
+}
+
+/// <summary>One solution layer's copy of a ribbon command.</summary>
+public sealed record RibbonCommandLayer(
+    string SolutionUniqueName,
+    bool IsManaged,
+    string Signature);
+
+/// <summary>What one app's client receives for a command (form command bar).</summary>
+public sealed record RibbonDeliveredCommand(
+    Guid AppModuleId,
+    string? AppModuleName,
+    Guid FormId,
+    string Context,
+    long? RibbonVersionNumber,
+    string? Signature,
+    bool MatchesCompiled);
+
+/// <summary>Diagnosis of one command across the three levels.</summary>
+public sealed record RibbonCommandDiagnosis(
+    string CommandId,
+    IReadOnlyList<RibbonCommandLayer> StoredLayers,
+    /// <summary>The unmanaged copy differs from every managed copy — the managed ones can never win.</summary>
+    bool UnmanagedOverridesManaged,
+    string? CompiledSignature,
+    bool CompiledMatchesStored,
+    IReadOnlyList<RibbonDeliveredCommand> Delivered,
+    /// <summary><c>ok</c>, or the first failing level: <c>stored</c>, <c>compiled</c>, <c>delivered</c>.</summary>
+    string Verdict,
+    string? Repair);
+
+public sealed record RibbonDiagnosisResult(
+    string OrgUrl,
+    string TableLogicalName,
+    IReadOnlyList<RibbonCommandDiagnosis> Commands,
+    bool DeliveredChecked,
+    IReadOnlyList<string> Notes,
+    string Summary);
+
+/// <summary>One table with an unmanaged ribbon layer, from the environment-wide scan.</summary>
+public sealed record RibbonUnmanagedLayerTable(
+    string TableLogicalName,
+    int UnmanagedCommandCount,
+    IReadOnlyList<string> CommandsOverridingManaged,
+    IReadOnlyList<string> UnmanagedOnlyCommands);
+
+public sealed record RibbonUnmanagedLayerScanResult(
+    string OrgUrl,
+    int TablesWithUnmanagedRibbon,
+    IReadOnlyList<RibbonUnmanagedLayerTable> TablesWithUnmanagedCommands,
+    string Summary);
+
+/// <summary>One node of the ribbon diff and what a sync would do with it.</summary>
+public sealed record RibbonSyncChange(
+    string Kind,
+    string Id,
+    /// <summary><c>add</c>, <c>update</c>, <c>keep</c> (unmanaged-only, preserved) or <c>unchanged</c>.</summary>
+    string Action);
+
+public sealed record RibbonSyncResult(
+    string OrgUrl,
+    string TableLogicalName,
+    string SourceSolutionUniqueName,
+    bool DryRun,
+    IReadOnlyList<RibbonSyncChange> Changes,
+    string RibbonDiffXml,
+    bool Imported,
+    bool Verified,
+    IReadOnlyList<string> StillDifferent,
+    string? TemporarySolutionUniqueName,
+    string Summary);
+
+public sealed record RibbonRefreshResult(
+    string OrgUrl,
+    string TableLogicalName,
+    /// <summary>Whether the table already had an unmanaged layer before the bump.</summary>
+    bool HadUnmanagedTableLayer,
+    string RestoredBy,
+    bool DescriptionRestored,
+    RibbonDiagnosisResult? DiagnosisAfter,
+    string Summary);
+
 /// <summary>
 /// Parsed <c>parameters</c> entry for a classic <c>&lt;JavaScriptFunction&gt;</c>. Classic ribbons use
 /// element names rather than the integer codes the modern <c>appaction</c> table stores:

@@ -969,20 +969,54 @@ public sealed class SolutionService
             "'WebResource'), and this code maps to no known name in this environment.");
     }
 
-    public async Task RemoveActiveLayerAsync(
+    /// <summary>
+    /// Component types whose unmanaged layer <c>RemoveActiveCustomizations</c> refuses. The ribbon is
+    /// stored as one <c>RibbonCustomization</c> row per solution plus its diff, command and rule rows;
+    /// the platform answers <c>0x8004f059 … not supported for components of type
+    /// RibbonCustomization</c> for all of them, and removing the table's own active layer leaves them
+    /// untouched. The only repair is to overwrite the unmanaged ribbon layer.
+    /// </summary>
+    public static readonly IReadOnlySet<int> RibbonComponentTypes = new HashSet<int> { 48, 49, 50, 52, 53, 55 };
+
+    /// <summary>
+    /// Remove the unmanaged (active) layer of one component, so that the managed layers below it apply
+    /// again.
+    /// </summary>
+    /// <remarks>
+    /// <c>RemoveActiveCustomizations</c> is a Web API <b>function</b>, not an action: a POST answers
+    /// 404 "No HTTP resource was found". It takes the component type by <b>name</b>
+    /// (<c>SolutionComponentName='Entity'</c>), not by code.
+    /// </remarks>
+    /// <returns>The <c>Result</c> the platform reports; <c>true</c> in a dry run.</returns>
+    public async Task<bool> RemoveActiveLayerAsync(
         string orgUrl,
         Guid componentId,
         int componentType,
         CancellationToken ct = default)
     {
-        var parameters = new
+        if (RibbonComponentTypes.Contains(componentType))
         {
-            ComponentId = componentId,
-            ComponentType = componentType
-        };
+            throw new InvalidOperationException(
+                $"RemoveActiveCustomizations does not support component type {componentType} " +
+                $"({MapComponentType(componentType)}) — Dataverse answers 0x8004f059. An unmanaged ribbon " +
+                "layer cannot be removed, only overwritten: use ribbon_sync_unmanaged_layer.");
+        }
 
-        await _client.ExecuteActionAsync(orgUrl, "RemoveActiveCustomizations", parameters, ct);
+        var componentName = await ResolveComponentTypeNameAsync(orgUrl, componentType, ct);
+        var raw = await _client.ExecuteWriteFunctionAsync(
+            orgUrl, BuildRemoveActiveCustomizationsPath(componentName, componentId), ct);
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return true;
+
+        using var doc = JsonDocument.Parse(raw);
+        return doc.RootElement.TryGetProperty("Result", out var result) && result.ValueKind == JsonValueKind.True;
     }
+
+    /// <summary>The function call for <see cref="RemoveActiveLayerAsync"/>.</summary>
+    public static string BuildRemoveActiveCustomizationsPath(string solutionComponentName, Guid componentId) =>
+        $"RemoveActiveCustomizations(SolutionComponentName='{solutionComponentName.Replace("'", "''")}'," +
+        $"ComponentId={componentId:D})";
 
     /// <summary>
     /// Triggers a Power Platform Pipeline deployment end-to-end. Mirrors the 3 calls the Maker UI

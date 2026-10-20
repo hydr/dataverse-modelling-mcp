@@ -314,6 +314,41 @@ public sealed class DataverseHttpClient
     }
 
     /// <summary>
+    /// Call a Web API <b>function</b> that changes the environment, e.g.
+    /// <c>RemoveActiveCustomizations(SolutionComponentName='Entity',ComponentId=…)</c>, and return the
+    /// raw response body.
+    /// </summary>
+    /// <remarks>
+    /// Functions are GETs, and a dry run lets every GET through so that reads stay real. A function
+    /// with a side effect would therefore run for real inside a dry run. This method records it as a
+    /// planned request instead and answers with an empty string.
+    /// </remarks>
+    public async Task<string> ExecuteWriteFunctionAsync(
+        string orgUrl,
+        string functionPath,
+        CancellationToken ct = default)
+    {
+        var relativeUrl = functionPath.StartsWith("api/", StringComparison.OrdinalIgnoreCase)
+            ? functionPath
+            : $"api/data/v9.2/{functionPath}";
+        using var request = await BuildRequestAsync(HttpMethod.Get, orgUrl, relativeUrl, body: null, ct);
+
+        if (DryRun.IsActive)
+        {
+            DryRun.Record(new PlannedRequest(
+                request.Method.Method,
+                request.RequestUri!.ToString(),
+                new Dictionary<string, string>(),
+                Body: null));
+            return string.Empty;
+        }
+
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>
     /// Sends the request — or, inside a <see cref="DryRun"/> scope, records a request that would change
     /// the environment and answers it with an empty 204 instead.
     /// </summary>

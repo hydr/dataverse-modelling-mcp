@@ -349,7 +349,147 @@ So:
 
 ---
 
+## When the change does not reach the users
+
+A different failure from everything above: the button exists and renders, the change was deployed
+and published, and the users still run the **old** command. Nothing reports an error. This was
+observed on a production environment, where it took three separate repairs before a repointed button
+reached the users.
+
+A ribbon lives in three places, and each can be wrong while the others are right:
+
+| Level | What it is | Read it with | Typical failure | Repair |
+|---|---|---|---|---|
+| **Stored** | One `ribboncommand` / `ribbondiff` / `ribbonrule` row per node **per solution layer**, keyed by `solutionid`. The row whose solution is `Active` is the unmanaged layer. | `ribbon_diagnose` (layers per command) | An unmanaged layer differs from every managed copy and wins over each deployment. | `ribbon_sync_unmanaged_layer` |
+| **Compiled** | `RetrieveEntityRibbon` — the out-of-the-box ribbon with every layer applied. | `ribbon_get_merged`, `ribbon_diagnose` | Not published yet. | `publish_customizations` |
+| **Delivered** | `GetClientMetadata` — what an app's client actually receives. | `ribbon_diagnose` | The client keeps receiving an older command than the compiled ribbon. | `ribbon_refresh_client_metadata` |
+
+`ribbon_diagnose` checks all three and names the first one that is wrong. Run it whenever users report
+the old behaviour, and after every ribbon change on an environment that receives managed solutions.
+
+### Stored: an unmanaged layer overrides every deployment
+
+Unmanaged always wins over managed. An unmanaged ribbon layer on a target environment usually comes
+from editing the ribbon there directly, e.g. with the Ribbon Workbench. From then on every managed
+deployment of that command is stored correctly and has no effect.
+
+- **It cannot be removed.** `RemoveActiveCustomizations` refuses `RibbonCustomization` and its parts
+  with `0x8004f059 … not supported for components of type RibbonCustomization`; so does the generic
+  `RemoveActiveCustomization` action. Removing the **table's** active layer returns `true` and leaves
+  the ribbon rows untouched — the ribbon is a component of its own. The Maker Portal offers nothing
+  either.
+- **It can be overwritten.** `ribbon_sync_unmanaged_layer` writes the copy a solution holds into the
+  unmanaged layer: the solution round-trip of `ribbon_add_button`, with `<EntityInfo>`,
+  `<CustomControlDefaultConfigs>` and `<EntityMaps>` stripped, so the import touches nothing but the
+  ribbon. Nodes that exist only in the unmanaged layer are kept by default, because a non-empty section
+  replaces the whole collection. `dryRun` defaults to `true` and returns the plan per node.
+- **Afterwards the layer still exists**, now with the right content. The next ribbon change to the same
+  command needs the same step after the deployment. `ribbon_scan_unmanaged_layers` lists every table of
+  an environment that carries such a layer — on one real target environment, 96 tables had an
+  unmanaged `RibbonCustomization` row and five of them unmanaged command definitions.
+
+### Delivered: the client keeps the old command
+
+After the stored layer was fixed, the database and `RetrieveEntityRibbon` were correct, and
+`GetClientMetadata` still delivered the old command. A request that bypassed the browser cache
+(`fetch(…, { cache: "no-store" })`) got the same answer, so it was the server, not the browser. None of
+these changed it:
+
+- `PublishXml` for the table, the application ribbon and the app modules (`<appmodules>`)
+- `PublishAllXml` ("Publish all customizations")
+
+What did change it: a change to the **table's own metadata**. One character in one description label,
+published, and the client received the current command at the next load. The client metadata version
+(the `gcm_<version>_…` key in the browser's Cache Storage) moved at the same moment; the ribbon's own
+`VersionNumber` in the payload did not. `ribbon_refresh_client_metadata` does exactly this and then
+restores the table:
+
+- **No unmanaged table layer before** → the bump created one; `RemoveActiveCustomizations` removes it.
+- **An unmanaged table layer already existed** → the original label is written back, so the
+  customizations in that layer stay as they were.
+
+Users reload the app afterwards.
+
+### Reading what the client receives
+
+`GetClientMetadata(ClientMetadataQuery=@q)` takes a complex `MetadataQuery`, passed as a **bare JSON
+object** — a quoted string fails with *"Type verification failed. Expected type
+'Microsoft.Dynamics.CRM.MetadataQuery'"*.
+
+- `MetadataType: "ribbon"` ignores the table and returns every ribbon context of the app — over 300 MB on
+  a grown org, with any `DependencyDepth`. `MetadataNames` and `MetadataId` do not narrow it.
+- `MetadataType: "form"` with the id of a main form **that is part of the app** and
+  `DependencyDepth: "OnDemandWithoutContext"` returns that form with its command bar, typically
+  5–15 MB. A form the app does not contain answers with a few hundred bytes and no ribbon.
+- The response wraps the metadata as a JSON **string** in `Metadata`. Inside, `Ribbons[]` has one entry
+  per context (`Form`, `HomePageGrid`, `SubGridStandard`, …) with `EntityLogicalName`, `VersionNumber`
+  and `Commands.<table>.<commandId>.Actions[].Attributes` (`FunctionName`, `Library`).
+- Every delivered command carries `SolutionUniqueName` of the top layer (often `Active`) and the display
+  rule `Mscrm.OutlookRenderTypeWeb`. Neither is a sign of a problem.
+- Some app/form combinations answer `400 0x80040216 "GetClientMetadata failed"`, observed right after a
+  publish. `ribbon_diagnose` then tries the next form and reports the app in `notes`.
+
+In the browser the same payload sits in Cache Storage under `gcm_<version>_<tenant>_<…>`; search an
+entry for `"<commandId>":{` and read its `Library`.
+
+---
+
 ## Tool reference
+
+### `ribbon_diagnose`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tableLogicalName` | string | yes | |
+| `commandIds` | string | no | Comma-separated command ids; default every stored command of the table |
+| `appModuleId` | GUID | no | Only check delivery for this app; default every app containing the table |
+| `checkDelivered` | bool | no | Default true. One `GetClientMetadata` call per app |
+
+Read-only. Returns per command the stored layers (solution, managed, action signature), the compiled
+signature, the delivered signature per app with its ribbon `VersionNumber`, and a `verdict`: `stored`,
+`compiled`, `delivered`, `unused` (no button places the command) or `ok`, with the repair. Grid
+commands are checked at the stored and compiled levels; delivery is read for the form command bar.
+
+**Example prompt:** "Users still get the old behaviour of the Send button on invoice — diagnose it"
+
+---
+
+### `ribbon_scan_unmanaged_layers`
+
+No parameters. Read-only. Lists every table of the environment whose ribbon carries unmanaged
+commands, split into `commandsOverridingManaged` (a managed deployment cannot change these) and
+`unmanagedOnlyCommands`. Run it on a target environment before and after deploying a ribbon change.
+
+---
+
+### `ribbon_sync_unmanaged_layer`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tableLogicalName` | string | yes | |
+| `sourceSolution` | string | yes | Solution whose copy is the intended one — usually the managed solution the deployment shipped |
+| `dryRun` | bool | no | **Default true**: return the plan (`add` / `update` / `unchanged` / `keep` / `drop`) and the RibbonDiffXml |
+| `dropUnmanagedOnly` | bool | no | Default false: unmanaged-only nodes are kept |
+| `publisherUniqueName` | string | no | Publisher of the throwaway solution; defaults to the table's prefix publisher, or the Default solution's publisher for out-of-the-box tables |
+
+With `dryRun=false` it imports, publishes the table and verifies that every node of the source now has
+an identical unmanaged copy (`verified`, `stillDifferent`). Imports refused with `0x80071151` while
+another solution operation runs — e.g. Microsoft updating its own solutions — are retried.
+
+---
+
+### `ribbon_refresh_client_metadata`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tableLogicalName` | string | yes | |
+| `verify` | bool | no | Default true: run `ribbon_diagnose` afterwards |
+| `dryRun` | bool | no | Record the writes instead of sending them |
+
+Reports `hadUnmanagedTableLayer`, how the table was restored and whether the description came back
+unchanged.
+
+---
 
 ### `ribbon_get`
 

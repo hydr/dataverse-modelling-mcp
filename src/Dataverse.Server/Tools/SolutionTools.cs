@@ -256,12 +256,18 @@ public sealed class SolutionTools
     }
 
     [McpServerTool(Name = "solution_remove_active_layer", ReadOnly = false, Destructive = true)]
-    [Description("Remove the active customization layer for a component (calls RemoveActiveCustomizations).")]
+    [Description("Remove the unmanaged (active) customization layer of one component, so the managed " +
+                 "layers below it apply again. Calls the Web API FUNCTION RemoveActiveCustomizations " +
+                 "(GET, component type by name). It discards every unmanaged change on that component — " +
+                 "check solution_check_layers first. NOT for ribbons: Dataverse refuses RibbonCustomization " +
+                 "and its parts (0x8004f059), and removing a table's layer leaves its unmanaged ribbon in " +
+                 "place. Overwrite a stale unmanaged ribbon with ribbon_sync_unmanaged_layer instead.")]
     public static async Task<string> SolutionRemoveActiveLayer(
         SolutionService svc,
         ConfigProvider config,
-        [Description("GUID of the component")] string componentId,
-        [Description("Component type code")] int componentType,
+        [Description("GUID of the component (for a table: its MetadataId)")] string componentId,
+        [Description("Component type code, e.g. 1=Entity, 26=SavedQuery, 60=SystemForm, 61=WebResource")] int componentType,
+        [Description(ToolSafety.DryRunDescription)] bool dryRun = false,
         CancellationToken ct = default)
     {
         try
@@ -270,8 +276,18 @@ public sealed class SolutionTools
                 return JsonSerializer.Serialize(new { error = "Invalid componentId GUID format." });
 
             var env = config.GetActiveEnvironment();
-            await svc.RemoveActiveLayerAsync(env.OrgUrl, compId, componentType, ct);
-            return JsonSerializer.Serialize(new { success = true, componentId });
+            var removed = await svc.RemoveActiveLayerAsync(env.OrgUrl, compId, componentType, ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = removed,
+                orgUrl = env.OrgUrl,
+                componentId,
+                componentType,
+                componentTypeName = SolutionService.MapComponentTypeName(componentType),
+                note = removed
+                    ? "Publish the component (publish_customizations) so the client picks up the managed state."
+                    : "Dataverse reported Result=false — nothing was removed."
+            }, JsonOptions);
         }
         catch (Exception ex)
         {

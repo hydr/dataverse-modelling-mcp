@@ -1,6 +1,6 @@
 ---
 name: command-bar-buttons
-description: Add, change or remove a button on a Dataverse / Dynamics 365 table command bar — classic RibbonDiffXml (ribbon_get, ribbon_add_button, ribbon_remove_button) or modern commands in the appaction table (command_*). Covers which mechanism to pick, how the ribbon is really stored, and the failures that return success while the button silently never appears. Use when the user wants a button, ribbon or command bar entry on a table, form or grid, or when a button they added is missing, mislabelled or vanishes on row selection.
+description: Add, change or remove a button on a Dataverse / Dynamics 365 table command bar — classic RibbonDiffXml (ribbon_get, ribbon_add_button, ribbon_remove_button) or modern commands in the appaction table (command_*). Covers which mechanism to pick, how the ribbon is really stored, the failures that return success while the button silently never appears, and a deployed button change that never reaches the users (ribbon_diagnose, ribbon_sync_unmanaged_layer, ribbon_refresh_client_metadata). Use when the user wants a button, ribbon or command bar entry on a table, form or grid, when a button they added is missing, mislabelled or vanishes on row selection, or when users still get the old behaviour after a deployment.
 version: 1.0
 ---
 
@@ -66,11 +66,38 @@ something does not appear:
 5. **Grid modern command with `visibilitytype = 0`** — vanishes as soon as rows are selected. The most
    common "my button disappeared" report.
 6. **Wrong app.** Custom commands do not render in `d365default`. Check in a real app.
+7. **An unmanaged ribbon layer on the target overrides the deployment.** Every managed import of the
+   command is stored and never takes effect. It cannot be removed — `RemoveActiveCustomizations` refuses
+   ribbons (`0x8004f059`) — only overwritten with `ribbon_sync_unmanaged_layer`.
+8. **The client keeps receiving the old command.** Database and compiled ribbon are right; publishing
+   the ribbon, the table, the app or everything does not rebuild what `GetClientMetadata` serves. A
+   change to the table's own metadata does: `ribbon_refresh_client_metadata`.
+
+## Users still get the old behaviour after a deployment
+
+Go through the levels in this order and stop at the first that is wrong. `ribbon_diagnose` does all
+three and names the failing level:
+
+1. **Stored** — does an unmanaged (`Active`) layer differ from every managed copy?
+   → `ribbon_sync_unmanaged_layer` with `sourceSolution` = the managed solution that holds the intended
+   version. Run it with the default `dryRun=true` first and read the plan.
+2. **Compiled** — does `RetrieveEntityRibbon` show the stored version? → publish the table.
+3. **Delivered** — does each app's client receive the compiled version?
+   → `ribbon_refresh_client_metadata`, then have the users reload.
+
+**Never edit a ribbon directly on a staging or production environment** (Ribbon Workbench, a manual
+import). That is how the unmanaged layers in point 1 come about, and they cannot be taken back. Before
+and after deploying a ribbon change to such an environment, run `ribbon_scan_unmanaged_layers` there:
+any command under `commandsOverridingManaged` will ignore the deployment.
+
+`solution_remove_active_layer` is for other components. On a table it removes the table's unmanaged
+properties, but not its unmanaged ribbon.
 
 ## Verifying — the part that actually costs the time
 
 Separate **stored** from **drawn**. `ribbon_get` answers the first; only a browser answers the second.
-Never let one stand in for the other.
+Never let one stand in for the other. In between sits **delivered** — what the server hands the
+client — which `ribbon_diagnose` reads per app, so a stale server cache shows up without a browser.
 
 - **Read the whole command bar.** Do not filter for the caption you expect — a mislabelled button is
   exactly the case you would then miss. This once produced the conclusion that classic ribbons no

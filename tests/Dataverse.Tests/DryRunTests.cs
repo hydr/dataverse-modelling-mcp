@@ -128,6 +128,9 @@ public class DryRunTests
         {
             "table_create", "table_update", "column_add", "column_update", "column_delete",
             "view_create", "view_update", "view_add_column", "view_set_sort", "role_create", "role_update",
+            // Both end in RemoveActiveCustomizations, a GET with a side effect — recorded since the client
+            // learnt ExecuteWriteFunctionAsync.
+            "solution_remove_active_layer", "ribbon_refresh_client_metadata",
         };
         Assert.That(ToolSafety.DryRunTools, Is.EquivalentTo(expected));
     }

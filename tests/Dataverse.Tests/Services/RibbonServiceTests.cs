@@ -623,6 +623,49 @@ public sealed class RibbonServiceTests
         Assert.That(entity.Element("RibbonDiffXml")!.Descendants("CustomAction").Count(), Is.EqualTo(1));
     }
 
+    /// <summary>
+    /// The real table-shell export of an out-of-the-box table also carries the grid configuration and
+    /// every attribute mapping that targets the table. Left in, the import writes both back as unmanaged
+    /// layers — on an environment fed by managed solutions they then win over every later import.
+    /// </summary>
+    [Test]
+    public void PatchCustomizationsXml_DropsGridConfigAndEmptiesEntityMaps()
+    {
+        const string export = """
+            <ImportExportXml>
+              <Entities>
+                <Entity>
+                  <Name LocalizedName="Invoice" OriginalName="Invoice">invoice</Name>
+                  <EntityInfo><entity Name="invoice" /></EntityInfo>
+                  <RibbonDiffXml><CustomActions /></RibbonDiffXml>
+                  <CustomControlDefaultConfigs>
+                    <CustomControlDefaultConfig><ControlDescriptionXML /></CustomControlDefaultConfig>
+                  </CustomControlDefaultConfigs>
+                </Entity>
+              </Entities>
+              <EntityMaps>
+                <EntityMap>
+                  <EntitySource>salesorder</EntitySource>
+                  <EntityTarget>invoice</EntityTarget>
+                  <AttributeMaps><AttributeMap><AttributeSource>name</AttributeSource><AttributeTarget>name</AttributeTarget></AttributeMap></AttributeMaps>
+                </EntityMap>
+              </EntityMaps>
+              <Languages><Language>1033</Language></Languages>
+            </ImportExportXml>
+            """;
+
+        var patched = XDocument.Parse(RibbonService.PatchCustomizationsXml(export, "invoice", "<RibbonDiffXml />"));
+        var entity = patched.Descendants("Entity").Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(entity.Elements().Select(e => e.Name.LocalName), Is.EqualTo(new[] { "Name", "RibbonDiffXml" }));
+            Assert.That(patched.Root!.Element("EntityMaps"), Is.Not.Null, "an empty <EntityMaps /> is kept; it deletes nothing");
+            Assert.That(patched.Root!.Element("EntityMaps")!.HasElements, Is.False);
+            Assert.That(patched.Root!.Element("Languages")!.HasElements, Is.True, "unrelated blocks stay");
+        });
+    }
+
     [Test]
     public void PatchCustomizationsXml_CanKeepEntityInfoWhenAskedTo()
     {

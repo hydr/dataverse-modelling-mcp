@@ -55,6 +55,7 @@ public static class ServerHost
         builder.Services.AddSingleton<PublishService>();
         builder.Services.AddSingleton<CommandService>();
         builder.Services.AddSingleton<RibbonService>();
+        builder.Services.AddSingleton<RibbonDeliveryService>();
         builder.Services.AddSingleton<ComponentDependencyService>();
         builder.Services.AddSingleton<EntitySolutionMapService>();
         builder.Services.AddSingleton<WebResourceUsageService>();
